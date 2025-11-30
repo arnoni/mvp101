@@ -1,0 +1,231 @@
+<!-- Implements TSD FR-001: Landing Page & Address Input -->
+<!-- Implements TSD FR-002: Cloudflare Turnstile Verification -->
+<!-- Implements TSD FR-006: Display Results as Cards -->
+<!-- Implements TSD FR-008: WhatsApp Beta Opt-in Modal -->
+<!-- Implements TSD Section 2: Frontend (HTML5 + Vanilla JS + Tailwind CSS) -->
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{ settings.PROJECT_NAME }}</title>
+    <!-- Mock Tailwind CSS for simplicity in this environment -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+    <style>
+        /* Custom styles for the mobile-first design */
+        body {
+            background-color: #f3f4f6; /* Light gray background */
+        }
+        .card {
+            transition: transform 0.2s;
+        }
+        .card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+        }
+    </style>
+</head>
+<body class="font-sans antialiased">
+
+    <div class="max-w-md mx-auto p-4 sm:p-6 bg-white shadow-lg min-h-screen">
+        
+        <!-- Header -->
+        <header class="text-center mb-8">
+            <h1 class="text-3xl font-bold text-gray-900">Geo-Proximity Lead Magnet</h1>
+            <p class="text-gray-600 mt-1">Find the 5 nearest real-estate projects in Da Nang.</p>
+        </header>
+
+        <!-- Address Input Form (FR-001) -->
+        <form id="search-form" class="space-y-4">
+            <label for="address" class="block text-sm font-medium text-gray-700">Your Address in Da Nang</label>
+            <input type="text" id="address" name="address" required
+                   placeholder="e.g., Dragon Bridge, Hai Chau District"
+                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 text-lg">
+            
+            <!-- Cloudflare Turnstile Widget (FR-002) -->
+            <div class="cf-turnstile" data-sitekey="{{ turnstile_site_key }}" data-callback="turnstileCallback"></div>
+            <input type="hidden" id="turnstile-token" name="turnstile_token">
+
+            <button type="submit" id="search-button"
+                    class="w-full bg-indigo-600 text-white py-3 rounded-lg text-lg font-semibold hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
+                    disabled>
+                Find Nearest Projects
+            </button>
+        </form>
+
+        <!-- Status and Error Messages -->
+        <div id="status-message" class="mt-4 p-3 text-sm rounded-lg hidden" role="alert"></div>
+
+        <!-- Results Section (FR-006) -->
+        <div id="results-section" class="mt-8 space-y-4 hidden">
+            <h2 class="text-xl font-semibold text-gray-800">Top 5 Nearest Projects</h2>
+            <div id="results-list" class="space-y-4">
+                <!-- Result cards will be injected here -->
+            </div>
+            
+            <!-- KMZ Download Button (FR-007) -->
+            <div class="text-center pt-4">
+                <a id="kmz-download-link" href="/api/download-kmz" target="_blank"
+                   class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-green-600 hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500">
+                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                    Download KMZ for Google Earth
+                </a>
+            </div>
+        </div>
+
+        <!-- WhatsApp Opt-in Modal (FR-008) -->
+        <div id="whatsapp-modal" class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full hidden z-50">
+            <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+                <div class="mt-3 text-center">
+                    <h3 class="text-lg leading-6 font-medium text-gray-900">Join the Pro Beta List!</h3>
+                    <div class="mt-2 px-7 py-3">
+                        <p class="text-sm text-gray-500">
+                            Get early access to our full real-estate app and exclusive deals via WhatsApp.
+                        </p>
+                    </div>
+                    <div class="items-center px-4 py-3">
+                        <a href="https://wa.me/84905xxxxxx?text=I%20want%20to%20join%20the%20Da%20Nang%20real%20estate%20beta%20list" target="_blank"
+                           class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-green-500 text-base font-medium text-white hover:bg-green-600 focus:outline-none sm:text-sm">
+                            Join Beta on WhatsApp
+                        </a>
+                        <button id="close-modal" class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 px-4 py-2 bg-white text-base font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none sm:mt-0 sm:text-sm">
+                            No, thanks
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        const form = document.getElementById('search-form');
+        const addressInput = document.getElementById('address');
+        const searchButton = document.getElementById('search-button');
+        const tokenInput = document.getElementById('turnstile-token');
+        const statusMessage = document.getElementById('status-message');
+        const resultsSection = document.getElementById('results-section');
+        const resultsList = document.getElementById('results-list');
+        const whatsappModal = document.getElementById('whatsapp-modal');
+        const closeModalButton = document.getElementById('close-modal');
+
+        // Global function called by Turnstile widget
+        function turnstileCallback(token) {
+            tokenInput.value = token;
+            searchButton.disabled = false;
+        }
+
+        function showStatus(message, type = 'info') {
+            statusMessage.textContent = message;
+            statusMessage.className = 'mt-4 p-3 text-sm rounded-lg';
+            statusMessage.classList.remove('hidden');
+            
+            if (type === 'error') {
+                statusMessage.classList.add('bg-red-100', 'text-red-800');
+            } else if (type === 'success') {
+                statusMessage.classList.add('bg-green-100', 'text-green-800');
+            } else {
+                statusMessage.classList.add('bg-blue-100', 'text-blue-800');
+            }
+        }
+
+        function hideStatus() {
+            statusMessage.classList.add('hidden');
+        }
+
+        function renderResults(data) {
+            resultsList.innerHTML = '';
+            data.results.forEach(poi => {
+                const card = `
+                    <div class="card bg-white p-4 border border-gray-200 rounded-lg shadow-sm flex items-center space-x-4">
+                        <img src="${poi.image_url}" alt="${poi.name}" class="w-16 h-16 object-cover rounded-md flex-shrink-0">
+                        <div class="flex-grow">
+                            <h3 class="text-lg font-semibold text-gray-900">${poi.name}</h3>
+                            <p class="text-sm text-gray-600">${poi.distance_km} km away</p>
+                        </div>
+                        <a href="${poi.google_maps_link}" target="_blank"
+                           class="flex-shrink-0 inline-flex items-center px-3 py-1 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700">
+                            Go There
+                        </a>
+                    </div>
+                `;
+                resultsList.insertAdjacentHTML('beforeend', card);
+            });
+            resultsSection.classList.remove('hidden');
+        }
+
+        function showModalAfterDelay() {
+            // Implements TSD FR-008: After 5 seconds on result page, show non-blocking modal
+            setTimeout(() => {
+                if (localStorage.getItem('modal_shown') !== 'true') {
+                    whatsappModal.classList.remove('hidden');
+                }
+            }, 5000);
+        }
+
+        form.addEventListener('submit', async (e) => {
+            e.preventDefault();
+            hideStatus();
+            resultsSection.classList.add('hidden');
+            searchButton.disabled = true;
+            searchButton.textContent = 'Searching...';
+
+            const address = addressInput.value;
+            const turnstile_token = tokenInput.value;
+
+            if (!turnstile_token) {
+                showStatus('Please complete the human verification.', 'error');
+                searchButton.disabled = false;
+                searchButton.textContent = 'Find Nearest Projects';
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/find-nearest', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ address, turnstile_token }),
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    renderResults(data);
+                    showStatus('Success! Found 5 nearest projects.', 'success');
+                    showModalAfterDelay();
+                } else {
+                    // Handle API errors (TSD Section 4.3: Error Response Format)
+                    const errorDetail = data.detail || {};
+                    const errorMessage = errorDetail.detail || 'An unknown error occurred.';
+                    showStatus(`Error: ${errorMessage}`, 'error');
+                }
+            } catch (error) {
+                console.error('Fetch error:', error);
+                showStatus('Network error. Please check your connection.', 'error');
+            } finally {
+                // Reset Turnstile and button
+                if (typeof turnstile !== 'undefined') {
+                    turnstile.reset();
+                }
+                tokenInput.value = '';
+                searchButton.disabled = true; // Will be re-enabled by turnstileCallback
+                searchButton.textContent = 'Find Nearest Projects';
+            }
+        });
+
+        closeModalButton.addEventListener('click', () => {
+            whatsappModal.classList.add('hidden');
+            localStorage.setItem('modal_shown', 'true'); // Prevent showing again
+        });
+
+        // Initial check for Turnstile to ensure the button is disabled until verified
+        if (!tokenInput.value) {
+            searchButton.disabled = true;
+        }
+    </script>
+</body>
+</html>

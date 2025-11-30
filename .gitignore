@@ -1,0 +1,42 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+env/
+
+# uv
+.uv/
+
+# Build artifacts (uv, hatchling, setuptools)
+dist/
+build/
+*.whl
+*.tar.gz
+
+# Coverage & test
+.pytest_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Editor / OS trash
+.vscode/
+.idea/
+*.code-workspace
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Environment files (do NOT commit secrets)
+.env
+.env.*
+*.env
