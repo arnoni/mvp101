@@ -1,54 +1,52 @@
-// Implements TSD Section 4.2: MasterList.json (private – never exposed fully)
-// Coordinates are within the Da Nang bounding box (16.00–16.12 N, 108.10–108.30 E)
 {
   "points": [
     {
       "id": "site_01",
-      "name": "Luxury Condo A (Near Dragon Bridge)",
-      "lat": 16.06012,
-      "lon": 108.22213,
-      "images": ["site_01.jpg"],
-      "internal_notes": "Owner asks for $5k commission"
+      "name": "Dragon Bridge Construction",
+      "lat": 16.0611,
+      "lon": 108.2278,
+      "images": ["dragon_bridge.jpg"],
+      "internal_notes": "Iconic bridge."
     },
     {
       "id": "site_02",
-      "name": "Ocean View Resort B",
-      "lat": 16.07500,
-      "lon": 108.24000,
-      "images": ["site_02.jpg"],
-      "internal_notes": "High-end tourist property"
+      "name": "My Khe Beach Resort",
+      "lat": 16.0600,
+      "lon": 108.2466,
+      "images": ["my_khe.jpg"],
+      "internal_notes": "Prime location."
     },
     {
       "id": "site_03",
-      "name": "Riverfront Housing C",
-      "lat": 16.05000,
-      "lon": 108.20000,
-      "images": ["site_03.jpg"],
-      "internal_notes": "Local investment opportunity"
+      "name": "Han Market Plaza",
+      "lat": 16.0689,
+      "lon": 108.2238,
+      "images": ["han_market.jpg"],
+      "internal_notes": "Busy area."
     },
     {
       "id": "site_04",
-      "name": "Industrial Park D",
-      "lat": 16.09000,
-      "lon": 108.15000,
-      "images": ["site_04.jpg"],
-      "internal_notes": "Commercial land"
+      "name": "Marble Mountains Villas",
+      "lat": 16.0044,
+      "lon": 108.2636,
+      "images": ["marble_mts.jpg"],
+      "internal_notes": "Luxury villas."
     },
     {
       "id": "site_05",
-      "name": "My Khe Beach Hotel E",
-      "lat": 16.06500,
-      "lon": 108.23500,
-      "images": ["site_05.jpg"],
-      "internal_notes": "Beachfront property"
+      "name": "Lady Buddha Heights",
+      "lat": 16.1000,
+      "lon": 108.2778,
+      "images": ["lady_buddha.jpg"],
+      "internal_notes": "Scenic view."
     },
     {
       "id": "site_06",
-      "name": "Hai Van Pass Villa F",
-      "lat": 16.11000,
-      "lon": 108.11000,
-      "images": ["site_06.jpg"],
-      "internal_notes": "Mountain retreat"
+      "name": "Asia Park Complex",
+      "lat": 16.0397,
+      "lon": 108.2269,
+      "images": ["asia_park.jpg"],
+      "internal_notes": "Entertainment district."
     }
   ]
 }

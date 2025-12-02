@@ -62,8 +62,12 @@ app = FastAPI(
 
 # --- Static Files and Templates ---
 # Implements TSD Section 7.1: /static/ and /templates/
-app.mount("/static", StaticFiles(directory="geo-proximity-lead-magnet/static"), name="static")
-templates = Jinja2Templates(directory="geo-proximity-lead-magnet/templates")
+import os
+# Resolve static and templates directories relative to this file
+static_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "static"))
+templates_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "templates"))
+app.mount("/static", StaticFiles(directory=static_dir), name="static")
+templates = Jinja2Templates(directory=templates_dir)
 
 # --- API Routes ---
 app.include_router(api_router, prefix="/api")

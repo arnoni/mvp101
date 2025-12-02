@@ -8,9 +8,10 @@ import logging
 from typing import List
 from fastkml import kml
 from fastkml.styles import Style, IconStyle, LabelStyle
-from fastkml.features import Placemark
+# fastkml newer versions expose Placemark via kml module
+from fastkml.kml import Placemark
 from fastkml.geometry import Point
-from fastkml.enums import AltitudeMode
+# AltitudeMode enum removed; not needed for basic KMZ generation
 from fastapi import HTTPException, status
 from app.models.dto import PublicPOIResult, ErrorResponse
 
@@ -49,8 +50,7 @@ async def generate_kmz(results: List[PublicPOIResult]) -> bytes:
         
         # Create the Point geometry
         pm.geometry = Point(
-            coordinates=[poi.lon, poi.lat, 0], # KML uses (lon, lat, alt)
-            altitude_mode=AltitudeMode.clampedToGround
+            coordinates=[poi.lon, poi.lat, 0]  # KML uses (lon, lat, alt)
         )
         
         d.append(pm)
