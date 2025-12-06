@@ -10,6 +10,7 @@ from typing import List, Tuple
 
 from app.models.dto import POI, PublicPOIResult, MasterList
 from app.utils.haversine import haversine
+from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,7 @@ class POIService:
             self.master_list = []
 
     def find_nearest_pois(self, user_lat: float, user_lon: float) -> List[PublicPOIResult]:
-        """Calculate distances to all POIs and return the nearest five."""
+        """Calculate distances to all POIs and return the nearest five within the configured search radius."""
         if not self.master_list:
             return []
 
@@ -55,14 +56,15 @@ class POIService:
         distances: List[Tuple[float, POI]] = []
         for poi in self.master_list:
             dist_km = haversine(user_lat, user_lon, poi.lat, poi.lon)
-            distances.append((dist_km, poi))
+            if dist_km <= settings.SEARCH_RADIUS_KM:
+                distances.append((dist_km, poi))
 
         # Sort by distance and take the top 5
-        nearest_5 = sorted(distances, key=lambda x: x[0])[:5]
+        nearest_pois = sorted(distances, key=lambda x: x[0])[:5]
 
         # 7. Build DTOs for the response
         results: List[PublicPOIResult] = []
-        for dist_km, poi in nearest_5:
+        for dist_km, poi in nearest_pois:
             google_maps_link = (
                 f"https://www.google.com/maps/dir/?api=1&destination={poi.lat},{poi.lon}"
             )

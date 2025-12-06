@@ -82,6 +82,7 @@ async def root(request: Request):
         "request": request,
         "mapbox_token": settings.MAPBOX_TOKEN, # Passed to frontend for potential map rendering/client-side geocoding fallback
         "turnstile_site_key": settings.CLOUDFLARE_TURNSTILE_SITE_KEY,
+        "settings": settings,
     }
     return templates.TemplateResponse("index.html", context)
 

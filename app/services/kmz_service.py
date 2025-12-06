@@ -48,10 +48,7 @@ async def generate_kmz(results: List[PublicPOIResult]) -> bytes:
             styleUrl="#icon-style" # Use a default style if defined
         )
         
-        # Create the Point geometry
-        pm.geometry = Point(
-            coordinates=[poi.lon, poi.lat, 0]  # KML uses (lon, lat, alt)
-        )
+        pm.geometry = Point((poi.lon, poi.lat))
         
         d.append(pm)
 

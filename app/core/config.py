@@ -8,7 +8,7 @@ from typing import List
 
 class Settings(BaseSettings):
     # Implements TSD Section 5: Executive Summary
-    PROJECT_NAME: str = "Geo-Proximity Lead Magnet (MVP)"
+    PROJECT_NAME: str = "Da Nang Construction alert"
     VERSION: str = "1.0.0"
     BRIEF_DESCRIPTION: str = "A lightweight, serverless web application for finding the 5 nearest construction/real-estate points of interest in Da Nang, Vietnam."
 
@@ -37,6 +37,9 @@ class Settings(BaseSettings):
     
     # Timeout for Mapbox Geocoding (TSD 6)
     MAPBOX_TIMEOUT: int = 8 # seconds
+
+    # Search Radius (TSD FR-005 modified)
+    SEARCH_RADIUS_KM: float = 0.1 # 100 meters
 
     # Pydantic configuration
     model_config = SettingsConfigDict(

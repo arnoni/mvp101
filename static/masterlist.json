@@ -47,6 +47,14 @@
       "lon": 108.2269,
       "images": ["asia_park.jpg"],
       "internal_notes": "Entertainment district."
+    },
+    {
+      "id": "site_07",
+      "name": "Hiyori Garden Tower",
+      "lat": 16.0683,
+      "lon": 108.2391,
+      "images": [],
+      "internal_notes": "A2 Võ Văn Kiệt, An Hải Bắc, Sơn Trà, Đà Nẵng 84236, Vietnam"
     }
   ]
 }

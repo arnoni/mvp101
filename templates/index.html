@@ -45,14 +45,26 @@
                    class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 text-lg">
             
             <!-- Cloudflare Turnstile Widget (FR-002) -->
-            <div class="cf-turnstile" data-sitekey="{{ turnstile_site_key }}" data-callback="turnstileCallback"></div>
-            <input type="hidden" id="turnstile-token" name="turnstile_token">
+            {% if settings.ENV == 'development' %}
+                <div class="p-3 bg-yellow-50 border border-yellow-200 text-yellow-800 rounded-lg mb-4 text-sm flex items-center">
+                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                    Dev Mode: Turnstile bypassed
+                </div>
+                <input type="hidden" id="turnstile-token" name="turnstile_token" value="mock_turnstile_token_for_testing">
+            {% else %}
+                <div class="cf-turnstile" data-sitekey="{{ turnstile_site_key }}" data-callback="turnstileCallback"></div>
+                <input type="hidden" id="turnstile-token" name="turnstile_token">
+            {% endif %}
 
             <button type="submit" id="search-button"
                     class="w-full bg-indigo-600 text-white py-3 rounded-lg text-lg font-semibold hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50"
-                    disabled>
+                    {% if settings.ENV != 'development' %}disabled{% endif %}>
                 Find Nearest Projects
             </button>
+            
+            {% if settings.ENV == 'development' %}
+            <div id="dev-poi-printout" class="mt-4 p-4 bg-gray-100 border border-gray-300 rounded-lg text-sm font-mono text-gray-800 whitespace-pre-wrap hidden"></div>
+            {% endif %}
         </form>
 
         <!-- Status and Error Messages -->
@@ -108,6 +120,7 @@
         const statusMessage = document.getElementById('status-message');
         const resultsSection = document.getElementById('results-section');
         const resultsList = document.getElementById('results-list');
+        const devPoiPrintout = document.getElementById('dev-poi-printout');
         const whatsappModal = document.getElementById('whatsapp-modal');
         const closeModalButton = document.getElementById('close-modal');
 
@@ -137,6 +150,20 @@
 
         function renderResults(data) {
             resultsList.innerHTML = '';
+
+            if (devPoiPrintout) {
+                devPoiPrintout.innerHTML = '';
+                devPoiPrintout.classList.remove('hidden');
+                if (data.results && data.results.length > 0) {
+                    data.results.forEach(poi => {
+                        const line = `${poi.name}\n`;
+                        devPoiPrintout.textContent += line;
+                    });
+                } else {
+                    devPoiPrintout.textContent = "POI not found";
+                }
+            }
+
             data.results.forEach(poi => {
                 const card = `
                     <div class="card bg-white p-4 border border-gray-200 rounded-lg shadow-sm flex items-center space-x-4">
@@ -169,6 +196,7 @@
             e.preventDefault();
             hideStatus();
             resultsSection.classList.add('hidden');
+            if (devPoiPrintout) devPoiPrintout.classList.add('hidden');
             searchButton.disabled = true;
             searchButton.textContent = 'Searching...';
 
