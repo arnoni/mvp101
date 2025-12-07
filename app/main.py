@@ -17,13 +17,13 @@ from app.services.poi_service import POIService
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-
 # --- Application Lifecycle Management ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Implements TSD Section 5.4: MasterList cached in memory at container start
     # Implements TSD Section 4.1: Repository Pattern for MasterList
-    logger.info("Application startup: Initializing POI Service and loading MasterList...")
+    logger.info(f"Application startup: v{settings.VERSION}")
+    logger.info("Initializing POI Service and loading MasterList...")
     try:
         # Initialize the POIService, which loads the masterlist.json into memory
         app.state.poi_service = POIService()
@@ -99,12 +99,24 @@ async def health_check():
     }
 
 # --- Global Exception Handler (for unhandled errors) ---
+import uuid
+
+# ...
+
+# --- Global Exception Handler (for unhandled errors) ---
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
-    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    error_id = str(uuid.uuid4())
+    logger.error(f"Unhandled exception (ID: {error_id}): {exc}", exc_info=True)
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={"error": "INTERNAL_SERVER_ERROR", "detail": "An unexpected error occurred."}
+        content={
+            "detail": {
+                "error": "INTERNAL_SERVER_ERROR",
+                "detail": "An unexpected error occurred. Please report this error ID.",
+                "error_id": error_id
+            }
+        }
     )
 
 # Note: The actual rate-limiting, circuit-breaking, and geocoding logic

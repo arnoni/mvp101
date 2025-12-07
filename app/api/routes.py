@@ -7,7 +7,8 @@ from fastapi import APIRouter, Request, HTTPException, status, Depends
 from fastapi.responses import JSONResponse, Response
 import logging
 import time
-from typing import List
+from typing import List, Tuple, Optional
+from urllib.parse import quote, unquote
 
 # Local imports
 from app.core.config import settings
@@ -60,6 +61,7 @@ async def get_redis_client(request: Request):
 )
 async def find_nearest(
     request: Request,
+    response: Response,
     data: FindNearestRequest,
     redis_client: RealRedisClient = Depends(get_redis_client),
 ):
@@ -72,7 +74,7 @@ async def find_nearest(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=ErrorResponse(
-                error="TURNSTILE_FAILED",
+                error="TURNSTILE_VERIFICATION_FAILED",
                 detail="Human verification failed. Please try again.",
             ).model_dump(),
         )
@@ -83,7 +85,7 @@ async def find_nearest(
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=ErrorResponse(
-                error="RATE_LIMIT_EXCEEDED",
+                error="DAILY_RATE_LIMIT_EXCEEDED",
                 detail="One request per 24h allowed.",
                 retry_after_seconds=settings.RATE_LIMIT_SECONDS,
             ).model_dump(),
@@ -96,12 +98,13 @@ async def find_nearest(
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=ErrorResponse(
-                error="MAPBOX_CIRCUIT_BREAKER",
+                error="MAPBOX_MONTHLY_QUOTA_EXCEEDED",
                 detail="Service temporarily unavailable: Mapbox quota exceeded for the month.",
             ).model_dump(),
         )
 
     # 4. Geocode (TSD FR-004)
+    # We always geocode the user's address to get a "Mapbox View" of it.
     try:
         user_lat, user_lon = await geocode_address(data.address)
     except HTTPException as e:
@@ -111,7 +114,7 @@ async def find_nearest(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=ErrorResponse(
-                error="GEOCODING_ERROR",
+                error="UNEXPECTED_GEOCODING_FAILURE",
                 detail="An unexpected error occurred during geocoding.",
             ).model_dump(),
         )
@@ -122,31 +125,27 @@ async def find_nearest(
 
     # 6. Find nearest POIs (TSD FR-005)
     poi_service: POIService = request.app.state.poi_service
+    # The SERVICE now handles the complex logic of:
+    # - Is user GPS physically close? OR
+    # - Is user Mapbox-Address close?
     nearest_results = poi_service.find_nearest_pois(user_lat, user_lon)
 
-    # Store result IDs in a cookie for KMZ download (TSD FR-007)
-    result_ids = ",".join([r.name for r in nearest_results])
+    # 7. Store result IDs in cookie (TSD FR-007)
+    # We set the cookie manually on the response object
+    # Extract names for the cookie (simple approach for MVP)
+    if nearest_results:
+        # Avoid storing too much data, just names or IDs
+        result_names = ",".join([p.name for p in nearest_results])
+        # Encode to handle non-ASCII properly in cookies
+        safe_value = quote(result_names)
+        response.set_cookie(key="last_result_ids", value=safe_value, httponly=True, max_age=3600)
 
-    response_data = FindNearestResponse(
+    # 8. Return response
+    return FindNearestResponse(
         results=nearest_results,
         user_lat=user_lat,
-        user_lon=user_lon,
+        user_lon=user_lon
     )
-
-    end_time = time.time()
-    logger.info(
-        f"Request processed in {end_time - start_time:.3f}s. Mapbox count: {await redis_client.get(mapbox_counter_key)}"
-    )
-
-    response = JSONResponse(content=response_data.model_dump())
-    response.set_cookie(
-        key="last_result_ids",
-        value=result_ids,
-        max_age=3600,
-        httponly=True,
-        secure=True,
-    )
-    return response
 
 # ----------------------------------------------------------------------
 # KMZ Download Endpoint
@@ -167,9 +166,12 @@ async def download_kmz(request: Request):
             ).model_dump(),
         )
 
+    # Decode cookie value
+    target_names_str = unquote(result_ids_str)
+    
     # Retrieve POIs based on stored names (mock implementation)
     poi_service: POIService = request.app.state.poi_service
-    target_names = result_ids_str.split(",")
+    target_names = target_names_str.split(",")
     target_pois = [p for p in poi_service.master_list if p.name in target_names]
 
     # Convert to PublicPOIResult (mock distances)
