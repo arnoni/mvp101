@@ -9,7 +9,7 @@ from typing import List
 class Settings(BaseSettings):
     # Implements TSD Section 5: Executive Summary
     PROJECT_NAME: str = "Da Nang Construction alert"
-    VERSION: str = "0.0.1"
+    VERSION: str = "0.0.6"
     BRIEF_DESCRIPTION: str = "A lightweight, serverless web application for finding the 5 nearest construction/real-estate points of interest in Da Nang, Vietnam."
 
     # --- Required Environment Variables (TSD Section 9) ---

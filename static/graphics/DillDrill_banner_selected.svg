@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="1200" height="300"
+     viewBox="0 0 1200 300"
+     xmlns="http://www.w3.org/2000/svg">
+
+  <!-- 1️⃣  Nunito font -->
+  <style>
+    @import url("https://fonts.googleapis.com/css2?family=Nunito:wght@800&amp;display=swap");
+  </style>
+
+  <!-- 2️⃣  Radial background gradient (light gray → very light teal) -->
+  <defs>
+    <radialGradient id="bgRadial" cx="0.5" cy="0.5" r="0.8">
+      <stop offset="0%"   stop-color="#F9F9F9"/>
+      <stop offset="100%" stop-color="#E0F7FA"/>
+    </radialGradient>
+  </defs>
+  <rect width="1200" height="300" fill="url(#bgRadial)"/>
+
+  <!-- 3️⃣  Orange triangle accent (pointing right) -->
+  <polygon points="260,85 260,195 340,140"
+           fill="#F4A460" opacity="0.2"/>
+
+  <!-- 4️⃣  Gradient for the word (blue → orange) -->
+  <defs>
+    <linearGradient id="gradText" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%"   stop-color="#0A6C9F"/>
+      <stop offset="100%" stop-color="#F4A460"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 5️⃣  Brand name + © -->
+  <text x="300" y="150"
+        fill="url(#gradText)"
+        font-size="96"
+        font-weight="800"
+        font-family="Nunito, sans-serif"
+        letter-spacing="-2">
+    DillDrill
+    <tspan font-size="32"
+           baseline-shift="super"
+           dy="-8"
+           dx="0">©</tspan>
+  </text>
+</svg>
