@@ -91,17 +91,17 @@ async def find_nearest(
             ).model_dump(),
         )
 
-    # 3. Circuit breaker (TSD FR-009)
-    mapbox_counter_key = "mapbox_monthly_counter"
-    current_count = int(await redis_client.get(mapbox_counter_key) or 0)
-    if current_count >= settings.MAX_MAPBOX_MONTHLY:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=ErrorResponse(
-                error="MAPBOX_MONTHLY_QUOTA_EXCEEDED",
-                detail="Service temporarily unavailable: Mapbox quota exceeded for the month.",
-            ).model_dump(),
-        )
+    # 3. Circuit breaker (TSD FR-009) - DISABLED (Mapbox removed)
+    # mapbox_counter_key = "mapbox_monthly_counter"
+    # current_count = int(await redis_client.get(mapbox_counter_key) or 0)
+    # if current_count >= settings.MAX_MAPBOX_MONTHLY:
+    #     raise HTTPException(
+    #         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+    #         detail=ErrorResponse(
+    #             error="MAPBOX_MONTHLY_QUOTA_EXCEEDED",
+    #             detail="Service temporarily unavailable: Mapbox quota exceeded for the month.",
+    #         ).model_dump(),
+    #     )
 
     # 4. Geocode (TSD FR-004)
     # We always geocode the user's address to get a "Mapbox View" of it.
@@ -120,7 +120,7 @@ async def find_nearest(
         )
 
     # 5. Increment counters (TSD Section 4.4)
-    await redis_client.incr(mapbox_counter_key)
+    # await redis_client.incr(mapbox_counter_key)
     await redis_client.setex(rate_limit_key, settings.RATE_LIMIT_SECONDS, "1")
 
     # 6. Find nearest POIs (TSD FR-005)

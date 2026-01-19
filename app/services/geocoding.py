@@ -98,98 +98,14 @@ async def geocode_address(address: str) -> Tuple[float, float]:
             logger.error(f"Float conversion error: {e}")
             pass # Fallthrough to text geocoding
     
-    url = MAPBOX_API_URL.format(query=quote(query))
+    # Mapbox logic disabled by user request.
+    # url = MAPBOX_API_URL.format(query=quote(query))
     
-    # Mapbox parameters to focus on Vietnam/Da Nang
-    params = {
-        "access_token": settings.MAPBOX_TOKEN,
-        "country": "vn",
-        "proximity": "108.2208,16.0544", # Center of Da Nang
-        "limit": 1
-    }
-
-    # Implements TSD Section 6: Retry Logic (Max 2 retries, exponential backoff)
-    max_retries = settings.MAPBOX_MAX_RETRIES
-    backoff_time = settings.MAPBOX_INITIAL_BACKOFF
-    
-    for attempt in range(max_retries + 1):
-        try:
-            async with httpx.AsyncClient(timeout=settings.MAPBOX_TIMEOUT) as client:
-                response = await client.get(url, params=params)
-                response.raise_for_status() # Raises HTTPStatusError for 4xx/5xx responses
-                
-                data = response.json()
-                
-                if data and data.get("features"):
-                    feature = data["features"][0]
-                    lon, lat = feature["center"]
-                    
-                    # 4. Geocode validation
-                    # Implements TSD Section 10: Only Da Nang bounding box accepted
-                    if not is_inside_da_nang_bbox(lat, lon):
-                        logger.warning(f"Geocoded address ({lat}, {lon}) is outside Da Nang BBox.")
-                        raise HTTPException(
-                            status_code=status.HTTP_400_BAD_REQUEST,
-                            detail=ErrorResponse(
-                                error="OUTSIDE_DA_NANG",
-                                detail="Address not in Da Nang area. Please be more specific."
-                            ).model_dump()
-                        )
-                    
-                    return lat, lon
-                
-                # Implements TSD Section 6: Mapbox geocoding Fallback 1
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=ErrorResponse(
-                        error="GEOCODING_FAILED",
-                        detail="Could not geocode address. Please check the address and try again."
-                    ).model_dump()
-                )
-
-        except httpx.TimeoutException:
-            logger.warning(f"Mapbox geocoding attempt {attempt + 1} timed out.")
-            if attempt < max_retries:
-                # Wait with exponential backoff and jitter
-                import asyncio
-                import random
-                wait_time = backoff_time * (2 ** attempt) + random.uniform(-0.2, 0.2)
-                logger.info(f"Retrying in {wait_time:.2f}s...")
-                await asyncio.sleep(wait_time)
-            else:
-                # Final failure
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail=ErrorResponse(
-                        error="MAPBOX_TIMEOUT",
-                        detail="Mapbox service is temporarily unavailable due to timeout."
-                    ).model_dump()
-                )
-        except httpx.HTTPStatusError as e:
-            logger.error(f"Mapbox API returned status error: {e.response.status_code}")
-            # TSD Section 5.3: Mapbox downtime → return 503
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail=ErrorResponse(
-                    error="MAPBOX_API_ERROR",
-                    detail="Mapbox service is temporarily unavailable or misconfigured."
-                ).model_dump()
-            )
-        except HTTPException:
-            # Re-raise our controlled HTTPExceptions (e.g., OUTSIDE_DA_NANG)
-            raise
-        except Exception as e:
-            logger.warning(
-                f"Mapbox geocoding failed ({e}); using fallback coordinates for local testing."
-            )
-            # Da Nang city centre – any point inside the allowed BBox works
-            return 16.0544, 108.2208
-    
-    # Should be unreachable, but for completeness
+    # Return error for text addresses since Geocoding is disabled
     raise HTTPException(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        status_code=status.HTTP_400_BAD_REQUEST,
         detail=ErrorResponse(
-            error="GEOCODING_LOGIC_ERROR",
-            detail="Geocoding logic failed to return a result."
+            error="GEOCODING_DISABLED",
+            detail="Address search is disabled. Please enter coordinates (Lat, Lon) directly."
         ).model_dump()
     )

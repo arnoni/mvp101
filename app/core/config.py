@@ -4,7 +4,7 @@
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
-from typing import List
+from typing import List, Optional
 
 class Settings(BaseSettings):
     # Implements TSD Section 5: Executive Summary
@@ -13,7 +13,8 @@ class Settings(BaseSettings):
     BRIEF_DESCRIPTION: str = "A lightweight, serverless web application for finding the 5 nearest construction/real-estate points of interest in Da Nang, Vietnam."
 
     # --- Required Environment Variables (TSD Section 9) ---
-    MAPBOX_TOKEN: str = Field(..., description="Mapbox Geocoding API Token")
+    # MAPBOX_TOKEN: str = Field(..., description="Mapbox Geocoding API Token") # Disabled
+    MAPBOX_TOKEN: Optional[str] = Field(None, description="Mapbox Geocoding API Token (Disabled)")
     CLOUDFLARE_TURNSTILE_SECRET: str = Field(..., description="Cloudflare Turnstile Secret Key")
     CLOUDFLARE_TURNSTILE_SITE_KEY: str = Field(..., description="Cloudflare Turnstile Site Key (Public)")
     UPSTASH_REDIS_URL: str = Field(..., description="URL for Upstash Redis instance")

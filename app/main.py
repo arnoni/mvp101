@@ -80,7 +80,7 @@ async def root(request: Request):
     # The frontend will rely on the API health, but this serves the main page.
     context = {
         "request": request,
-        "mapbox_token": settings.MAPBOX_TOKEN, # Passed to frontend for potential map rendering/client-side geocoding fallback
+        # "mapbox_token": settings.MAPBOX_TOKEN, # Disabled
         "turnstile_site_key": settings.CLOUDFLARE_TURNSTILE_SITE_KEY,
         "settings": settings,
     }
@@ -92,10 +92,10 @@ async def root(request: Request):
 async def health_check():
     # In a real implementation, this would check Redis and Mapbox counter
     # For this MVP, we return a mock response based on TSD
-    mapbox_remaining = settings.MAX_MAPBOX_MONTHLY - (os.environ.get("MOCK_MAPBOX_COUNTER", 0))
+    # mapbox_remaining = settings.MAX_MAPBOX_MONTHLY - (os.environ.get("MOCK_MAPBOX_COUNTER", 0))
     return {
         "status": "ok",
-        "mapbox_remaining": max(0, mapbox_remaining)
+        # "mapbox_remaining": max(0, mapbox_remaining)
     }
 
 # --- Global Exception Handler (for unhandled errors) ---
