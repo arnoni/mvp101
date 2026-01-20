@@ -1,13 +1,14 @@
 # Implements TSD Section 4.1: Architecture & Design Patterns
 # Implements TSD Section 4.4: Business Logic (High-level)
 
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, Request, status, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from contextlib import asynccontextmanager
 import logging
 import os
+import httpx
 
 # Local imports
 from app.core.config import settings
@@ -71,6 +72,37 @@ templates = Jinja2Templates(directory=templates_dir)
 
 # --- API Routes ---
 app.include_router(api_router, prefix="/api")
+
+TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
+
+@app.post("/api/turnstile/verify")
+async def api_turnstile_verify(request: Request):
+    body = await request.json()
+    token = body.get("token")
+    if not token:
+        raise HTTPException(status_code=400, detail="Missing Turnstile token")
+
+    # Access secret directly from settings (loaded from env)
+    secret = settings.CLOUDFLARE_TURNSTILE_SECRET
+    if not secret:
+        raise HTTPException(status_code=500, detail="Turnstile secret not configured")
+
+    # optional: include user IP
+    client_ip = request.client.host if request.client else None
+
+    data = {"secret": secret, "response": token}
+    if client_ip:
+        data["remoteip"] = client_ip
+
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        r = await client.post(TURNSTILE_VERIFY_URL, data=data)
+        result = r.json()
+
+    if not result.get("success"):
+        # Useful during debugging; you can log result.get("error-codes")
+        raise HTTPException(status_code=403, detail=result)
+
+    return {"ok": True}
 
 # --- Root Endpoint (Landing Page) ---
 # Implements TSD FR-001: Landing Page & Address Input
