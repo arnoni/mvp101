@@ -16,10 +16,10 @@ async def verify_turnstile(token: str) -> bool:
     Verifies the Cloudflare Turnstile token against the Cloudflare API.
     Implements TSD Section 6: Turnstile verification.
     """
-    # Implements TSD Section 5.2: Turnstile secret stored in env var
-    if settings.ENV == "development" and token == "mock_turnstile_token_for_testing":
-        logger.warning("Using mock Turnstile token for development.")
-        return True
+    # Dev mode bypass removed as per user request.
+    # if settings.ENV == "development" and token == "mock_turnstile_token_for_testing":
+    #     logger.warning("Using mock Turnstile token for development.")
+    #     return True
 
     url = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
     data = {

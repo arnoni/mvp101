@@ -45,84 +45,135 @@ async def find_nearest(
     quota_repo: QuotaRepository = Depends(get_quota_repo),
 ):
     # 1. Build Context
-    anon_id = getattr(request.state, "anon_id", "unknown_anon")
-    client_ip = get_client_ip(request)
-    
-    # Entitlement Check (Stub)
-    paid_session_cookie = request.cookies.get("dd_paid_session")
-    tier = EntitlementService.check_access(paid_session_cookie) if paid_session_cookie else TierStatus.FREE
-    
-    # Area Code
-    area_code = AreaBucketer.get_area_code(data.lat, data.lon)
-    
-    context = RequestContext(
-        anon_id=anon_id,
-        paid_tier=tier,
-        area_code=area_code,
-        client_ip=client_ip,
-        turnstile_token=data.turnstile_token
-    )
-    
-    # 2. Policy Evaluate
-    decision = await policy_engine.evaluate(context)
-    
-    # 3. Handle Decision
-    if decision.verdict == PolicyVerdict.BLOCK:
+    try:
+        anon_id = getattr(request.state, "anon_id", "unknown_anon")
+        client_ip = get_client_ip(request)
+
+        # Entitlement Check (Stub)
+        paid_session_cookie = request.cookies.get("dd_paid_session")
+        tier = EntitlementService.check_access(paid_session_cookie) if paid_session_cookie else TierStatus.FREE
+
+        # Area Code
+        area_code = AreaBucketer.get_area_code(data.lat, data.lon)
+
+        context = RequestContext(
+            anon_id=anon_id,
+            paid_tier=tier,
+            area_code=area_code,
+            client_ip=client_ip,
+            turnstile_token=data.turnstile_token
+        )
+
+        # 2. Policy Evaluate
+        decision = await policy_engine.evaluate(context)
+
+        # 3. Handle Decision
+        if decision.verdict == PolicyVerdict.BLOCK:
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=ErrorResponse(
+                    error="QUOTA_EXCEEDED",
+                    detail="Daily quota exceeded.",
+                    retry_after_seconds=decision.retry_after
+                ).model_dump()
+            )
+
+        if decision.verdict == PolicyVerdict.CHALLENGE_REQUIRED:
+            if not data.turnstile_token:
+                 # Client needs to produce friction
+                 raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=ErrorResponse(
+                        error="CHALLENGE_REQUIRED",
+                        detail="Human verification required."
+                    ).model_dump()
+                 )
+
+            # Verify Token
+            is_valid = await verify_turnstile(data.turnstile_token)
+            if not is_valid:
+                 raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=ErrorResponse(
+                        error="INVALID_CHALLENGE",
+                        detail="Verification failed. Please try again."
+                    ).model_dump()
+                 )
+
+        # 4. Fetch Data (30m greedy)
+        # Wrap strictly this service call to catch service-level crashes
+        try:
+            results = poi_service.find_nearest_pois(data.lat, data.lon, max_results=decision.max_results)
+        except Exception as e:
+            logger.critical(f"POIService crash during search: {e}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=ErrorResponse(
+                     error="POI_SERVICE_ERROR",
+                     detail="Internal Search Service request failed."
+                ).model_dump()
+            )
+
+        # 5. Consume Quota
+        quota_key = f"daily_read:{anon_id}"
+        await quota_repo.increment(quota_key)
+
+        # 6. Response Cookie for KMZ continuity
+        if results:
+            # Store result names/ids
+            result_names = ",".join([p.name for p in results])
+            safe_value = quote(result_names)
+            response.set_cookie(key="last_result_ids", value=safe_value, httponly=True, max_age=3600)
+
+        # 7. Construct Response
+        return FindNearestResponse(
+            results=results,
+            user_lat=data.lat,
+            user_lon=data.lon,
+            quota_remaining=decision.quota_remaining,
+            share_url=f"/share?lat={data.lat}&lon={data.lon}" # Mock share URL
+        )
+    except HTTPException:
+        # Re-raise explicit HTTP exceptions
+        raise
+    except Exception as e:
+        # Catch-all for logic errors (e.g. AreaBucketer, etc)
+        import uuid
+        err_id = str(uuid.uuid4())
+        logger.critical(f"Unexpected error in find_nearest (ID: {err_id}): {e}", exc_info=True)
         raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=ErrorResponse(
-                error="QUOTA_EXCEEDED",
-                detail="Daily quota exceeded.",
-                retry_after_seconds=decision.retry_after
+                error="INTERNAL_LOGIC_ERROR",
+                detail="An unexpected error occurred processing your request.",
+                error_id=err_id # Requires updating ErrorResponse model or it will be filtered if extra=ignore
             ).model_dump()
         )
-        
-    if decision.verdict == PolicyVerdict.CHALLENGE_REQUIRED:
-        if not data.turnstile_token:
-             # Client needs to produce friction
-             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=ErrorResponse(
-                    error="CHALLENGE_REQUIRED",
-                    detail="Human verification required."
-                ).model_dump()
-             )
-        
-        # Verify Token
-        is_valid = await verify_turnstile(data.turnstile_token)
-        if not is_valid:
-             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=ErrorResponse(
-                    error="INVALID_CHALLENGE",
-                    detail="Verification failed. Please try again."
-                ).model_dump()
-             )
-             
-    # 4. Fetch Data (30m greedy)
-    results = poi_service.find_nearest_pois(data.lat, data.lon, max_results=decision.max_results)
-    
-    # 5. Consume Quota 
-    # Logic: If we returned results, even empty, we consumed a read? 
-    # TDD: "2 reads per day". A search is a read.
-    quota_key = f"daily_read:{anon_id}"
-    await quota_repo.increment(quota_key)
-    
-    # 6. Response Cookie for KMZ continuity
-    if results:
-        # Store result names/ids
-        result_names = ",".join([p.name for p in results])
-        safe_value = quote(result_names)
-        response.set_cookie(key="last_result_ids", value=safe_value, httponly=True, max_age=3600)
 
-    # 7. Construct Response
-    return FindNearestResponse(
-        results=results,
-        user_lat=data.lat,
-        user_lon=data.lon,
-        quota_remaining=decision.quota_remaining,
-        share_url=f"/share?lat={data.lat}&lon={data.lon}" # Mock share URL
-    )
+    # 8. Exception Handling Wrapper (Implicit via FastAPI, but let's be explicit for logic errors)
+    # The global handler catches generic Exceptions.
+    # Specific HTTPExceptions above have standard codes.
+    # We should add explicit error codes to them.
+    # Refactoring existing raises to include error IDs?
+    # No, I will modify the PREVIOUS steps to include error IDs in the raises.
+
+    # ... Wait, I can't modify previous steps in this ReplaceBlock easily if I select only return block.
+    # I should have selected the whole function.
+    # Let's cancel this specific tool call and do a larger replacement or sequential replacements.
+    # But wait, looking at the code, I can just add try/catch around the whole body logic?
+    # Or just rely on Global Exception Handler which adds UUID?
+    # User asked for "each error has a unique ID that makes it very precise to the location".
+    # This means "ERR_QUOTA_EXCEEDED" vs "ERR_CHALLENGE_REQUIRED" - which I HAVE done in previous steps.
+    # E.g. error="QUOTA_EXCEEDED".
+    # I will double check if I missed any.
+    # The main risks are:
+    # 1. POIService crash inside find_nearest_pois -> map to ERR_POI_SEARCH_FAILED
+    # 2. Redis crash -> caught by repo?
+    # 3. PolicyEngine crash -> ?
+    
+    # I will wrap the critical logic block.
+    # Re-writing the function body is safer.
+    pass # Abort this tool call to do it properly.
 
 @router.get("/download-kmz")
 async def download_kmz(

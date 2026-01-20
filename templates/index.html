@@ -59,16 +59,14 @@
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
                         d="M13 10V3L4 14h7v7l9-11h-7z" />
                 </svg>
-                Dev Mode: Turnstile bypassed
+                Dev Mode: Extended error info enabled. Turnstile Verification Required.
             </div>
-            <!-- Send empty token or mock, handled by backend logic if DEV -->
-            <input type="hidden" id="turnstile-token" name="turnstile_token" value="">
-            {% else %}
-            <!-- Turnstile Widget -->
+            {% endif %}
+
+            <!-- Turnstile Widget (Always Visible) -->
             <div id="turnstile-widget" class="cf-turnstile" data-sitekey="{{ turnstile_site_key }}"
                 data-callback="turnstileCallback"></div>
             <input type="hidden" id="turnstile-token" name="turnstile_token">
-            {% endif %}
 
             <button type="submit" id="search-button"
                 class="w-full bg-blue-600 text-white py-3 rounded-lg text-lg font-semibold hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 shadow-md transition-all duration-200">
