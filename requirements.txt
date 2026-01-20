@@ -6,6 +6,5 @@ pydantic-settings==2.3.4
 httpx==0.27.0
 fastkml==0.12
 Jinja2==3.1.4
-# redis (mocked for MVP, but would be needed for real Upstash connection)
-# python-dotenv (used implicitly by pydantic-settings, but good to list)
 python-dotenv==1.0.1
+redis==5.0.0

@@ -37,14 +37,18 @@ class FindNearestResponse(BaseModel):
     results: List[PublicPOIResult] = Field(..., description="Top 5 nearest POI results.")
     user_lat: float = Field(..., description="Geocoded latitude of the user's address.")
     user_lon: float = Field(..., description="Geocoded longitude of the user's address.")
+    quota_remaining: int = Field(..., description="Remaining daily quota.")
+    share_url: Optional[str] = Field(None, description="Shareable URL for this search.")
 
 # --- API Request Models ---
 
 class FindNearestRequest(BaseModel):
     """Request model for the /api/find-nearest endpoint."""
     # Implements TSD Section 4.3: Request Body
-    address: str = Field(..., description="User's free-text address.")
-    turnstile_token: str = Field(..., description="Cloudflare Turnstile verification token.")
+    # Implements TSD v1.1: Direct Lat/Lng input
+    lat: float = Field(..., description="Latitude of the user/search center.")
+    lon: float = Field(..., description="Longitude of the user/search center.")
+    turnstile_token: Optional[str] = Field(None, description="Cloudflare Turnstile verification token (optional).")
 
 # --- Error Response Model ---
 

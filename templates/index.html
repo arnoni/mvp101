@@ -1,41 +1,57 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="{{ current_lang }}">
 
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ settings.PROJECT_NAME }}</title>
+    <title>{{ t.title }}</title>
     <!-- Tailwind CSS (mock) -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
     <style>
-        /* Custom scrollbar for a cleaner look */
         ::-webkit-scrollbar {
             width: 8px;
         }
+
         ::-webkit-scrollbar-track {
-            background: #f1f5f9; 
+            background: #f1f5f9;
         }
+
         ::-webkit-scrollbar-thumb {
-            background: #cbd5e1; 
+            background: #cbd5e1;
             border-radius: 4px;
         }
+
         ::-webkit-scrollbar-thumb:hover {
-            background: #94a3b8; 
+            background: #94a3b8;
         }
     </style>
 </head>
 
 <body class="bg-slate-50 min-h-screen flex flex-col items-center py-12 px-4 sm:px-6 lg:px-8 font-sans text-slate-900">
-    <div class="max-w-md w-full space-y-6 bg-white p-8 rounded-2xl shadow-xl border border-slate-100">
-        <header class="text-center mb-6">
+    <div class="max-w-md w-full space-y-6 bg-white p-8 rounded-2xl shadow-xl border border-slate-100 relative">
+        <!-- Language Selector -->
+        <div class="absolute top-4 right-4 flex space-x-2 text-xs">
+            <a href="?lang=en" class="hover:underline {% if current_lang == 'en' %}font-bold{% endif %}">EN</a>
+            <span class="text-slate-300">|</span>
+            <a href="?lang=es" class="hover:underline {% if current_lang == 'es' %}font-bold{% endif %}">ES</a>
+            <span class="text-slate-300">|</span>
+            <a href="?lang=ru" class="hover:underline {% if current_lang == 'ru' %}font-bold{% endif %}">RU</a>
+            <span class="text-slate-300">|</span>
+            <a href="?lang=ko" class="hover:underline {% if current_lang == 'ko' %}font-bold{% endif %}">KO</a>
+        </div>
+
+        <header class="text-center mb-6 mt-2">
+            <!-- Ensure image path is correct -->
             <img src="/static/graphics/DillDrill_banner_selected.svg" alt="DillDrill" class="mx-auto h-24 mb-4">
-            <p class="text-slate-500 mt-1">Detect noisy rentals ahead of time – plan visits only for quiet homes.</p>
+            <p class="text-slate-500 mt-1">{{ t.subtitle }}</p>
         </header>
+
         <form id="search-form" class="space-y-4">
-            <label for="address" class="block text-sm font-medium text-slate-700">Enter property's latitude, longitude. Use Google Maps to get the exact latitude, longitude.</label>
-            <input type="text" id="address" name="address" required placeholder="e.g., 16.061, 108.235"
+            <label for="coordinates" class="block text-sm font-medium text-slate-700">{{ t.input_label }}</label>
+            <input type="text" id="coordinates" name="coordinates" required placeholder="{{ t.placeholder }}"
                 class="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-lg shadow-sm transition-all duration-200">
+
             {% if settings.ENV == 'development' %}
             <div
                 class="p-3 bg-yellow-50 border border-yellow-200 text-yellow-800 rounded-lg mb-4 text-sm flex items-center">
@@ -45,112 +61,177 @@
                 </svg>
                 Dev Mode: Turnstile bypassed
             </div>
-            <input type="hidden" id="turnstile-token" name="turnstile_token" value="mock_turnstile_token_for_testing">
+            <!-- Send empty token or mock, handled by backend logic if DEV -->
+            <input type="hidden" id="turnstile-token" name="turnstile_token" value="">
             {% else %}
-            <div class="cf-turnstile" data-sitekey="{{ turnstile_site_key }}" data-callback="turnstileCallback"></div>
+            <!-- Turnstile Widget -->
+            <div id="turnstile-widget" class="cf-turnstile" data-sitekey="{{ turnstile_site_key }}"
+                data-callback="turnstileCallback"></div>
             <input type="hidden" id="turnstile-token" name="turnstile_token">
             {% endif %}
+
             <button type="submit" id="search-button"
-                class="w-full bg-blue-600 text-white py-3 rounded-lg text-lg font-semibold hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 shadow-md transition-all duration-200"
-                {% if settings.ENV !='development' %}disabled{% endif %}>Find Nearest Projects</button>
-            {% if settings.ENV == 'development' %}
-            <div id="dev-poi-printout"
-                class="mt-4 p-4 bg-gray-100 border border-gray-300 rounded-lg text-sm font-mono text-gray-800 whitespace-pre-wrap hidden">
-            </div>
-            {% endif %}
+                class="w-full bg-blue-600 text-white py-3 rounded-lg text-lg font-semibold hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 shadow-md transition-all duration-200">
+                {{ t.button_search }}
+            </button>
         </form>
+
         <div id="status-message" class="mt-4 p-3 text-sm rounded-lg hidden" role="alert"></div>
+
         <div id="results-section" class="mt-8 space-y-4 hidden">
-            <h2 class="text-xl font-semibold text-slate-800">Top 5 Nearest Projects</h2>
+            <h2 class="text-xl font-semibold text-slate-800">{{ t.results_header }}</h2>
             <div id="results-list" class="space-y-4"></div>
-            <!-- KMZ Download removed -->
-        </div>
-        <div id="whatsapp-modal"
-            class="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full hidden z-50">
-            <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
-                <div class="mt-3 text-center">
-                    <h3 class="text-lg leading-6 font-medium text-gray-900">Join the Pro Beta List!</h3>
-                    <div class="mt-2 px-7 py-3">
-                        <p class="text-sm text-gray-500">Get early access to our full real-estate app and exclusive
-                            deals via WhatsApp.</p>
-                    </div>
-                    <div class="items-center px-4 py-3">
-                        <a href="https://wa.me/84905xxxxxx?text=I%20want%20to%20join%20the%20Da%20Nang%20real%20estate%20beta%20list"
-                            target="_blank"
-                            class="w-full inline-flex justify-center rounded-md border border-transparent shadow-sm px-4 py-2 bg-green-500 text-base font-medium text-white hover:bg-green-600 focus:outline-none sm:text-sm">Join
-                            Beta on WhatsApp</a>
-                        <button id="close-modal"
-                            class="mt-3 w-full inline-flex justify-center rounded-md border border-gray-300 px-4 py-2 bg-white text-base font-medium text-gray-700 shadow-sm hover:bg-gray-50 focus:outline-none sm:mt-0 sm:text-sm">No,
-                            thanks</button>
-                    </div>
-                </div>
+
+            <div class="mt-6 pt-4 border-t border-slate-100 text-center">
+                <a href="/download-kmz" target="_blank"
+                    class="text-blue-600 hover:text-blue-800 text-sm font-medium">Download KMZ result</a>
             </div>
+
+            <!-- Quota & Share Info -->
+            <div id="meta-info" class="mt-4 text-xs text-slate-400 text-center"></div>
         </div>
+
         <footer class="mt-8 text-center text-xs text-slate-400">v{{ settings.VERSION }}</footer>
     </div>
+
     <script>
         const form = document.getElementById('search-form');
-        const addressInput = document.getElementById('address');
+        const coordsInput = document.getElementById('coordinates');
         const searchButton = document.getElementById('search-button');
         const tokenInput = document.getElementById('turnstile-token');
         const statusMessage = document.getElementById('status-message');
         const resultsSection = document.getElementById('results-section');
         const resultsList = document.getElementById('results-list');
-        const devPoiPrintout = document.getElementById('dev-poi-printout');
-        const whatsappModal = document.getElementById('whatsapp-modal');
-        const closeModalButton = document.getElementById('close-modal');
+        const metaInfo = document.getElementById('meta-info');
 
-        function turnstileCallback(token) { tokenInput.value = token; searchButton.disabled = false; }
-        function showStatus(msg, type = 'info') { statusMessage.textContent = msg; statusMessage.className = 'mt-4 p-3 text-sm rounded-lg'; statusMessage.classList.remove('hidden'); if (type === 'error') statusMessage.classList.add('bg-red-100', 'text-red-800'); else if (type === 'success') statusMessage.classList.add('bg-green-100', 'text-green-800'); else statusMessage.classList.add('bg-blue-100', 'text-blue-800'); }
+        // I18n strings for JS
+        const STRINGS = {
+            searching: "{{ t.button_searching }}",
+            btn_default: "{{ t.button_search }}",
+            error: "{{ t.error_prefix }}",
+            success: "{{ t.success_prefix }}",
+            go_there: "{{ t.go_there }}",
+            dist: "{{ t.distance_unit }}"
+        };
+
+        function turnstileCallback(token) {
+            tokenInput.value = token;
+            // We assume if widget is shown, we need token.
+        }
+
+        function showStatus(msg, type = 'info') {
+            statusMessage.textContent = msg;
+            statusMessage.className = 'mt-4 p-3 text-sm rounded-lg';
+            statusMessage.classList.remove('hidden');
+            if (type === 'error') statusMessage.classList.add('bg-red-100', 'text-red-800');
+            else if (type === 'success') statusMessage.classList.add('bg-green-100', 'text-green-800');
+            else statusMessage.classList.add('bg-blue-100', 'text-blue-800');
+        }
+
         function hideStatus() { statusMessage.classList.add('hidden'); }
+
+        function parseCoordinates(input) {
+            // Very simple parser: "lat, lon"
+            const parts = input.split(',').map(s => s.trim());
+            if (parts.length !== 2) return null;
+            const lat = parseFloat(parts[0]);
+            const lon = parseFloat(parts[1]);
+            if (isNaN(lat) || isNaN(lon)) return null;
+            return { lat, lon };
+        }
+
         function renderResults(data) {
             resultsList.innerHTML = '';
 
-            if (devPoiPrintout) {
-                devPoiPrintout.innerHTML = '';
-                devPoiPrintout.classList.remove('hidden');
-                if (data.results && data.results.length > 0) {
-                    data.results.forEach(poi => {
-                        const line = `${poi.name}\n`;
-                        devPoiPrintout.textContent += line;
-                    });
-                } else {
-                    devPoiPrintout.textContent = "POI not found";
-                }
-            }
-
-            // Origin = address the user entered (lat,lon) returned by the API
-            const origin = `${data.user_lat},${data.user_lon}`;
-
             data.results.forEach(poi => {
                 const meters = Math.round(poi.distance_km * 1000);
-                // Construct Google Maps link with origin (user location) and destination (POI location)
-                const googleMapsLink = `https://www.google.com/maps/dir/?api=1&origin=${origin}&destination=${poi.lat},${poi.lon}&travelmode=driving`;
-                
+                // Use backend provided maps link or construct one? Backend provided is best.
+                // data.results has google_maps_link
+
                 const card = `
                     <div class="card bg-white p-4 border border-slate-200 rounded-lg shadow-sm flex items-center space-x-4 hover:border-blue-300 hover:shadow-md transition-all duration-200">
                         <img src="${poi.image_url}" alt="${poi.name}" class="w-16 h-16 object-cover rounded-md flex-shrink-0 shadow-sm">
                         <div class="flex-grow">
                             <h3 class="text-lg font-semibold text-slate-900">${poi.name}</h3>
-                            <p class="text-sm text-slate-600">${meters} m away</p>
+                            <p class="text-sm text-slate-600">${meters} ${STRINGS.dist}</p>
                         </div>
-                        <a href="${googleMapsLink}" target="_blank"
+                        <a href="${poi.google_maps_link}" target="_blank"
                            class="flex-shrink-0 inline-flex items-center px-3 py-1 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600 hover:bg-blue-700 transition-colors duration-200">
-                            Go There
+                            ${STRINGS.go_there}
                         </a>
                     </div>
                 `;
                 resultsList.insertAdjacentHTML('beforeend', card);
             });
+
+            // Meta Info
+            metaInfo.innerHTML = `Quota Remaining: ${data.quota_remaining}`;
+
             resultsSection.classList.remove('hidden');
         }
-        function showModalAfterDelay() { setTimeout(() => { if (localStorage.getItem('modal_shown') !== 'true') whatsappModal.classList.remove('hidden'); }, 5000); }
-        form.addEventListener('submit', async e => { e.preventDefault(); hideStatus(); resultsSection.classList.add('hidden'); if (devPoiPrintout) devPoiPrintout.classList.add('hidden'); searchButton.disabled = true; searchButton.textContent = 'Searching...'; const address = addressInput.value; const turnstile_token = tokenInput.value; if (!turnstile_token) { showStatus('Please complete the human verification.', 'error'); searchButton.disabled = false; searchButton.textContent = 'Find Nearest Projects'; return; } try { const response = await fetch('/api/find-nearest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ address, turnstile_token }) }); const data = await response.json(); if (response.ok) { renderResults(data); showStatus(`Success! Found ${data.results.length} nearest projects.`, 'success'); showModalAfterDelay(); } else { let errMsg = 'An unknown error occurred.'; let errId = ''; if (data.detail && typeof data.detail === 'object') { errId = data.detail.error_id || data.detail.error || ''; errMsg = data.detail.detail || JSON.stringify(data.detail); } else if (typeof data.detail === 'string') { errMsg = data.detail; errId = data.error || ''; } if (errId) showStatus(`Error (${errId}): ${errMsg}`, 'error'); else showStatus(`Error: ${errMsg}`, 'error'); } } catch (err) { console.error('Fetch error:', err); showStatus('Network error. Please check your connection.', 'error'); } finally { if (typeof turnstile !== 'undefined') turnstile.reset(); tokenInput.value = ''; searchButton.disabled = true; searchButton.textContent = 'Find Nearest Projects'; } });
-        closeModalButton.addEventListener('click', () => { whatsappModal.classList.add('hidden'); localStorage.setItem('modal_shown', 'true'); });
-        // Auto‑submit when URL contains address & token (debug mode)
-        function getQueryParam(name) { return new URLSearchParams(window.location.search).get(name); }
-        window.addEventListener('load', () => { const addr = getQueryParam('address'); const token = getQueryParam('turnstile_token'); if (addr && token) { addressInput.value = addr; tokenInput.value = token; searchButton.disabled = false; form.dispatchEvent(new Event('submit')); } });
-        if (!tokenInput.value) searchButton.disabled = true;
+
+        form.addEventListener('submit', async e => {
+            e.preventDefault();
+            hideStatus();
+            resultsSection.classList.add('hidden');
+            searchButton.disabled = true;
+            searchButton.textContent = STRINGS.searching;
+
+            const inputVal = coordsInput.value;
+            const turnstile_token = tokenInput.value;
+
+            const coords = parseCoordinates(inputVal);
+            if (!coords) {
+                showStatus(STRINGS.error + ": Invalid coordinates format. Use 'lat, lon'", 'error');
+                searchButton.disabled = false;
+                searchButton.textContent = STRINGS.btn_default;
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/find-nearest', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        lat: coords.lat,
+                        lon: coords.lon,
+                        turnstile_token
+                    })
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    renderResults(data);
+                    showStatus(`${STRINGS.success}! Found ${data.results.length} projects.`, 'success');
+                } else {
+                    let errMsg = 'Unknown error';
+                    // Parse ErrorResponse
+                    if (data.detail && data.detail.detail) {
+                        errMsg = data.detail.detail;
+                    } else if (data.detail) {
+                        errMsg = JSON.stringify(data.detail);
+                    }
+                    showStatus(`${STRINGS.error}: ${errMsg}`, 'error');
+
+                    // If challenge required, we might need to reset widget?
+                    if (data.detail && data.detail.error === "CHALLENGE_REQUIRED") {
+                        // In MVP 1.2, widget is always there if env != dev? 
+                        // Or we might hide it initially. TDD says "Friction as escalation".
+                        // For now, if we get challenge required, the user must ensure they did the turnstile.
+                        if (typeof turnstile !== 'undefined') turnstile.reset();
+                    }
+                }
+            } catch (err) {
+                console.error('Fetch error:', err);
+                showStatus(`${STRINGS.error}: Network error.`, 'error');
+            } finally {
+                if (typeof turnstile !== 'undefined') turnstile.reset();
+                tokenInput.value = ''; // Reset token usage
+                searchButton.disabled = false;
+                searchButton.textContent = STRINGS.btn_default;
+            }
+        });
     </script>
 </body>
 

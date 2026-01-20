@@ -21,6 +21,10 @@ class Settings(BaseSettings):
     ENV: str = Field("development", description="Application environment (e.g., production, development)")
     MAX_MAPBOX_MONTHLY: int = Field(90000, description="Hard cap for Mapbox requests per month (TSD 10)")
 
+    # --- Feature Flags (Impl Plan 2.1) ---
+    ENABLE_REDIS: bool = Field(True, description="Feature flag for Redis")
+    ENABLE_PAID_TIER: bool = Field(True, description="Feature flag for Paid Tier")
+
     # --- Constraints & Limitations (TSD Section 10) ---
     # Da Nang Bounding Box: 16.00–16.12 N, 108.10–108.30 E
     DA_NANG_BBOX: List[float] = Field(

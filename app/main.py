@@ -9,41 +9,59 @@ from contextlib import asynccontextmanager
 import logging
 import os
 import httpx
+import uuid
 
 # Local imports
 from app.core.config import settings
-from app.api.routes import router as api_router
 from app.services.poi_service import POIService
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
 # --- Application Lifecycle Management ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Implements TSD Section 5.4: MasterList cached in memory at container start
-    # Implements TSD Section 4.1: Repository Pattern for MasterList
+    # Application startup
     logger.info(f"Application startup: v{settings.VERSION}")
     logger.info("Initializing POI Service and loading MasterList...")
+    
+    # 1. Initialize POI Service
     try:
-        # Initialize the POIService, which loads the masterlist.json into memory
         app.state.poi_service = POIService()
         logger.info(f"MasterList loaded successfully with {len(app.state.poi_service.master_list)} points.")
     except Exception as e:
         logger.error(f"Failed to load MasterList: {e}")
-        # In a real-world scenario, this might be a critical failure, but for MVP, we proceed with a warning
-        # as the service might be able to handle it if the list is empty or mocked.
         pass
 
-    # In a real-world scenario, Redis connection would be established here
-    # app.state.redis_client = await connect_to_redis(settings.UPSTASH_REDIS_URL)
-    
+    # 2. Initialize Redis & Quota Repository
+    if settings.ENABLE_REDIS:
+        from app.services.redis_client import RealRedisClient
+        from app.services.quota_repository import QuotaRepository
+        try:
+             # Create global Redis client
+             redis_client = RealRedisClient(settings.UPSTASH_REDIS_URL)
+             app.state.redis_client = redis_client
+             
+             # Create Quota Repo
+             app.state.quota_repo = QuotaRepository(redis_client)
+             logger.info("QuotaRepository initialized with Real Redis.")
+        except Exception as e:
+             logger.error(f"Failed to connect to Redis: {e}. Degrading to in-memory quota.")
+             from app.services.quota_repository import QuotaRepository
+             app.state.quota_repo = QuotaRepository(None)
+    else:
+         logger.info("Redis disabled via config. Using in-memory quota.")
+         from app.services.quota_repository import QuotaRepository
+         app.state.quota_repo = QuotaRepository(None)
+
     yield
     
     # Application shutdown
     logger.info("Application shutdown: Cleaning up resources.")
-    # In a real-world scenario, Redis connection would be closed here
-    # await app.state.redis_client.close()
+    if hasattr(app.state, "redis_client") and app.state.redis_client:
+         await app.state.redis_client._redis.aclose() # Access internal redis to close
+
 
 # --- FastAPI Application Initialization ---
 app = FastAPI(
@@ -57,13 +75,11 @@ app = FastAPI(
 )
 
 # --- Middleware and Exception Handlers ---
-# TSD Section 5.2: CORS - only same-origin + vercel/render domains
-# For a simple MVP, we will rely on the hosting platform's configuration (e.g., Vercel's default)
-# and keep the application simple.
+from app.core.middleware import AnonIdMiddleware
+app.add_middleware(AnonIdMiddleware)
 
 # --- Static Files and Templates ---
 # Implements TSD Section 7.1: /static/ and /templates/
-import os
 # Resolve static and templates directories relative to this file
 static_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "static"))
 templates_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "templates"))
@@ -71,8 +87,12 @@ app.mount("/static", StaticFiles(directory=static_dir), name="static")
 templates = Jinja2Templates(directory=templates_dir)
 
 # --- API Routes ---
+from app.api.routes import router as api_router
 app.include_router(api_router, prefix="/api")
 
+# --- Turnstile Verification Endpoint (Legacy/Backup?) ---
+# Note: Verification logic is now mostly in app.utils.security and PolicyEngine
+# But we can keep this for direct frontend testing if needed.
 TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
 
 @app.post("/api/turnstile/verify")
@@ -104,17 +124,34 @@ async def api_turnstile_verify(request: Request):
 
     return {"ok": True}
 
+@app.get("/privacy", response_class=HTMLResponse)
+async def privacy():
+    with open(os.path.join(static_dir, "privacy.html"), "r", encoding="utf-8") as f:
+        return HTMLResponse(content=f.read())
+
+@app.get("/sw.js", response_class=HTMLResponse)
+async def service_worker():
+    with open(os.path.join(static_dir, "sw.js"), "r", encoding="utf-8") as f:
+        return HTMLResponse(content=f.read(), media_type="application/javascript")
+        
+@app.get("/offline.html", response_class=HTMLResponse)
+async def offline():
+    with open(os.path.join(static_dir, "offline.html"), "r", encoding="utf-8") as f:
+        return HTMLResponse(content=f.read())
+
 # --- Root Endpoint (Landing Page) ---
 # Implements TSD FR-001: Landing Page & Address Input
 @app.get("/", response_class=HTMLResponse)
-async def root(request: Request):
-    # Implements TSD Section 9: Health Check (indirectly)
-    # The frontend will rely on the API health, but this serves the main page.
+async def root(request: Request, lang: str = "en"):
+    # Implements TSD Section 12: I18n
+    from app.services.i18n import get_translations
+    
     context = {
         "request": request,
-        # "mapbox_token": settings.MAPBOX_TOKEN, # Disabled
         "turnstile_site_key": settings.CLOUDFLARE_TURNSTILE_SITE_KEY,
         "settings": settings,
+        "t": get_translations(lang),
+        "current_lang": lang
     }
     return templates.TemplateResponse("index.html", context)
 
@@ -122,18 +159,10 @@ async def root(request: Request):
 # Implements TSD Section 9: Health Check
 @app.get("/health", status_code=status.HTTP_200_OK)
 async def health_check():
-    # In a real implementation, this would check Redis and Mapbox counter
-    # For this MVP, we return a mock response based on TSD
-    # mapbox_remaining = settings.MAX_MAPBOX_MONTHLY - (os.environ.get("MOCK_MAPBOX_COUNTER", 0))
+    # In a real implementation, this would check Redis
     return {
         "status": "ok",
-        # "mapbox_remaining": max(0, mapbox_remaining)
     }
-
-# --- Global Exception Handler (for unhandled errors) ---
-import uuid
-
-# ...
 
 # --- Global Exception Handler (for unhandled errors) ---
 @app.exception_handler(Exception)
@@ -150,6 +179,3 @@ async def global_exception_handler(request: Request, exc: Exception):
             }
         }
     )
-
-# Note: The actual rate-limiting, circuit-breaking, and geocoding logic
-# will be implemented in the API routes and service layers.
