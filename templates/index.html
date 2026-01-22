@@ -98,6 +98,7 @@
         const coordsInput = document.getElementById('coordinates');
         const searchButton = document.getElementById('search-button');
         const tokenInput = document.getElementById('turnstile-token');
+        const widgetContainer = document.getElementById('turnstile-widget');
         const statusMessage = document.getElementById('status-message');
         const resultsSection = document.getElementById('results-section');
         const resultsList = document.getElementById('results-list');
@@ -110,20 +111,37 @@
             error: "{{ t.error_prefix }}",
             success: "{{ t.success_prefix }}",
             go_there: "{{ t.go_there }}",
-            dist: "{{ t.distance_unit }}"
+            dist: "{{ t.distance_unit }}",
+            zero_results: "You have a green light! No construction nearby found.",
+            waiting: "Waiting for user input..."
         };
 
         function turnstileCallback(token) {
             tokenInput.value = token;
-            // We assume if widget is shown, we need token.
+            // Hide widget to reduce visual clutter after verification
+            if (widgetContainer) widgetContainer.style.display = 'none';
+        }
+
+        function resetTurnstile() {
+            if (typeof turnstile !== 'undefined') {
+                turnstile.reset();
+                tokenInput.value = '';
+                // Show widget again for next verification
+                if (widgetContainer) widgetContainer.style.display = 'block';
+            }
         }
 
         function showStatus(msg, type = 'info') {
             statusMessage.textContent = msg;
             statusMessage.className = 'mt-4 p-3 text-sm rounded-lg';
             statusMessage.classList.remove('hidden');
+
+            // Remove all specific color classes first
+            statusMessage.classList.remove('bg-red-100', 'text-red-800', 'bg-green-100', 'text-green-800', 'bg-blue-100', 'text-blue-800', 'bg-slate-100', 'text-slate-600');
+
             if (type === 'error') statusMessage.classList.add('bg-red-100', 'text-red-800');
             else if (type === 'success') statusMessage.classList.add('bg-green-100', 'text-green-800');
+            else if (type === 'waiting') statusMessage.classList.add('bg-slate-100', 'text-slate-600');
             else statusMessage.classList.add('bg-blue-100', 'text-blue-800');
         }
 
@@ -144,9 +162,6 @@
 
             data.results.forEach(poi => {
                 const meters = Math.round(poi.distance_km * 1000);
-                // Use backend provided maps link or construct one? Backend provided is best.
-                // data.results has google_maps_link
-
                 const card = `
                     <div class="card bg-white p-4 border border-slate-200 rounded-lg shadow-sm flex items-center space-x-4 hover:border-blue-300 hover:shadow-md transition-all duration-200">
                         <img src="${poi.image_url}" alt="${poi.name}" class="w-16 h-16 object-cover rounded-md flex-shrink-0 shadow-sm">
@@ -201,11 +216,14 @@
                 const data = await response.json();
 
                 if (response.ok) {
-                    renderResults(data);
-                    showStatus(`${STRINGS.success}! Found ${data.results.length} projects.`, 'success');
+                    if (data.results.length === 0) {
+                        showStatus(STRINGS.zero_results, 'success');
+                    } else {
+                        renderResults(data);
+                        showStatus(`${STRINGS.success}! Found ${data.results.length} projects.`, 'success');
+                    }
                 } else {
                     let errMsg = 'Unknown error';
-                    // Parse ErrorResponse
                     if (data.detail && data.detail.detail) {
                         errMsg = data.detail.detail;
                     } else if (data.detail) {
@@ -213,25 +231,29 @@
                     }
                     showStatus(`${STRINGS.error}: ${errMsg}`, 'error');
 
-                    // If challenge required, we might need to reset widget?
                     if (data.detail && data.detail.error === "CHALLENGE_REQUIRED") {
-                        // In MVP 1.2, widget is always there if env != dev? 
-                        // Or we might hide it initially. TDD says "Friction as escalation".
-                        // For now, if we get challenge required, the user must ensure they did the turnstile.
-                        if (typeof turnstile !== 'undefined') turnstile.reset();
+                        resetTurnstile();
                     }
                 }
             } catch (err) {
                 console.error('Fetch error:', err);
                 showStatus(`${STRINGS.error}: Network error.`, 'error');
             } finally {
-                if (typeof turnstile !== 'undefined') turnstile.reset();
-                tokenInput.value = ''; // Reset token usage
+                // Determine if we should reset turnstile right away
+                // TDD implies Friction. Strict security resets every time.
+                // User wants "reappear when need another one".
+                resetTurnstile();
                 searchButton.disabled = false;
                 searchButton.textContent = STRINGS.btn_default;
+
+                // Status update timeout
+                setTimeout(() => {
+                    showStatus(STRINGS.waiting, 'waiting');
+                }, 10000);
             }
         });
     </script>
+
 </body>
 
 </html>

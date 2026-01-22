@@ -71,10 +71,16 @@ class POIService:
         search_radius_km = 0.1 # Fixed TDD requirement
         candidates: List[Tuple[float, POI]] = []
         
+        # Debugging: Trace potential candidates
+        if settings.ENV == "development":
+             logger.info(f"[DEBUG] Searching near {user_lat}, {user_lon} in radius {search_radius_km}km")
+        
         for poi in self.master_list:
             physical_dist = haversine(user_lat, user_lon, poi.lat, poi.lon)
             if physical_dist <= search_radius_km:
                 candidates.append((physical_dist, poi))
+                if settings.ENV == "development":
+                    logger.info(f"[DEBUG] Candidate found: {poi.name} at {physical_dist*1000:.1f}m")
 
         # 2. Sort by distance from user (closest first)
         candidates.sort(key=lambda x: x[0])

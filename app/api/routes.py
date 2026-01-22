@@ -130,7 +130,9 @@ async def find_nearest(
             results=results,
             user_lat=data.lat,
             user_lon=data.lon,
-            quota_remaining=decision.quota_remaining,
+            # We just consumed 1 unit (Step 5), but decision.quota_remaining was calculated BEFORE that.
+            # So, the verified remaining is (snapshot - 1).
+            quota_remaining=max(0, decision.quota_remaining - 1),
             share_url=f"/share?lat={data.lat}&lon={data.lon}" # Mock share URL
         )
     except HTTPException:
