@@ -203,6 +203,7 @@
             }
 
             try {
+
                 const response = await fetch('/api/find-nearest', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -212,6 +213,12 @@
                         turnstile_token
                     })
                 });
+
+                // Capture Request ID for debugging
+                const reqId = response.headers.get('X-Request-ID');
+                if (reqId) {
+                    console.log("Request ID:", reqId);
+                }
 
                 const data = await response.json();
 
@@ -228,6 +235,10 @@
                         errMsg = data.detail.detail;
                     } else if (data.detail) {
                         errMsg = JSON.stringify(data.detail);
+                    }
+                    // Append Request ID to error message if available
+                    if (reqId) {
+                        errMsg += ` (Req ID: ${reqId})`;
                     }
                     showStatus(`${STRINGS.error}: ${errMsg}`, 'error');
 

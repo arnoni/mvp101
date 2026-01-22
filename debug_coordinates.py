@@ -3,7 +3,7 @@ import asyncio
 import sys
 import os
 import httpx
-from urllib.parse import quote
+from typing import Any
 
 # Add the current directory to sys.path
 sys.path.append(os.getcwd())
@@ -30,6 +30,11 @@ async def test_coordinates():
     print(f"Calculated Distance:   {dist_m:.2f} meters")
     
     print(f"\n--- Mapbox API Coordinate Support ---")
+    
+    if not settings.MAPBOX_TOKEN:
+        print("Skipping Mapbox check: MAPBOX_TOKEN is not set.")
+        return
+
     # Check if Mapbox accepts "lon,lat" as a query (Reverse Geocoding)
     # Mapbox Geocoding API format: {longitude},{latitude}
     query = f"{TEST_LON},{TEST_LAT}"
@@ -43,15 +48,22 @@ async def test_coordinates():
         try:
             print(f"Querying Mapbox with: {query}")
             resp = await client.get(url, params=params)
-            data = resp.json()
+            data: dict[str, Any] = resp.json()
             
-            if "features" in data and len(data["features"]) > 0:
-                print(f"Mapbox returned {len(data['features'])} features.")
-                for i, f in enumerate(data['features'][:3]):
-                    print(f"[{i}] {f['place_name']} ({f['place_type']})")
-                    print(f"    Center: {f['center']}")
+            features: list[dict[str, Any]] = data.get("features", [])
+            
+            if len(features) > 0:
+                print(f"Mapbox returned {len(features)} features.")
+                for i, f in enumerate(features[:3]):
+                    place_name = f.get('place_name', 'Unknown')
+                    place_type = f.get('place_type', ['unknown'])
+                    center = f.get('center', [0, 0])
+                    
+                    print(f"[{i}] {place_name} ({place_type})")
+                    print(f"    Center: {center}")
                     # Distance from returned center to Hiyori
-                    mlon, mlat = f['center']
+                    mlon: float = float(center[0])
+                    mlat: float = float(center[1])
                     mdist = haversine(mlat, mlon, HIYORI_LAT, HIYORI_LON) * 1000
                     print(f"    Dist to Hiyori: {mdist:.2f} meters")
             else:

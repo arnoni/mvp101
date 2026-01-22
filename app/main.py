@@ -14,9 +14,11 @@ import uuid
 # Local imports
 from app.core.config import settings
 from app.services.poi_service import POIService
+from app.logging import configure_logging
+from app.middleware.logging import LoggingMiddleware
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging (Structlog)
+configure_logging()
 logger = logging.getLogger(__name__)
 
 # --- Application Lifecycle Management ---
@@ -87,6 +89,7 @@ app = FastAPI(
 
 # --- Middleware and Exception Handlers ---
 from app.core.middleware import AnonIdMiddleware
+app.add_middleware(LoggingMiddleware) # Add structured logging middleware first (outermost or close to it)
 app.add_middleware(AnonIdMiddleware)
 
 # --- Static Files and Templates ---

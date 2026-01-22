@@ -15,6 +15,7 @@ dependencies = [
     "python-dotenv==1.0.1",
     "setuptools",
     "redis>=7.1.0",
+    "structlog>=25.5.0",
 ]
 
 [build-system]

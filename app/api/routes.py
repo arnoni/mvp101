@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Request, HTTPException, status, Depends, Response
-from fastapi.responses import JSONResponse
-import logging
-from typing import Optional, List
+import structlog
+from typing import Optional
 from urllib.parse import quote, unquote
 
 from app.core.config import settings
@@ -9,7 +8,8 @@ from app.models.dto import (
     FindNearestRequest, 
     FindNearestResponse, 
     ErrorResponse, 
-    PublicPOIResult
+    PublicPOIResult,
+    TierStatus # Need to import this if used in code, handled below
 )
 from app.services.area_bucketer import AreaBucketer
 from app.services.entitlement_service import EntitlementService, TierStatus
@@ -20,7 +20,11 @@ from app.services.kmz_service import generate_kmz
 from app.utils.security import verify_turnstile, get_client_ip
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
+
+# --- Helper for Error ID ---
+def get_req_id(request: Request) -> Optional[str]:
+    return getattr(request.state, "request_id", None)
 
 # --- Dependencies ---
 
@@ -49,7 +53,7 @@ async def find_nearest(
         anon_id = getattr(request.state, "anon_id", "unknown_anon")
         client_ip = get_client_ip(request)
 
-        # Entitlement Check (Stub)
+        # Entitlement Check
         paid_session_cookie = request.cookies.get("dd_paid_session")
         tier = EntitlementService.check_access(paid_session_cookie) if paid_session_cookie else TierStatus.FREE
 
@@ -74,18 +78,19 @@ async def find_nearest(
                 detail=ErrorResponse(
                     error="QUOTA_EXCEEDED",
                     detail="Daily quota exceeded.",
-                    retry_after_seconds=decision.retry_after
+                    retry_after_seconds=decision.retry_after,
+                    error_id=get_req_id(request)
                 ).model_dump()
             )
 
         if decision.verdict == PolicyVerdict.CHALLENGE_REQUIRED:
             if not data.turnstile_token:
-                 # Client needs to produce friction
                  raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail=ErrorResponse(
                         error="CHALLENGE_REQUIRED",
-                        detail="Human verification required."
+                        detail="Human verification required.",
+                        error_id=get_req_id(request)
                     ).model_dump()
                  )
 
@@ -96,21 +101,22 @@ async def find_nearest(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail=ErrorResponse(
                         error="INVALID_CHALLENGE",
-                        detail="Verification failed. Please try again."
+                        detail="Verification failed. Please try again.",
+                        error_id=get_req_id(request)
                     ).model_dump()
                  )
 
         # 4. Fetch Data (30m greedy)
-        # Wrap strictly this service call to catch service-level crashes
         try:
             results = poi_service.find_nearest_pois(data.lat, data.lon, max_results=decision.max_results)
         except Exception as e:
-            logger.critical(f"POIService crash during search: {e}", exc_info=True)
+            logger.critical("poi_service_crashed", error=str(e), exc_info=True)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=ErrorResponse(
-                     error="POI_SERVICE_ERROR",
-                     detail="Internal Search Service request failed."
+                    error="POI_SERVICE_ERROR",
+                    detail="Internal Search Service request failed.",
+                    error_id=get_req_id(request)
                 ).model_dump()
             )
 
@@ -120,62 +126,38 @@ async def find_nearest(
 
         # 6. Response Cookie for KMZ continuity
         if results:
-            # Store result names/ids
             result_names = ",".join([p.name for p in results])
             safe_value = quote(result_names)
             response.set_cookie(key="last_result_ids", value=safe_value, httponly=True, max_age=3600)
 
         # 7. Construct Response
-        return FindNearestResponse(
+        resp = FindNearestResponse(
             results=results,
             user_lat=data.lat,
             user_lon=data.lon,
-            # We just consumed 1 unit (Step 5), but decision.quota_remaining was calculated BEFORE that.
-            # So, the verified remaining is (snapshot - 1).
+            # We just consumed 1 unit
             quota_remaining=max(0, decision.quota_remaining - 1),
-            share_url=f"/share?lat={data.lat}&lon={data.lon}" # Mock share URL
+            share_url=f"/share?lat={data.lat}&lon={data.lon}"
         )
+        # Log successful processing with structlog
+        logger.info("search_request_processed", anon_id=anon_id, results_count=len(results))
+        
+        return resp
+
     except HTTPException:
-        # Re-raise explicit HTTP exceptions
         raise
     except Exception as e:
-        # Catch-all for logic errors (e.g. AreaBucketer, etc)
-        import uuid
-        err_id = str(uuid.uuid4())
-        logger.critical(f"Unexpected error in find_nearest (ID: {err_id}): {e}", exc_info=True)
+        err_id = get_req_id(request) or "unknown"
+        logger.critical(f"unexpected_error_in_find_nearest", error=str(e), exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=ErrorResponse(
                 error="INTERNAL_LOGIC_ERROR",
                 detail="An unexpected error occurred processing your request.",
-                error_id=err_id # Requires updating ErrorResponse model or it will be filtered if extra=ignore
+                error_id=err_id
             ).model_dump()
         )
 
-    # 8. Exception Handling Wrapper (Implicit via FastAPI, but let's be explicit for logic errors)
-    # The global handler catches generic Exceptions.
-    # Specific HTTPExceptions above have standard codes.
-    # We should add explicit error codes to them.
-    # Refactoring existing raises to include error IDs?
-    # No, I will modify the PREVIOUS steps to include error IDs in the raises.
-
-    # ... Wait, I can't modify previous steps in this ReplaceBlock easily if I select only return block.
-    # I should have selected the whole function.
-    # Let's cancel this specific tool call and do a larger replacement or sequential replacements.
-    # But wait, looking at the code, I can just add try/catch around the whole body logic?
-    # Or just rely on Global Exception Handler which adds UUID?
-    # User asked for "each error has a unique ID that makes it very precise to the location".
-    # This means "ERR_QUOTA_EXCEEDED" vs "ERR_CHALLENGE_REQUIRED" - which I HAVE done in previous steps.
-    # E.g. error="QUOTA_EXCEEDED".
-    # I will double check if I missed any.
-    # The main risks are:
-    # 1. POIService crash inside find_nearest_pois -> map to ERR_POI_SEARCH_FAILED
-    # 2. Redis crash -> caught by repo?
-    # 3. PolicyEngine crash -> ?
-    
-    # I will wrap the critical logic block.
-    # Re-writing the function body is safer.
-    pass # Abort this tool call to do it properly.
 
 @router.get("/download-kmz")
 async def download_kmz(
@@ -187,13 +169,6 @@ async def download_kmz(
     """
     Generate KMZ. Counts as a read.
     """
-    # 1. Recover Context (Simulated from cookie or previous state?)
-    # KMZ download is usually a GET, so no body params.
-    # We use IP/Cookie for identity. Area Code? 
-    # We might not know the exact area code here unless we passed it or stored it.
-    # For MVP, we pass a dummy or "cached" area code, or skip area checks for KMZ?
-    # TDD says "Counts as a read". So we must check quota.
-    
     anon_id = getattr(request.state, "anon_id", "unknown_anon")
     client_ip = get_client_ip(request)
     paid_session_cookie = request.cookies.get("dd_paid_session")
@@ -203,48 +178,40 @@ async def download_kmz(
     context = RequestContext(
         anon_id=anon_id,
         paid_tier=tier,
-        area_code="global", # KMZ download maybe doesn't need area strictness
+        area_code="global",
         client_ip=client_ip,
-        turnstile_token=None # Turnstile on download might be hard for GET. 
-        # TDD didn't specify Turnstile for KMZ, just Quota.
+        turnstile_token=None 
     )
     
-    # 2. Policy Check
+    # Policy Check
     decision = await policy_engine.evaluate(context)
     if decision.verdict == PolicyVerdict.BLOCK:
          raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=ErrorResponse(
                 error="QUOTA_EXCEEDED",
-                detail="Daily quota exceeded."
+                detail="Daily quota exceeded.",
+                retry_after_seconds=decision.retry_after,
+                error_id=get_req_id(request)
             ).model_dump()
         )
     
-    # If CHALLENGE_REQUIRED? 
-    # GET request can't easily carry turnstile token unless in query param.
-    # We will skip challenge for KMZ for now or fail if strict.
-    # Plan v1.2 Phase 6.1 says "invokes PolicyEngine... just like search".
-    # If policy demands friction, downloading fails. User must be "trusted" or Upgrade.
-    
-    # 3. Generate KMZ
+    # Generate KMZ
     result_ids_str = request.cookies.get("last_result_ids")
     if not result_ids_str:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=ErrorResponse(
                 error="NO_LAST_RESULT",
-                detail="No previous search result found."
+                detail="No previous search result found.",
+                error_id=get_req_id(request)
             ).model_dump(),
         )
     
     target_names_str = unquote(result_ids_str)
     target_names = target_names_str.split(",")
-    # Logic to find these POIs in master list
-    # POIService needs a lookup method or we access master_list directly (it's public attribute in current impl)
     target_pois = [p for p in poi_service.master_list if p.name in target_names]
     
-    # Convert to PublicPOIResult for KMZ generator
-    # We need lat/lon/etc.
     mock_results: List[PublicPOIResult] = []
     for poi in target_pois:
         mock_results.append(
@@ -261,7 +228,7 @@ async def download_kmz(
     try:
         kmz_content = await generate_kmz(mock_results)
         
-        # 4. Consume Quota
+        # Consume Quota
         quota_key = f"daily_read:{anon_id}"
         await quota_repo.increment(quota_key)
         
@@ -274,11 +241,12 @@ async def download_kmz(
             },
         )
     except Exception as e:
-        logger.error(f"KMZ generation failed: {e}")
+        logger.error("kmz_generation_failed", error=str(e))
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=ErrorResponse(
                 error="KMZ_GEN_FAILED",
-                detail="Could not generate KMZ file."
+                detail="Could not generate KMZ file.",
+                error_id=get_req_id(request)
             ).model_dump(),
         )
