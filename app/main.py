@@ -168,7 +168,7 @@ async def root(request: Request, lang: str = "en"):
         "current_lang": lang,
         # Mock initial state for UI
         "user_plan": "FREE", 
-        "quota_remaining": 5
+        "quota_remaining": 2
     }
     return templates.TemplateResponse("index.html", context)
 
