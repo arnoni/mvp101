@@ -44,7 +44,7 @@ async def lifespan(app: FastAPI):
         # Let's ensure app.state.poi_service exists.
         class EmptyPOIService:
              master_list = []
-             def find_nearest_pois(self, *args, **kwargs): return []
+             def find_nearest_pois(self, *args, **kwargs): return [], ["POI Service failed to initialize"]
         app.state.poi_service = EmptyPOIService()
 
     # 2. Initialize Redis & Quota Repository
