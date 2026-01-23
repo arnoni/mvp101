@@ -165,7 +165,10 @@ async def root(request: Request, lang: str = "en"):
         "turnstile_site_key": settings.CLOUDFLARE_TURNSTILE_SITE_KEY,
         "settings": settings,
         "t": get_translations(lang),
-        "current_lang": lang
+        "current_lang": lang,
+        # Mock initial state for UI
+        "user_plan": "FREE", 
+        "quota_remaining": 5
     }
     return templates.TemplateResponse("index.html", context)
 

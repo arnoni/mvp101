@@ -52,36 +52,34 @@ class POIService:
         """Deprecated: Semantic search removed in favor of direct coordinate support."""
         pass
 
-    def find_nearest_pois(self, user_lat: float, user_lon: float, max_results: int = 5) -> List[PublicPOIResult]:
+    def find_nearest_pois(self, user_lat: float, user_lon: float, max_results: int = 5) -> Tuple[List[PublicPOIResult], List[str]]:
         """
         Calculate distances to all POIs and return the nearest results 
         that satisfy the 30m minimum spacing rule.
         
-        Args:
-            user_lat (float): User's latitude.
-            user_lon (float): User's longitude.
-            max_results (int): Maximum number of results to return (Tier dependent).
-            
         Returns:
-            List[PublicPOIResult]: Filtered list of POIs.
+            Tuple[List[PublicPOIResult], List[str]]: (Filtered results, Debug logs)
         """
+        logs: List[str] = []
         if not self.master_list:
-            return []
+            logs.append("MasterList is empty.")
+            return [], logs
 
         # 1. Gather all candidates within 100m (0.1 km)
         search_radius_km = 0.1 # Fixed TDD requirement
         candidates: List[Tuple[float, POI]] = []
         
-        # Debugging: Trace potential candidates
-        if settings.ENV == "development":
-             logger.info(f"[DEBUG] Searching near {user_lat}, {user_lon} in radius {search_radius_km}km")
+        logs.append(f"Searching near {user_lat:.5f}, {user_lon:.5f} in radius {search_radius_km}km")
         
         for poi in self.master_list:
             physical_dist = haversine(user_lat, user_lon, poi.lat, poi.lon)
             if physical_dist <= search_radius_km:
                 candidates.append((physical_dist, poi))
-                if settings.ENV == "development":
-                    logger.debug("poi_candidate_found", name=poi.name, dist_m=physical_dist * 1000)
+                logs.append(f"Candidate found: {poi.name} at {physical_dist*1000:.1f}m")
+
+        if not candidates:
+            logs.append("No candidates found within search radius.")
+            return [], logs
 
         # 2. Sort by distance from user (closest first)
         candidates.sort(key=lambda x: x[0])
@@ -92,6 +90,7 @@ class POIService:
         
         for dist_from_user, candidate_poi in candidates:
             if len(selected_tuples) >= max_results:
+                logs.append(f"Max results ({max_results}) reached.")
                 break
                 
             # Check spacing against ALL already selected POIs
@@ -103,10 +102,12 @@ class POIService:
                 )
                 if inter_poi_dist < min_spacing_km:
                     is_far_enough = False
+                    logs.append(f"Skipping {candidate_poi.name}: Too close ({inter_poi_dist*1000:.1f}m) to {selected_poi.name}")
                     break
             
             if is_far_enough:
                 selected_tuples.append((dist_from_user, candidate_poi))
+                logs.append(f"Selected {candidate_poi.name} (Dist: {dist_from_user*1000:.1f}m)")
 
         # 4. Build DTOs for the response
         results: List[PublicPOIResult] = []
@@ -126,4 +127,4 @@ class POIService:
                     lon=poi.lon,
                 )
             )
-        return results
+        return results, logs

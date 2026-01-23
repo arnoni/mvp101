@@ -39,6 +39,7 @@ class FindNearestResponse(BaseModel):
     user_lon: float = Field(..., description="Geocoded longitude of the user's address.")
     quota_remaining: int = Field(..., description="Remaining daily quota.")
     share_url: Optional[str] = Field(None, description="Shareable URL for this search.")
+    debug_logs: Optional[List[str]] = Field(None, description="Debug logs for dev mode.")
 
 # --- API Request Models ---
 

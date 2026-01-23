@@ -107,7 +107,7 @@ async def find_nearest(
 
         # 4. Fetch Data (30m greedy)
         try:
-            results = poi_service.find_nearest_pois(data.lat, data.lon, max_results=decision.max_results)
+            results, logs = poi_service.find_nearest_pois(data.lat, data.lon, max_results=decision.max_results)
         except Exception as e:
             logger.critical("poi_service_crashed", error=str(e), exc_info=True)
             raise HTTPException(
@@ -136,7 +136,8 @@ async def find_nearest(
             user_lon=data.lon,
             # We just consumed 1 unit
             quota_remaining=max(0, decision.quota_remaining - 1),
-            share_url=f"/share?lat={data.lat}&lon={data.lon}"
+            share_url=f"/share?lat={data.lat}&lon={data.lon}",
+            debug_logs=logs if settings.ENV == "development" else None
         )
         # Log successful processing with structlog
         logger.info("search_request_processed", anon_id=anon_id, results_count=len(results))

@@ -25,11 +25,67 @@
         ::-webkit-scrollbar-thumb:hover {
             background: #94a3b8;
         }
+
+        /* Radar Animation for Item 2 */
+        @keyframes radar-pulse {
+            0% {
+                text-shadow: 0 0 0 rgba(37, 99, 235, 0);
+            }
+
+            50% {
+                text-shadow: 0 0 10px rgba(37, 99, 235, 0.5), 0 0 20px rgba(37, 99, 235, 0.3);
+            }
+
+            100% {
+                text-shadow: 0 0 0 rgba(37, 99, 235, 0);
+            }
+        }
+
+        @keyframes scan-line {
+            0% {
+                transform: translateX(-100%);
+            }
+
+            100% {
+                transform: translateX(100%);
+            }
+        }
+
+        .radar-text {
+            animation: radar-pulse 2s infinite;
+            position: relative;
+            overflow: hidden;
+            display: inline-block;
+        }
+
+        .radar-text::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.4), transparent);
+            transform: translateX(-100%);
+            animation: scan-line 3s infinite;
+        }
     </style>
 </head>
 
 <body class="bg-slate-50 min-h-screen flex flex-col items-center py-12 px-4 sm:px-6 lg:px-8 font-sans text-slate-900">
     <div class="max-w-md w-full space-y-6 bg-white p-8 rounded-2xl shadow-xl border border-slate-100 relative">
+        <!-- Item 1: User Plan & Quota (Top-Left) -->
+        <div class="absolute top-4 left-4 flex flex-col items-start text-xs space-y-1">
+            <button onclick="togglePaymentModal()"
+                class="font-bold text-blue-600 hover:text-blue-800 hover:underline focus:outline-none">
+                PLAN: <span id="user-plan">{{ user_plan }}</span>
+            </button>
+            <div class="text-slate-500">
+                Quota: <span id="quota-display" class="font-mono font-medium text-slate-700">{{ quota_remaining
+                    }}</span>
+            </div>
+        </div>
+
         <!-- Language Selector -->
         <div class="absolute top-4 right-4 flex space-x-2 text-xs">
             <a href="?lang=en" class="hover:underline {% if current_lang == 'en' %}font-bold{% endif %}">EN</a>
@@ -41,14 +97,23 @@
             <a href="?lang=ko" class="hover:underline {% if current_lang == 'ko' %}font-bold{% endif %}">KO</a>
         </div>
 
-        <header class="text-center mb-6 mt-2">
-            <!-- Ensure image path is correct -->
-            <img src="/static/graphics/DillDrill_banner_selected.svg" alt="DillDrill" class="mx-auto h-24 mb-4">
+        <header class="text-center mb-6 mt-6">
+            <!-- Item 2: Animated Branding -->
+            <div class="mb-4 flex flex-col items-center justify-center">
+                <h1 class="text-4xl font-extrabold text-slate-800 tracking-tight radar-text relative">
+                    DillDrill
+                    <span class="absolute -top-1 -right-4 text-xs font-normal text-slate-400">TM</span>
+                </h1>
+            </div>
             <p class="text-slate-500 mt-1">{{ t.subtitle }}</p>
         </header>
 
         <form id="search-form" class="space-y-4">
-            <label for="coordinates" class="block text-sm font-medium text-slate-700">{{ t.input_label }}</label>
+            <div class="flex justify-between items-center">
+                <label for="coordinates" class="block text-sm font-medium text-slate-700">{{ t.input_label }}</label>
+                <!-- Item 3: Tutorial Link -->
+                <a href="#" class="text-xs text-blue-500 hover:text-blue-700 hover:underline">How to use the app</a>
+            </div>
             <input type="text" id="coordinates" name="coordinates" required placeholder="{{ t.placeholder }}"
                 class="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-lg shadow-sm transition-all duration-200">
 
@@ -89,8 +154,37 @@
             <div id="meta-info" class="mt-4 text-xs text-slate-400 text-center"></div>
         </div>
 
-        <footer class="mt-8 text-center text-xs text-slate-400">v{{ settings.VERSION }} <!-- deployment verify 0.1.0 -->
+        <footer class="mt-8 text-center text-xs text-slate-400 space-y-2">
+            <div>v{{ settings.VERSION }}</div>
+            <!-- Item 5: Legal & Copyright -->
+            <div class="flex justify-center space-x-2">
+                <a href="#" class="hover:text-slate-600 hover:underline">About DillDrill</a>
+                <span>&bull;</span>
+                <span id="copyright">All rights reserved
+                    <script>document.write(new Date().getFullYear())</script>
+                </span>
+            </div>
         </footer>
+    </div>
+
+    <!-- Item 1: Payment Funnel Modal -->
+    <div id="payment-modal"
+        class="fixed inset-0 bg-black bg-opacity-50 hidden z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-2xl max-w-sm w-full p-6 text-center transform transition-all scale-100">
+            <h3 class="text-2xl font-bold text-slate-900 mb-2">Upgrade to Pro</h3>
+            <p class="text-slate-600 mb-6">Get unlimited searches and premium features.</p>
+            <div class="bg-blue-50 p-4 rounded-lg border border-blue-100 mb-6">
+                <span class="text-3xl font-bold text-blue-600">$3.99</span>
+                <span class="text-blue-400">/ month</span>
+            </div>
+            <button class="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition"
+                onclick="togglePaymentModal()">
+                Processing... (Mock)
+            </button>
+            <button onclick="togglePaymentModal()" class="mt-4 text-sm text-slate-400 hover:text-slate-600">
+                Close
+            </button>
+        </div>
     </div>
 
     <script>
@@ -103,6 +197,15 @@
         const resultsSection = document.getElementById('results-section');
         const resultsList = document.getElementById('results-list');
         const metaInfo = document.getElementById('meta-info');
+        const debugBoard = document.getElementById('debug-board');
+        const debugLogsContainer = document.getElementById('debug-logs');
+        const quotaDisplay = document.getElementById('quota-display');
+        const userPlanDisplay = document.getElementById('user-plan');
+        const paymentModal = document.getElementById('payment-modal');
+
+        function togglePaymentModal() {
+            paymentModal.classList.toggle('hidden');
+        }
 
         // I18n strings for JS
         const STRINGS = {
@@ -182,6 +285,21 @@
             metaInfo.innerHTML = `Quota Remaining: ${data.quota_remaining}`;
 
             resultsSection.classList.remove('hidden');
+
+            // Update Header Quota
+            if (data.quota_remaining !== undefined) {
+                quotaDisplay.textContent = Math.max(0, data.quota_remaining);
+            }
+
+            // Populate Debug Board (Item 4)
+            if (data.debug_logs && data.debug_logs.length > 0) {
+                debugBoard.classList.remove('hidden');
+                debugLogsContainer.innerHTML = data.debug_logs.map(log => `<div>> ${log}</div>`).join('');
+                // Auto-scroll to bottom
+                debugLogsContainer.scrollTop = debugLogsContainer.scrollHeight;
+            } else {
+                debugBoard.classList.add('hidden');
+            }
         }
 
         form.addEventListener('submit', async e => {
