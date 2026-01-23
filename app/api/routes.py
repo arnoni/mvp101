@@ -9,7 +9,6 @@ from app.models.dto import (
     FindNearestResponse, 
     ErrorResponse, 
     PublicPOIResult,
-    TierStatus # Need to import this if used in code, handled below
 )
 from app.services.area_bucketer import AreaBucketer
 from app.services.entitlement_service import EntitlementService, TierStatus
@@ -212,7 +211,7 @@ async def download_kmz(
     target_names = target_names_str.split(",")
     target_pois = [p for p in poi_service.master_list if p.name in target_names]
     
-    mock_results: List[PublicPOIResult] = []
+    mock_results: list[PublicPOIResult] = []
     for poi in target_pois:
         mock_results.append(
             PublicPOIResult(

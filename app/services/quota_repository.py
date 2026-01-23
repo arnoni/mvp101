@@ -1,7 +1,9 @@
 import logging
 from typing import Optional, Protocol, Any
 
-logger = logging.getLogger(__name__)
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 class RedisInterface(Protocol):
     async def get(self, key: str) -> Any: ...
@@ -39,8 +41,9 @@ class QuotaRepository:
             if self.redis_client:
                 val = await self.redis_client.get(key)
                 return int(val) if val else 0
+            return int(val) if val else 0
         except Exception as e:
-            logger.error(f"Redis get_usage error: {e}. Using fallback.")
+            logger.error("quota_get_usage_error", error=str(e), key=key, fallback=True)
         
         # Fallback
         val = await self.fallback_store.get(key)
@@ -53,8 +56,10 @@ class QuotaRepository:
                 # Note: This logic assumes key existence or doesn't care about setting TTL on first incr for this MVP snippet.
                 val = await self.redis_client.incr(key)
                 return val
+                val = await self.redis_client.incr(key)
+                return val
         except Exception as e:
-             logger.error(f"Redis increment error: {e}. Using fallback.")
+             logger.error("quota_increment_error", error=str(e), key=key, fallback=True)
 
         return await self.fallback_store.incr(key)
 

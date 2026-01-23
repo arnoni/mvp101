@@ -15,7 +15,9 @@ from fastkml.geometry import Point
 from fastapi import HTTPException, status
 from app.models.dto import PublicPOIResult, ErrorResponse
 
-logger = logging.getLogger(__name__)
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 async def generate_kmz(results: List[PublicPOIResult]) -> bytes:
     """
@@ -38,6 +40,8 @@ async def generate_kmz(results: List[PublicPOIResult]) -> bytes:
         description="Top 5 nearest real-estate points of interest."
     )
     k.append(d)
+
+    logger.info("generating_kmz", result_count=len(results))
 
     # 2. Add Placemarks for each result
     for i, poi in enumerate(results):

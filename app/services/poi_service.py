@@ -12,7 +12,9 @@ from app.models.dto import POI, PublicPOIResult, MasterList
 from app.utils.haversine import haversine
 from app.core.config import settings
 
-logger = logging.getLogger(__name__)
+import structlog
+
+logger = structlog.get_logger(__name__)
 
 class POIService:
     """Service layer for handling Point‑of‑Interest (POI) data.
@@ -37,14 +39,13 @@ class POIService:
             # Validate using the MasterList DTO (which contains a list of POI objects)
             master = MasterList.model_validate(data)
             self.master_list = master.points
-            logger.info(
-                f"Successfully loaded {len(self.master_list)} POIs from MasterList."
-            )
+            self.master_list = master.points
+            logger.info("masterlist_loaded", count=len(self.master_list))
         except FileNotFoundError:
-            logger.error(f"MasterList file not found at: {file_path}")
+            logger.error("masterlist_file_not_found", path=file_path)
             self.master_list = []
         except Exception as e:
-            logger.error(f"Error loading or validating MasterList: {e}")
+            logger.exception("masterlist_load_error", error=str(e))
             self.master_list = []
 
     async def initialize_semantic_search(self):
@@ -80,7 +81,7 @@ class POIService:
             if physical_dist <= search_radius_km:
                 candidates.append((physical_dist, poi))
                 if settings.ENV == "development":
-                    logger.info(f"[DEBUG] Candidate found: {poi.name} at {physical_dist*1000:.1f}m")
+                    logger.debug("poi_candidate_found", name=poi.name, dist_m=physical_dist * 1000)
 
         # 2. Sort by distance from user (closest first)
         candidates.sort(key=lambda x: x[0])
