@@ -376,8 +376,10 @@
 
                 if (response.ok) {
                     // Update quota display regardless of results
+                    console.log("[DEBUG] Quota from server:", data.quota_remaining);
                     if (data.quota_remaining !== undefined) {
                         quotaDisplay.textContent = Math.max(0, data.quota_remaining);
+                        console.log("[DEBUG] Updated display to:", quotaDisplay.textContent);
                     }
 
                     if (data.results.length === 0) {
