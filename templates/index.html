@@ -375,6 +375,11 @@
                 const data = await response.json();
 
                 if (response.ok) {
+                    // Update quota display regardless of results
+                    if (data.quota_remaining !== undefined) {
+                        quotaDisplay.textContent = Math.max(0, data.quota_remaining);
+                    }
+
                     if (data.results.length === 0) {
                         showStatus(STRINGS.zero_results, 'success');
                     } else {
