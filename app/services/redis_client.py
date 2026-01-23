@@ -14,12 +14,13 @@ class RealRedisClient:
     def __init__(self, url: str = settings.UPSTASH_REDIS_URL):
         if not url:
             raise ValueError("UPSTASH_REDIS_URL is not set in the environment")
-        # Configure connection pool with explicit limits to prevent EBUSY errors
+        # Configure for serverless/Vercel with single connection client
+        # This prevents connection pool exhaustion in serverless functions
         self._redis = Redis.from_url(
             url,
             encoding="utf-8",
             decode_responses=True,
-            max_connections=10,  # Limit concurrent connections
+            single_connection_client=True,  # Critical for serverless
             socket_keepalive=True,
             socket_connect_timeout=5,
             socket_timeout=5,

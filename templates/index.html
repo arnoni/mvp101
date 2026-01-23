@@ -233,6 +233,10 @@
         const paymentModal = document.getElementById('payment-modal');
         const aboutModal = document.getElementById('about-modal');
 
+        // Debug: Verify elements exist
+        console.log("[INIT] quotaDisplay element:", quotaDisplay);
+        console.log("[INIT] Initial quota value:", quotaDisplay ? quotaDisplay.textContent : "NOT FOUND");
+
         function togglePaymentModal() {
             paymentModal.classList.toggle('hidden');
         }
@@ -373,10 +377,12 @@
                 }
 
                 const data = await response.json();
+                console.log("[DEBUG] Full response data:", data);
 
                 if (response.ok) {
                     // Update quota display regardless of results
                     console.log("[DEBUG] Quota from server:", data.quota_remaining);
+                    console.log("[DEBUG] quotaDisplay element before update:", quotaDisplay);
                     if (data.quota_remaining !== undefined) {
                         quotaDisplay.textContent = Math.max(0, data.quota_remaining);
                         console.log("[DEBUG] Updated display to:", quotaDisplay.textContent);
