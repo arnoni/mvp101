@@ -121,7 +121,11 @@ async def find_nearest(
 
         # 5. Consume Quota
         quota_key = f"daily_read:{anon_id}"
-        await quota_repo.increment(quota_key)
+        new_usage = await quota_repo.increment(quota_key)
+        
+        # Calculate remaining quota based on tier
+        max_daily = 2 if tier == TierStatus.FREE else 50
+        remaining_after = max(0, max_daily - new_usage)
 
         # 6. Response Cookie for KMZ continuity
         if results:
@@ -134,8 +138,7 @@ async def find_nearest(
             results=results,
             user_lat=data.lat,
             user_lon=data.lon,
-            # We just consumed 1 unit
-            quota_remaining=max(0, decision.quota_remaining - 1),
+            quota_remaining=remaining_after,
             share_url=f"/share?lat={data.lat}&lon={data.lon}",
             debug_logs=logs if settings.ENV == "development" else None
         )
