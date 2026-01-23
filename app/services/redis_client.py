@@ -14,7 +14,18 @@ class RealRedisClient:
     def __init__(self, url: str = settings.UPSTASH_REDIS_URL):
         if not url:
             raise ValueError("UPSTASH_REDIS_URL is not set in the environment")
-        self._redis = Redis.from_url(url)
+        # Configure connection pool with explicit limits to prevent EBUSY errors
+        self._redis = Redis.from_url(
+            url,
+            encoding="utf-8",
+            decode_responses=True,
+            max_connections=10,  # Limit concurrent connections
+            socket_keepalive=True,
+            socket_connect_timeout=5,
+            socket_timeout=5,
+            retry_on_timeout=True,
+            health_check_interval=30
+        )
 
     async def get(self, key: str):
         try:
