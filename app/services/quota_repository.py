@@ -41,7 +41,6 @@ class QuotaRepository:
             if self.redis_client:
                 val = await self.redis_client.get(key)
                 return int(val) if val else 0
-            return int(val) if val else 0
         except Exception as e:
             logger.error("quota_get_usage_error", error=str(e), key=key, fallback=True)
         
@@ -54,8 +53,6 @@ class QuotaRepository:
             if self.redis_client:
                 # Basic INCR logic. 
                 # Note: This logic assumes key existence or doesn't care about setting TTL on first incr for this MVP snippet.
-                val = await self.redis_client.incr(key)
-                return val
                 val = await self.redis_client.incr(key)
                 return val
         except Exception as e:
