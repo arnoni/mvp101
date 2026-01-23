@@ -158,7 +158,8 @@
             <div>v{{ settings.VERSION }}</div>
             <!-- Item 5: Legal & Copyright -->
             <div class="flex justify-center space-x-2">
-                <a href="#" class="hover:text-slate-600 hover:underline">About DillDrill</a>
+                <a href="#" onclick="toggleAboutModal()" class="hover:text-slate-600 hover:underline">About
+                    DillDrill</a>
                 <span>&bull;</span>
                 <span id="copyright">All rights reserved
                     <script>document.write(new Date().getFullYear())</script>
@@ -187,6 +188,38 @@
         </div>
     </div>
 
+    <!-- About DillDrill Modal -->
+    <div id="about-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-2xl max-w-md w-full p-8 text-left transform transition-all scale-100">
+            <h3 class="text-2xl font-bold text-slate-900 mb-4 text-center">About DillDrill</h3>
+            <div class="text-slate-600 space-y-3 text-sm leading-relaxed">
+                <p>
+                    DillDrill is an independent international research tool that helps identify areas that may be
+                    affected by construction activity before visiting or renting.
+                </p>
+                <p>
+                    Enter latitude and longitude coordinates in decimal degrees format to explore nearby construction
+                    related signals.
+                </p>
+                <p class="text-xs text-slate-500 italic">
+                    Results are informational only and may be incomplete, outdated, or inaccurate. Always verify
+                    independently.
+                </p>
+                <p>
+                    Optional support helps cover infrastructure costs and may unlock additional daily usage capacity.
+                </p>
+                <div class="text-center pt-4 border-t border-slate-200 mt-4">
+                    <p class="font-semibold text-slate-800">DillDrill&trade;</p>
+                    <p class="text-xs text-slate-400 mt-1">2026 All rights reserved.</p>
+                </div>
+            </div>
+            <button onclick="toggleAboutModal()"
+                class="mt-6 w-full bg-slate-100 text-slate-700 py-2 rounded-lg font-medium hover:bg-slate-200 transition">
+                Close
+            </button>
+        </div>
+    </div>
+
     <script>
         const form = document.getElementById('search-form');
         const coordsInput = document.getElementById('coordinates');
@@ -202,9 +235,14 @@
         const quotaDisplay = document.getElementById('quota-display');
         const userPlanDisplay = document.getElementById('user-plan');
         const paymentModal = document.getElementById('payment-modal');
+        const aboutModal = document.getElementById('about-modal');
 
         function togglePaymentModal() {
             paymentModal.classList.toggle('hidden');
+        }
+
+        function toggleAboutModal() {
+            aboutModal.classList.toggle('hidden');
         }
 
         // I18n strings for JS
