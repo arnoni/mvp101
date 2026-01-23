@@ -61,6 +61,8 @@ class POIService:
             Tuple[List[PublicPOIResult], List[str]]: (Filtered results, Debug logs)
         """
         logs: List[str] = []
+        logs.append(f"Total POIs in MasterList: {len(self.master_list)}")
+
         if not self.master_list:
             logs.append("MasterList is empty.")
             return [], logs
@@ -82,7 +84,9 @@ class POIService:
             return [], logs
 
         # 2. Sort by distance from user (closest first)
+        logs.append(f"Sorting {len(candidates)} candidates by distance...")
         candidates.sort(key=lambda x: x[0])
+        logs.append("Sort complete.")
         
         # 3. Greedy Selection with 30m Spacing
         selected_tuples: List[Tuple[float, POI]] = []
@@ -106,8 +110,12 @@ class POIService:
                     break
             
             if is_far_enough:
-                selected_tuples.append((dist_from_user, candidate_poi))
-                logs.append(f"Selected {candidate_poi.name} (Dist: {dist_from_user*1000:.1f}m)")
+                logs.append(f"Spacing check passed for {candidate_poi.name} (checked against {len(selected_tuples)} selected)")
+                try:
+                    selected_tuples.append((dist_from_user, candidate_poi))
+                    logs.append(f"Selected {candidate_poi.name} (Dist: {dist_from_user*1000:.1f}m)")
+                except Exception as e:
+                    logs.append(f"Error selecting {candidate_poi.name}: {e}")
 
         # 4. Build DTOs for the response
         results: List[PublicPOIResult] = []

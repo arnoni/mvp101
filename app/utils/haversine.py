@@ -29,6 +29,8 @@ def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     dlat = lat2 - lat1
 
     a = sin(dlat / 2)**2 + cos(lat1) * cos(lat2) * sin(dlon / 2)**2
+    # Clamp 'a' to [0, 1] to avoid math domain errors due to floating point precision
+    a = max(0.0, min(1.0, a))
     c = 2 * asin(sqrt(a))
     
     distance = R * c
