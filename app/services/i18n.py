@@ -14,7 +14,16 @@ TRANSLATIONS = {
         "lang_en": "English",
         "lang_es": "Español", 
         "lang_ru": "Русский",
-        "lang_ko": "한국어"
+        "lang_ko": "한국어",
+        "daily_usage": "Daily usage",
+        "remaining_checks": "Remaining checks today",
+        "how_to_use": "How to use the app",
+        "about": "About DillDrill",
+        "rights": "All rights reserved",
+        "support_title": "Support DillDrill",
+        "support_body": "DillDrill is an independent international research tool. Support helps unlock additional daily radar capacity.",
+        "support_button": "Support and unlock capacity",
+        "close": "Close"
     },
     "es": {
         "title": "DillDrill",
@@ -31,7 +40,16 @@ TRANSLATIONS = {
         "lang_en": "English",
         "lang_es": "Español", 
         "lang_ru": "Русский",
-        "lang_ko": "한국어"
+        "lang_ko": "한국어",
+        "daily_usage": "Uso diario",
+        "remaining_checks": "Consultas restantes hoy",
+        "how_to_use": "Cómo usar la aplicación",
+        "about": "Acerca de DillDrill",
+        "rights": "Todos los derechos reservados",
+        "support_title": "Apoye DillDrill",
+        "support_body": "DillDrill es una herramienta de investigación independiente. Su apoyo ayuda a desbloquear capacidad diaria adicional.",
+        "support_button": "Apoyar y desbloquear capacidad",
+        "close": "Cerrar"
     },
     "ru": {
         "title": "DillDrill",
@@ -48,7 +66,16 @@ TRANSLATIONS = {
         "lang_en": "English",
         "lang_es": "Español", 
         "lang_ru": "Русский",
-        "lang_ko": "한국어"
+        "lang_ko": "한국어",
+        "daily_usage": "Ежедневное использование",
+        "remaining_checks": "Оставшиеся проверки сегодня",
+        "how_to_use": "Как пользоваться приложением",
+        "about": "О DillDrill",
+        "rights": "Все права защищены",
+        "support_title": "Поддержите DillDrill",
+        "support_body": "DillDrill — независимый исследовательский инструмент. Поддержка помогает увеличить ежедневную емкость радара.",
+        "support_button": "Поддержать и увеличить емкость",
+        "close": "Закрыть"
     },
     "ko": {
         "title": "DillDrill",
@@ -65,7 +92,16 @@ TRANSLATIONS = {
         "lang_en": "English",
         "lang_es": "Español", 
         "lang_ru": "Русский",
-        "lang_ko": "한국어"
+        "lang_ko": "한국어",
+        "daily_usage": "일일 사용량",
+        "remaining_checks": "오늘 남은 확인",
+        "how_to_use": "앱 사용 방법",
+        "about": "DillDrill 소개",
+        "rights": "무단 복제 금지",
+        "support_title": "DillDrill 후원하기",
+        "support_body": "DillDrill은 독립적인 연구 도구입니다. 후원은 일일 레이더 용량을 늘리는 데 도움이 됩니다.",
+        "support_button": "후원하고 용량 늘리기",
+        "close": "닫기"
     }
 }
 

@@ -9,7 +9,7 @@ Welcome to the **DillDrill** codebase! This guide is designed to help new develo
 **Key Philosophy (TDD v1.1):**
 *   **Privacy-First:** We track generic "Anonymous IDs" rather than user accounts.
 *   **Domain-Driven:** Core logic resides in services, not in the API routes.
-*   **Lat/Lng Native:** Users (or the frontend) provide raw coordinates. We do *not* geocode server-side.
+*   **Lat/Lng Native:** Users (or the frontend) provide raw coordinates. We do *not* geocode server-side (Mapbox integration has been removed).
 *   **Tiered Access:** A "Policy Engine" governs who can see what and how often.
 
 ## 2. High-Level Architecture
@@ -83,25 +83,32 @@ This is where the business logic lives.
     *   **`/api/find-nearest`**: The main search endpoint. It accepts Lat/Lng, invokes the Policy Engine, and if allowed, calls the POI Service.
     *   **`/download-kmz`**: Generates a file download based on the *previous* search. Counts as a "read" against the user's quota.
 
+### 3.4 Utils (`app/utils/`)
+*   **`security.py`**: Handles Cloudflare Turnstile verification.
+*   **`haversine.py`**: Calculates distances between coordinates.
+
 ## 4. TDD v1.1 Specification Highlights
 
 If you are modifying the code, ensure you adhere to these strict rules from the TDD:
 
-1.  **Input:** The API *must* accept `lat` and `lon` (float). Do not accept address strings.
+1.  **Input:** The API *must* accept `lat` and `lon` (float). Do not accept address strings (Geocoding removed).
 2.  **Quota:** Every search consumes 1 unit of quota. The Policy Engine must strictly enforce:
     *   **Free Tier:** 2 reads / day.
     *   **Paid Tier:** 50 reads / day.
 3.  **Friction:** We use Cloudflare Turnstile.
     *   If the Policy Engine returns `CHALLENGE_REQUIRED`, the client must present a valid `turnstile_token`.
 4.  **Privacy:** Never log precise coordinates associated with a user ID. Use `AreaBucketer` if you need to aggregate spatial data.
+5.  **Logging:** Use `structlog` for structured logging. Do not use standard `logging` directly for application logic.
 
 ## 5. Getting Started
 
 1.  **Environment Variables:** Ensure your `.env` file has:
     ```env
-    UPSTASH_REDIS_URL="redis://..."
+    UPSTASH_REDIS_REST_URL="https://..."
+    UPSTASH_REDIS_REST_TOKEN="..."
     CLOUDFLARE_TURNSTILE_SECRET="your-secret"
     CLOUDFLARE_TURNSTILE_SITE_KEY="your-public-key"
+    ENV="development" # or "production"
     ```
 2.  **Run Locally:**
     ```bash
@@ -116,11 +123,12 @@ If you are modifying the code, ensure you adhere to these strict rules from the 
 .
 ├── app/
 │   ├── api/            # Routes & endpoints
-│   ├── core/           # Config, middleware, security
+│   ├── core/           # Config, middleware
 │   ├── models/         # Pydantic DTOs
 │   ├── services/       # Domain logic (The most important folder)
-│   ├── utils/          # Helpers (Haversine, etc.)
-│   └── main.py         # Entry point & lifespan management
+│   ├── utils/          # Helpers (Haversine, security, etc.)
+│   ├── main.py         # Entry point & lifespan management
+│   └── logging.py      # Structured logging config
 ├── static/             # Assets (images, css, js) & MasterList.json
 ├── templates/          # Jinja2 HTML templates
 └── requirements.txt    # Python dependencies

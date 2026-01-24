@@ -8,10 +8,15 @@ import httpx
 import logging
 from app.core.config import settings
 from app.models.dto import ErrorResponse
+from typing import Optional
+try:
+    from app.services.redis_client import redis_client
+except Exception:
+    redis_client = None
 
 logger = logging.getLogger(__name__)
 
-async def verify_turnstile(token: str) -> bool:
+async def verify_turnstile(token: str, anon_id: Optional[str] = None, client_ip: Optional[str] = None) -> bool:
     """
     Verifies the Cloudflare Turnstile token against the Cloudflare API.
     Implements TSD Section 6: Turnstile verification.
@@ -20,6 +25,20 @@ async def verify_turnstile(token: str) -> bool:
     # if settings.ENV == "development" and token == "mock_turnstile_token_for_testing":
     #     logger.warning("Using mock Turnstile token for development.")
     #     return True
+    
+    cache_key = None
+    if anon_id:
+        cache_key = f"turnstile_ok:{anon_id}"
+    elif client_ip:
+        cache_key = f"turnstile_ok_ip:{client_ip}"
+    
+    if cache_key and redis_client:
+        try:
+            cached = redis_client.get(cache_key)
+            if cached:
+                return True
+        except Exception:
+            pass
 
     url = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
     data = {
@@ -35,6 +54,11 @@ async def verify_turnstile(token: str) -> bool:
             result = response.json()
             
             if result.get("success"):
+                if cache_key and redis_client:
+                    try:
+                        redis_client.setex(cache_key, 600, "1")
+                    except Exception:
+                        pass
                 return True
             else:
                 logger.warning(f"Turnstile verification failed: {result.get('error-codes')}")

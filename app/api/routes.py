@@ -96,7 +96,11 @@ async def find_nearest(
                  )
 
             # Verify Token
-            is_valid = await verify_turnstile(data.turnstile_token)
+            is_valid = await verify_turnstile(
+                token=data.turnstile_token,
+                anon_id=anon_id,
+                client_ip=client_ip
+            )
             if not is_valid:
                  raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
@@ -124,11 +128,8 @@ async def find_nearest(
 
         # 5. Consume Quota
         quota_key = f"daily_read:{anon_id}"
-        new_usage = await quota_repo.increment(quota_key)
-        
-        # Calculate remaining quota based on tier
-        max_daily = 2 if tier == TierStatus.FREE else 50
-        remaining_after = max(0, max_daily - new_usage)
+        await quota_repo.increment(quota_key)
+        remaining_after = max(0, decision.quota_remaining - 1)
 
         # 6. Response Cookie for KMZ continuity
         if results:

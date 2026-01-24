@@ -75,11 +75,11 @@
     <div class="max-w-md w-full space-y-6 bg-white p-8 rounded-2xl shadow-xl border border-slate-100 relative">
         <!-- Item 1: Daily Usage Status (Top-Left) -->
         <div class="absolute top-4 left-4 flex flex-col items-start text-xs space-y-1">
-            <div class="text-slate-500 font-medium">Daily usage</div>
+            <div class="text-slate-500 font-medium">{{ t.daily_usage }}</div>
             <div class="text-slate-700">
-                Remaining checks today: <span id="quota-display" class="font-mono font-semibold">{{ quota_remaining
-                    }}</span>
+                {{ t.remaining_checks }}: <span id="quota-display" class="font-mono font-semibold">{{ quota_remaining }}</span>
             </div>
+            <button class="mt-2 text-blue-600 hover:text-blue-800 underline" onclick="togglePaymentModal()">{{ t.support_title }}</button>
         </div>
 
         <!-- Language Selector -->
@@ -109,7 +109,7 @@
             <div class="flex justify-between items-center">
                 <label for="coordinates" class="block text-sm font-medium text-slate-700">{{ t.input_label }}</label>
                 <!-- Item 3: Tutorial Link -->
-                <a href="#" class="text-xs text-blue-500 hover:text-blue-700 hover:underline">How to use the app</a>
+                <a href="#" class="text-xs text-blue-500 hover:text-blue-700 hover:underline">{{ t.how_to_use }}</a>
             </div>
             <input type="text" id="coordinates" name="coordinates" required placeholder="{{ t.placeholder }}"
                 class="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-lg shadow-sm transition-all duration-200">
@@ -155,10 +155,9 @@
             <div>v{{ settings.VERSION }}</div>
             <!-- Item 5: Legal & Copyright -->
             <div class="flex justify-center space-x-2">
-                <a href="#" onclick="toggleAboutModal()" class="hover:text-slate-600 hover:underline">About
-                    DillDrill</a>
+                <a href="#" onclick="toggleAboutModal()" class="hover:text-slate-600 hover:underline">{{ t.about }}</a>
                 <span>&bull;</span>
-                <span id="copyright">All rights reserved
+                <span id="copyright">{{ t.rights }}
                     <script>document.write(new Date().getFullYear())</script>
                 </span>
             </div>
@@ -169,17 +168,16 @@
     <div id="payment-modal"
         class="fixed inset-0 bg-black bg-opacity-50 hidden z-50 flex items-center justify-center p-4">
         <div class="bg-white rounded-xl shadow-2xl max-w-sm w-full p-6 text-center transform transition-all scale-100">
-            <h3 class="text-2xl font-bold text-slate-900 mb-4">Support DillDrill</h3>
+            <h3 class="text-2xl font-bold text-slate-900 mb-4">{{ t.support_title }}</h3>
             <p class="text-slate-600 mb-6 leading-relaxed">
-                DillDrill is an independent international research tool. Support helps unlock additional daily radar
-                capacity.
+                {{ t.support_body }}
             </p>
             <button class="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition"
                 onclick="togglePaymentModal()">
-                Support and unlock capacity
+                {{ t.support_button }}
             </button>
             <button onclick="togglePaymentModal()" class="mt-4 text-sm text-slate-400 hover:text-slate-600">
-                Close
+                {{ t.close }}
             </button>
         </div>
     </div>
@@ -187,7 +185,7 @@
     <!-- About DillDrill Modal -->
     <div id="about-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden z-50 flex items-center justify-center p-4">
         <div class="bg-white rounded-xl shadow-2xl max-w-md w-full p-8 text-left transform transition-all scale-100">
-            <h3 class="text-2xl font-bold text-slate-900 mb-4 text-center">About DillDrill</h3>
+            <h3 class="text-2xl font-bold text-slate-900 mb-4 text-center">{{ t.about }}</h3>
             <div class="text-slate-600 space-y-3 text-sm leading-relaxed">
                 <p>
                     DillDrill is an independent international research tool that helps identify areas that may be
@@ -320,7 +318,7 @@
             });
 
             // Meta Info
-            metaInfo.innerHTML = `Quota Remaining: ${data.quota_remaining}`;
+            metaInfo.innerHTML = `{{ t.remaining_checks }}: ${data.quota_remaining}`;
 
             resultsSection.classList.remove('hidden');
 
