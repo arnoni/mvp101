@@ -16,6 +16,7 @@ dependencies = [
     "setuptools",
     "redis>=7.1.0",
     "structlog>=25.5.0",
+    "upstash-redis>=0.16.0",
 ]
 
 [build-system]

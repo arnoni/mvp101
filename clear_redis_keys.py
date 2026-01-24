@@ -1,13 +1,15 @@
-import asyncio
-from app.services.redis_client import RealRedisClient
-import os
+# clear_redis_keys.py
+from app.services.redis_client import redis_client
 
-async def clear_keys():
-    client = RealRedisClient()
-    # Delete possible rate limit key (wildcard) and mapbox counter
-    # Since we don't know the IP, we can flush the whole DB for testing.
-    await client._redis.flushdb()
-    await client._redis.close()
+def clear_keys():
+    if redis_client.client:
+        try:
+            redis_client.client.flushdb()
+            print("All keys cleared (FlushDB).")
+        except Exception as e:
+            print(f"Error: {e}")
+    else:
+        print("Redis disabled.")
 
 if __name__ == "__main__":
-    asyncio.run(clear_keys())
+    clear_keys()

@@ -17,7 +17,8 @@ class Settings(BaseSettings):
     MAPBOX_TOKEN: Optional[str] = Field(None, description="Mapbox Geocoding API Token (Disabled)")
     CLOUDFLARE_TURNSTILE_SECRET: str = Field(..., description="Cloudflare Turnstile Secret Key")
     CLOUDFLARE_TURNSTILE_SITE_KEY: str = Field(..., description="Cloudflare Turnstile Site Key (Public)")
-    UPSTASH_REDIS_URL: str = Field(..., description="URL for Upstash Redis instance")
+    UPSTASH_REDIS_REST_URL: str = Field(..., description="URL for Upstash Redis REST API")
+    UPSTASH_REDIS_REST_TOKEN: str = Field(..., description="Token for Upstash Redis REST API")
     ENV: str = Field("development", description="Application environment (e.g., production, development)")
     MAX_MAPBOX_MONTHLY: int = Field(90000, description="Hard cap for Mapbox requests per month (TSD 10)")
 

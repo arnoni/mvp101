@@ -35,12 +35,6 @@ async def lifespan(app: FastAPI):
         logger.info(f"MasterList loaded successfully with {len(app.state.poi_service.master_list)} points.")
     except Exception as e:
         logger.critical(f"Failed to initialize POI Service: {e}")
-        # Initialize empty to prevent crashes downstream
-        from app.services.poi_service import POIService
-        # We need to construct it manually if init failed? 
-        # Actually POIService.__init__ catches its own errors and sets master_list=[].
-        # So this outer try/catch is redundant if POIService handles it.
-        # But if POIService.__init__ RAISES, we catch here.
         # Let's ensure app.state.poi_service exists.
         class EmptyPOIService:
              master_list = []

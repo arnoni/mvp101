@@ -108,6 +108,7 @@ dependencies = [
     { name = "redis" },
     { name = "setuptools" },
     { name = "structlog" },
+    { name = "upstash-redis" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
@@ -123,6 +124,7 @@ requires-dist = [
     { name = "redis", specifier = ">=7.1.0" },
     { name = "setuptools" },
     { name = "structlog", specifier = ">=25.5.0" },
+    { name = "upstash-redis", specifier = ">=0.16.0" },
     { name = "uvicorn", extras = ["standard"], specifier = "==0.30.1" },
 ]
 
@@ -518,6 +520,18 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/72/94/1a15dd82efb362ac84269196e94cf00f187f7ed21c242792a923cdb1c61f/typing_extensions-4.15.0.tar.gz", hash = "sha256:0cea48d173cc12fa28ecabc3b837ea3cf6f38c6d1136f85cbaaf598984861466", size = 109391 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/18/67/36e9267722cc04a6b9f15c7f3441c2363321a3ea07da7ae0c0707beb2a9c/typing_extensions-4.15.0-py3-none-any.whl", hash = "sha256:f0fa19c6845758ab08074a0cfa8b7aecb71c999ca73d62883bc25cc018c4e548", size = 44614 },
+]
+
+[[package]]
+name = "upstash-redis"
+version = "1.5.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "httpx" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a8/62/bc53c35fbf4e2b774ab0eb02f3908cfe89b6636e87cdc40b264a4fc1dcce/upstash_redis-1.5.0.tar.gz", hash = "sha256:1917d4d009ca803815092892d92c7da9138b4ada6b353974fb74caf063c6d2a3", size = 39356 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5a/87/d24541a1d9c29033e74aa05b5d8b4857feff79344ebd8fca410eb4683795/upstash_redis-1.5.0-py3-none-any.whl", hash = "sha256:e08de1f74d3fb48a81b383c00398cc9336c43b65b82e6d9266312143970800b9", size = 41088 },
 ]
 
 [[package]]
