@@ -49,11 +49,10 @@ async def lifespan(app: FastAPI):
 
     # 2. Initialize Redis & Quota Repository
     if settings.ENABLE_REDIS:
-        from app.services.redis_client import RealRedisClient
+        from app.services.redis_client import redis_client
         from app.services.quota_repository import QuotaRepository
         try:
-             # Create global Redis client
-             redis_client = RealRedisClient(settings.UPSTASH_REDIS_URL)
+             # Use global REST-based Redis client
              app.state.redis_client = redis_client
              
              # Create Quota Repo
@@ -72,8 +71,6 @@ async def lifespan(app: FastAPI):
     
     # Application shutdown
     logger.info("Application shutdown: Cleaning up resources.")
-    if hasattr(app.state, "redis_client") and app.state.redis_client:
-         await app.state.redis_client._redis.aclose() # Access internal redis to close
 
 
 # --- FastAPI Application Initialization ---

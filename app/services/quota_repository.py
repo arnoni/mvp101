@@ -6,9 +6,9 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 class RedisInterface(Protocol):
-    async def get(self, key: str) -> Any: ...
-    async def setex(self, key: str, ttl: int, value: str) -> Any: ...
-    async def incr(self, key: str) -> int: ...
+    def get(self, key: str) -> Any: ...
+    def setex(self, key: str, time: int, value: str) -> Any: ...
+    def incr(self, key: str) -> int: ...
 
 class InMemoryFallbackStore:
     """Simple in-memory store for fallback when Redis is down."""
@@ -39,7 +39,7 @@ class QuotaRepository:
     async def get_usage(self, key: str) -> int:
         try:
             if self.redis_client:
-                val = await self.redis_client.get(key)
+                val = self.redis_client.get(key)
                 return int(val) if val else 0
         except Exception as e:
             logger.error("quota_get_usage_error", error=str(e), key=key, fallback=True)
@@ -53,7 +53,7 @@ class QuotaRepository:
             if self.redis_client:
                 # Basic INCR logic. 
                 # Note: This logic assumes key existence or doesn't care about setting TTL on first incr for this MVP snippet.
-                val = await self.redis_client.incr(key)
+                val = self.redis_client.incr(key)
                 return val
         except Exception as e:
              logger.error("quota_increment_error", error=str(e), key=key, fallback=True)
