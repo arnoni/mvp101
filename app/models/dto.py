@@ -58,5 +58,6 @@ class ErrorResponse(BaseModel):
     # Implements TSD Section 4.3: Error Response Format
     error: str = Field(..., description="A machine-readable error code.")
     detail: str = Field(..., description="A human-readable explanation.")
-    retry_after_seconds: Optional[int] = Field(None, description="Time until retry is allowed (for rate-limiting).")
-    error_id: Optional[str] = Field(None, description="Unique ID for tracing")
+    retry_after_seconds: Optional[int] = None
+    quota_remaining: Optional[int] = None
+    error_id: Optional[str] = None

@@ -78,6 +78,7 @@ async def find_nearest(
                     error="QUOTA_EXCEEDED",
                     detail="Daily quota exceeded.",
                     retry_after_seconds=decision.retry_after,
+                    quota_remaining=decision.quota_remaining,
                     error_id=get_req_id(request)
                 ).model_dump()
             )
@@ -89,6 +90,7 @@ async def find_nearest(
                     detail=ErrorResponse(
                         error="CHALLENGE_REQUIRED",
                         detail="Human verification required.",
+                        quota_remaining=decision.quota_remaining,
                         error_id=get_req_id(request)
                     ).model_dump()
                  )
@@ -101,6 +103,7 @@ async def find_nearest(
                     detail=ErrorResponse(
                         error="INVALID_CHALLENGE",
                         detail="Verification failed. Please try again.",
+                        quota_remaining=decision.quota_remaining,
                         error_id=get_req_id(request)
                     ).model_dump()
                  )
@@ -195,6 +198,7 @@ async def download_kmz(
                 error="QUOTA_EXCEEDED",
                 detail="Daily quota exceeded.",
                 retry_after_seconds=decision.retry_after,
+                quota_remaining=decision.quota_remaining,
                 error_id=get_req_id(request)
             ).model_dump()
         )

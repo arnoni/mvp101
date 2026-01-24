@@ -396,11 +396,19 @@
                     }
                 } else {
                     let errMsg = 'Unknown error';
-                    if (data.detail && data.detail.detail) {
-                        errMsg = data.detail.detail;
-                    } else if (data.detail) {
-                        errMsg = JSON.stringify(data.detail);
+                    if (data.detail) {
+                        if (data.detail.detail) {
+                            errMsg = data.detail.detail;
+                        } else {
+                            errMsg = JSON.stringify(data.detail);
+                        }
+
+                        // Update quota display if present in error detail
+                        if (data.detail.quota_remaining !== undefined) {
+                            quotaDisplay.textContent = Math.max(0, data.detail.quota_remaining);
+                        }
                     }
+
                     // Append Request ID to error message if available
                     if (reqId) {
                         errMsg += ` (Req ID: ${reqId})`;
