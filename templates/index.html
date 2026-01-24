@@ -347,6 +347,12 @@
 
             const inputVal = coordsInput.value;
             const turnstile_token = tokenInput.value;
+            if (!turnstile_token) {
+                showStatus("Please complete the human verification.", 'error');
+                searchButton.disabled = false;
+                searchButton.textContent = STRINGS.btn_default;
+                return;
+            }
 
             const coords = parseCoordinates(inputVal);
             if (!coords) {
@@ -421,10 +427,6 @@
                 console.error('Fetch error:', err);
                 showStatus(`${STRINGS.error}: Network error.`, 'error');
             } finally {
-                // Determine if we should reset turnstile right away
-                // TDD implies Friction. Strict security resets every time.
-                // User wants "reappear when need another one".
-                resetTurnstile();
                 searchButton.disabled = false;
                 searchButton.textContent = STRINGS.btn_default;
 

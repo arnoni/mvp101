@@ -71,7 +71,10 @@ class PolicyEngine:
         # Here we just peek. Or we can have `check_and_incr` logic.
         # TDD suggests "Check Quota".
         
-        quota_key = f"daily_read:{context.anon_id}" # Simple key for now
+        # Scope quota per day to avoid permanent accumulation
+        from datetime import datetime
+        day = datetime.utcnow().strftime("%Y%m%d")
+        quota_key = f"daily_read:{day}:{context.anon_id}"
         
         current_usage = await self.quota_repo.get_usage(quota_key)
         quota_remaining = max(0, limit - current_usage)

@@ -127,7 +127,9 @@ async def find_nearest(
             )
 
         # 5. Consume Quota
-        quota_key = f"daily_read:{anon_id}"
+        from datetime import datetime
+        day = datetime.utcnow().strftime("%Y%m%d")
+        quota_key = f"daily_read:{day}:{anon_id}"
         await quota_repo.increment(quota_key)
         remaining_after = max(0, decision.quota_remaining - 1)
 
