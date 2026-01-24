@@ -362,6 +362,7 @@
                 return;
             }
 
+            let success = false;
             try {
 
                 const response = await fetch('/api/find-nearest', {
@@ -384,6 +385,7 @@
                 console.log("[DEBUG] Full response data:", data);
 
                 if (response.ok) {
+                    success = true;
                     // Update quota display regardless of results
                     console.log("[DEBUG] Quota from server:", data.quota_remaining);
                     console.log("[DEBUG] quotaDisplay element before update:", quotaDisplay);
@@ -425,7 +427,9 @@
                 }
             } catch (err) {
                 console.error('Fetch error:', err);
-                showStatus(`${STRINGS.error}: Network error.`, 'error');
+                if (!success) {
+                    showStatus(`${STRINGS.error}: Network error.`, 'error');
+                }
             } finally {
                 searchButton.disabled = false;
                 searchButton.textContent = STRINGS.btn_default;
