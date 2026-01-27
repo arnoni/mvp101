@@ -151,6 +151,19 @@ async def root(request: Request, lang: str = "en"):
     # Implements TSD Section 12: I18n
     from app.services.i18n import get_translations
     
+    using_fallback_quota = False
+    try:
+        quota_repo = getattr(request.app.state, "quota_repo", None)
+        using_fallback_quota = not getattr(quota_repo, "redis_client", None)
+    except Exception:
+        using_fallback_quota = True
+    
+    # Prefer persisted language cookie if no explicit query override
+    if not request.query_params.get("lang"):
+        cookie_lang = request.cookies.get("dd_lang")
+        if cookie_lang:
+            lang = cookie_lang
+    
     context = {
         "request": request,
         "turnstile_site_key": settings.CLOUDFLARE_TURNSTILE_SITE_KEY,
@@ -159,7 +172,8 @@ async def root(request: Request, lang: str = "en"):
         "current_lang": lang,
         # Mock initial state for UI
         "user_plan": "FREE", 
-        "quota_remaining": 2
+        "quota_remaining": 2,
+        "using_fallback_quota": using_fallback_quota
     }
     return templates.TemplateResponse("index.html", context)
 

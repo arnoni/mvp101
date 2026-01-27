@@ -12,7 +12,7 @@ from app.models.dto import (
 )
 from app.services.area_bucketer import AreaBucketer
 from app.services.entitlement_service import EntitlementService, TierStatus
-from app.services.policy_engine import PolicyEngine, RequestContext, PolicyVerdict
+from app.services.policy_engine import PolicyEngine, RequestContext, PolicyVerdict, PolicyDecision
 from app.services.poi_service import POIService
 from app.services.quota_repository import QuotaRepository
 from app.services.kmz_service import generate_kmz
@@ -55,6 +55,12 @@ async def find_nearest(
         # Entitlement Check
         paid_session_cookie = request.cookies.get("dd_paid_session")
         tier = EntitlementService.check_access(paid_session_cookie) if paid_session_cookie else TierStatus.FREE
+        
+        # Admin bypass via signed header (ignored quotas; does not overwrite keys)
+        admin_bypass = False
+        admin_hdr = request.headers.get("X-Admin-Auth")
+        if settings.ADMIN_BYPASS_TOKEN and admin_hdr and admin_hdr == settings.ADMIN_BYPASS_TOKEN:
+            admin_bypass = True
 
         # Area Code
         area_code = AreaBucketer.get_area_code(data.lat, data.lon)
@@ -67,8 +73,11 @@ async def find_nearest(
             turnstile_token=data.turnstile_token
         )
 
-        # 2. Policy Evaluate
-        decision = await policy_engine.evaluate(context)
+        # 2. Policy Evaluate (or bypass for admin)
+        if admin_bypass:
+            decision = PolicyDecision(verdict=PolicyVerdict.ALLOW, quota_remaining=999, max_results=5)
+        else:
+            decision = await policy_engine.evaluate(context)
 
         # 3. Handle Decision
         if decision.verdict == PolicyVerdict.BLOCK:
@@ -83,7 +92,7 @@ async def find_nearest(
                 ).model_dump()
             )
 
-        if decision.verdict == PolicyVerdict.CHALLENGE_REQUIRED:
+        if decision.verdict == PolicyVerdict.CHALLENGE_REQUIRED and not admin_bypass:
             if not data.turnstile_token:
                  raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
@@ -130,8 +139,11 @@ async def find_nearest(
         from datetime import datetime
         day = datetime.utcnow().strftime("%Y%m%d")
         quota_key = f"daily_read:{day}:{anon_id}"
-        await quota_repo.increment(quota_key)
-        remaining_after = max(0, decision.quota_remaining - 1)
+        if not admin_bypass:
+            await quota_repo.increment(quota_key)
+            remaining_after = max(0, decision.quota_remaining - 1)
+        else:
+            remaining_after = decision.quota_remaining
 
         # 6. Response Cookie for KMZ continuity
         if results:

@@ -25,6 +25,7 @@ class Settings(BaseSettings):
     # --- Feature Flags (Impl Plan 2.1) ---
     ENABLE_REDIS: bool = Field(True, description="Feature flag for Redis")
     ENABLE_PAID_TIER: bool = Field(True, description="Feature flag for Paid Tier")
+    ADMIN_BYPASS_TOKEN: Optional[str] = Field(None, description="Signed admin token to bypass quotas/fallbacks")
 
     # --- Constraints & Limitations (TSD Section 10) ---
     # Da Nang Bounding Box: 16.00–16.12 N, 108.10–108.30 E

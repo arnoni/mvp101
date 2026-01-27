@@ -40,13 +40,25 @@ class QuotaRepository:
         try:
             if self.redis_client:
                 val = self.redis_client.get(key)
-                return int(val) if val else 0
+                if val is None:
+                    return 0
+                try:
+                    return int(val)
+                except Exception:
+                    logger.error("quota_parse_error", key=key, raw_value=str(val))
+                    return 0
         except Exception as e:
             logger.error("quota_get_usage_error", error=str(e), key=key, fallback=True)
         
         # Fallback
         val = await self.fallback_store.get(key)
-        return int(val) if val else 0
+        if val is None:
+            return 0
+        try:
+            return int(val)
+        except Exception:
+            logger.error("quota_fallback_parse_error", key=key, raw_value=str(val))
+            return 0
 
     async def increment(self, key: str, ttl: int = 86400) -> int:
         try:
@@ -54,7 +66,11 @@ class QuotaRepository:
                 # Basic INCR logic. 
                 # Note: This logic assumes key existence or doesn't care about setting TTL on first incr for this MVP snippet.
                 val = self.redis_client.incr(key)
-                return val
+                try:
+                    return int(val) if val is not None else 1
+                except Exception:
+                    logger.error("quota_increment_parse_error", key=key, raw_value=str(val))
+                    return 1
         except Exception as e:
              logger.error("quota_increment_error", error=str(e), key=key, fallback=True)
 

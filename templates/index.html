@@ -84,13 +84,13 @@
 
         <!-- Language Selector -->
         <div class="absolute top-4 right-4 flex space-x-2 text-xs">
-            <a href="?lang=en" class="hover:underline {% if current_lang == 'en' %}font-bold{% endif %}">EN</a>
+            <a href="?lang=en" onclick="setLang('en')" class="hover:underline {% if current_lang == 'en' %}font-bold{% endif %}">EN</a>
             <span class="text-slate-300">|</span>
-            <a href="?lang=es" class="hover:underline {% if current_lang == 'es' %}font-bold{% endif %}">ES</a>
+            <a href="?lang=es" onclick="setLang('es')" class="hover:underline {% if current_lang == 'es' %}font-bold{% endif %}">ES</a>
             <span class="text-slate-300">|</span>
-            <a href="?lang=ru" class="hover:underline {% if current_lang == 'ru' %}font-bold{% endif %}">RU</a>
+            <a href="?lang=ru" onclick="setLang('ru')" class="hover:underline {% if current_lang == 'ru' %}font-bold{% endif %}">RU</a>
             <span class="text-slate-300">|</span>
-            <a href="?lang=ko" class="hover:underline {% if current_lang == 'ko' %}font-bold{% endif %}">KO</a>
+            <a href="?lang=ko" onclick="setLang('ko')" class="hover:underline {% if current_lang == 'ko' %}font-bold{% endif %}">KO</a>
         </div>
 
         <header class="text-center mb-6 mt-6">
@@ -122,6 +122,9 @@
                         d="M13 10V3L4 14h7v7l9-11h-7z" />
                 </svg>
                 Dev Mode: Extended error info enabled. Turnstile Verification Required.
+                {% if using_fallback_quota %}
+                <br/>Using in‑memory quota fallback (Redis unavailable or disabled).
+                {% endif %}
             </div>
             {% endif %}
 
@@ -259,6 +262,12 @@
             tokenInput.value = token;
             // Hide widget to reduce visual clutter after verification
             if (widgetContainer) widgetContainer.style.display = 'none';
+        }
+        
+        function setLang(code) {
+            try {
+                document.cookie = `dd_lang=${code}; path=/; max-age=${60*60*24*90}; samesite=lax`;
+            } catch (_) {}
         }
 
         function resetTurnstile() {
@@ -409,8 +418,8 @@
                             errMsg = JSON.stringify(data.detail);
                         }
 
-                        // Update quota display if present in error detail
-                        if (data.detail.quota_remaining !== undefined) {
+                        // Update quota display only when quota exceeded
+                        if (data.detail.error === "QUOTA_EXCEEDED" && data.detail.quota_remaining !== undefined) {
                             quotaDisplay.textContent = Math.max(0, data.detail.quota_remaining);
                         }
                     }
