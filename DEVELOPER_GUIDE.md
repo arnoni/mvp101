@@ -40,7 +40,7 @@ graph TD
 ### 3.1 Core (`app/core/`)
 *   **`config.py`**: Centralized configuration using Pydantic `BaseSettings`. Handles environment variables, feature flags (e.g., `ENABLE_REDIS`), and constants like `DA_NANG_BBOX`.
 *   **`middleware.py`**:
-    *   **`AnonIdMiddleware`**: Inspects every request. If a `dd_anon_id` cookie is missing, it generates a new UUID and sets the cookie. This ID is critical for the `PolicyEngine` to track usage.
+    *   **`AnonIdMiddleware`**: Ensures each request carries `dd_anon_id`. If missing, computes a SHA256 fingerprint using User-Agent + Accept-Language + `dd_lang` and sets cookies: `dd_anon_id` (HttpOnly, Secure in prod, SameSite=Strict) and `dd_lang`. Once set, the ID is not recomputed.
 
 ### 3.2 Services (`app/services/`)
 This is where the business logic lives.
@@ -80,8 +80,9 @@ This is where the business logic lives.
 
 ### 3.3 API (`app/api/`)
 *   **`routes.py`**:
-    *   **`/api/find-nearest`**: The main search endpoint. It accepts Lat/Lng, invokes the Policy Engine, and if allowed, calls the POI Service.
-    *   **`/download-kmz`**: Generates a file download based on the *previous* search. Counts as a "read" against the user's quota.
+    *   **`/api/find-nearest`**: The main search endpoint. It accepts Lat/Lng, invokes the Policy Engine, and if allowed, calls the POI Service. Turnstile is required for Free tier requests when the token is missing.
+    *   **`/download-kmz`**: Generates a file download based on the previous search and counts as a read. Note: daily scoping applies in general; the KMZ route key scoping will be aligned.
+    *   **Admin Bypass**: If `settings.ADMIN_BYPASS_TOKEN` is set, requests with header `X-Admin-Auth` equal to that token bypass quotas and Turnstile.
 
 ### 3.4 Utils (`app/utils/`)
 *   **`security.py`**: Handles Cloudflare Turnstile verification.
