@@ -73,13 +73,8 @@
 
 <body class="bg-slate-50 min-h-screen flex flex-col items-center py-12 px-4 sm:px-6 lg:px-8 font-sans text-slate-900">
     <div class="max-w-md w-full space-y-6 bg-white p-8 rounded-2xl shadow-xl border border-slate-100 relative">
-        <!-- Item 1: Daily Usage Status (Top-Left) -->
         <div class="absolute top-4 left-4 flex flex-col items-start text-xs space-y-1">
-            <div class="text-slate-500 font-medium">{{ t.daily_usage }}</div>
-            <div class="text-slate-700">
-                {{ t.remaining_checks }}: <span id="quota-display" class="font-mono font-semibold">{{ quota_remaining }}</span>
-            </div>
-            <button class="mt-2 text-blue-600 hover:text-blue-800 underline" onclick="togglePaymentModal()">{{ t.support_title }}</button>
+            <button id="user-status-text" class="text-slate-700 font-medium hover:underline text-left" onclick="togglePaymentModal()">{{ initial_user_status.text }}</button>
         </div>
 
         <!-- Language Selector -->
@@ -103,6 +98,7 @@
                 </h1>
             </div>
             <p class="text-slate-500 mt-1">{{ t.subtitle }}</p>
+            <p class="text-xs text-slate-400 mt-1">{{ t.early_preview }}</p>
         </header>
 
         <form id="search-form" class="space-y-4">
@@ -128,9 +124,7 @@
             </div>
             {% endif %}
 
-            <!-- Turnstile Widget (Always Visible) -->
-            <div id="turnstile-widget" class="cf-turnstile" data-sitekey="{{ turnstile_site_key }}"
-                data-callback="turnstileCallback"></div>
+            <div id="turnstile-widget" class="cf-turnstile" data-sitekey="{{ turnstile_site_key }}" data-callback="turnstileCallback" style="{% if not initial_turnstile_required %}display:none{% endif %}"></div>
             <input type="hidden" id="turnstile-token" name="turnstile_token">
 
             <button type="submit" id="search-button"
@@ -139,7 +133,7 @@
             </button>
         </form>
 
-        <div id="status-message" class="mt-4 p-3 text-sm rounded-lg hidden" role="alert"></div>
+        <div id="message-board" class="mt-4 p-3 text-sm rounded-lg hidden" role="status"></div>
 
         <div id="results-section" class="mt-8 space-y-4 hidden">
             <h2 class="text-xl font-semibold text-slate-800">{{ t.results_header }}</h2>
@@ -223,20 +217,17 @@
         const searchButton = document.getElementById('search-button');
         const tokenInput = document.getElementById('turnstile-token');
         const widgetContainer = document.getElementById('turnstile-widget');
-        const statusMessage = document.getElementById('status-message');
+        const messageBoard = document.getElementById('message-board');
         const resultsSection = document.getElementById('results-section');
         const resultsList = document.getElementById('results-list');
         const metaInfo = document.getElementById('meta-info');
         const debugBoard = document.getElementById('debug-board');
         const debugLogsContainer = document.getElementById('debug-logs');
-        const quotaDisplay = document.getElementById('quota-display');
-        const userPlanDisplay = document.getElementById('user-plan');
+        const userStatusText = document.getElementById('user-status-text');
         const paymentModal = document.getElementById('payment-modal');
         const aboutModal = document.getElementById('about-modal');
 
-        // Debug: Verify elements exist
-        console.log("[INIT] quotaDisplay element:", quotaDisplay);
-        console.log("[INIT] Initial quota value:", quotaDisplay ? quotaDisplay.textContent : "NOT FOUND");
+        console.log("[INIT] userStatus element:", userStatusText);
 
         function togglePaymentModal() {
             paymentModal.classList.toggle('hidden');
@@ -254,13 +245,37 @@
             success: "{{ t.success_prefix }}",
             go_there: "{{ t.go_there }}",
             dist: "{{ t.distance_unit }}",
-            zero_results: "You have a green light! No construction nearby found.",
-            waiting: "Waiting for user input..."
+            zero_results: "No active construction detected nearby",
+            waiting: "Waiting for user input...",
+            disclaimer1: "DillDrill uses public data and may not catch everything.",
+            disclaimer2: "Always visit in person before deciding."
         };
+
+        const appState = {
+            can_search: {{ 'true' if initial_can_search else 'false' }},
+            turnstile_required: {{ 'true' if initial_turnstile_required else 'false' }},
+            checks_today: {{ initial_checks_today }},
+            tier: "{{ initial_tier }}"
+        };
+
+        async function refreshStatus() {
+            try {
+                const resp = await fetch('/api/status', { method: 'GET' });
+                if (!resp.ok) return;
+                const data = await resp.json();
+                appState.can_search = !!data.can_search;
+                appState.turnstile_required = !!data.turnstile_required;
+                appState.checks_today = data.checks_today || 0;
+                if (data.user_status && data.user_status.text) {
+                    userStatusText.textContent = data.user_status.text;
+                }
+                if (widgetContainer) widgetContainer.style.display = appState.turnstile_required ? 'block' : 'none';
+            } catch (_) {}
+        }
+        window.addEventListener('focus', () => { refreshStatus(); });
 
         function turnstileCallback(token) {
             tokenInput.value = token;
-            // Hide widget to reduce visual clutter after verification
             if (widgetContainer) widgetContainer.style.display = 'none';
         }
         
@@ -279,21 +294,15 @@
             }
         }
 
-        function showStatus(msg, type = 'info') {
-            statusMessage.textContent = msg;
-            statusMessage.className = 'mt-4 p-3 text-sm rounded-lg';
-            statusMessage.classList.remove('hidden');
-
-            // Remove all specific color classes first
-            statusMessage.classList.remove('bg-red-100', 'text-red-800', 'bg-green-100', 'text-green-800', 'bg-blue-100', 'text-blue-800', 'bg-slate-100', 'text-slate-600');
-
-            if (type === 'error') statusMessage.classList.add('bg-red-100', 'text-red-800');
-            else if (type === 'success') statusMessage.classList.add('bg-green-100', 'text-green-800');
-            else if (type === 'waiting') statusMessage.classList.add('bg-slate-100', 'text-slate-600');
-            else statusMessage.classList.add('bg-blue-100', 'text-blue-800');
+        function showMessage(primary, type = 'info', secondary = '') {
+            const disclaimer = `${STRINGS.disclaimer1} ${STRINGS.disclaimer2}`;
+            const icon = type === 'success' ? '✓' : (type === 'warning' ? '⚠' : (type === 'error' ? '◻' : '🔵'));
+            const color = type === 'success' ? 'bg-green-100 text-green-800' : (type === 'warning' ? 'bg-amber-100 text-amber-800' : (type === 'error' ? 'bg-red-100 text-red-800' : 'bg-blue-100 text-blue-800'));
+            messageBoard.className = `mt-4 p-3 text-sm rounded-lg ${color}`;
+            messageBoard.innerHTML = `<div class="flex items-start space-x-2"><span>${icon}</span><div><div>${primary}</div>${secondary ? `<div class="text-xs text-slate-600">${secondary}</div>` : ''}<div class="text-xs italic">${disclaimer}</div></div></div>`;
+            messageBoard.classList.remove('hidden');
         }
-
-        function hideStatus() { statusMessage.classList.add('hidden'); }
+        function hideMessage() { messageBoard.classList.add('hidden'); }
 
         function parseCoordinates(input) {
             // Very simple parser: "lat, lon"
@@ -326,16 +335,7 @@
                 resultsList.insertAdjacentHTML('beforeend', card);
             });
 
-            // Meta Info
-            metaInfo.innerHTML = `{{ t.remaining_checks }}: ${data.quota_remaining}`;
-
             resultsSection.classList.remove('hidden');
-
-            // Update Header Quota
-            if (data.quota_remaining !== undefined) {
-                quotaDisplay.textContent = Math.max(0, data.quota_remaining);
-            }
-
             // Populate Debug Board (Item 4)
             if (data.debug_logs && data.debug_logs.length > 0) {
                 debugBoard.classList.remove('hidden');
@@ -349,15 +349,21 @@
 
         form.addEventListener('submit', async e => {
             e.preventDefault();
-            hideStatus();
+            hideMessage();
             resultsSection.classList.add('hidden');
             searchButton.disabled = true;
             searchButton.textContent = STRINGS.searching;
 
             const inputVal = coordsInput.value;
             const turnstile_token = tokenInput.value;
-            if (!turnstile_token) {
-                showStatus("Please complete the human verification.", 'error');
+            if (!appState?.can_search) {
+                togglePaymentModal();
+                searchButton.disabled = false;
+                searchButton.textContent = STRINGS.btn_default;
+                return;
+            }
+            if (appState?.turnstile_required && !turnstile_token) {
+                showMessage("Please complete the human verification.", 'error');
                 searchButton.disabled = false;
                 searchButton.textContent = STRINGS.btn_default;
                 return;
@@ -365,7 +371,7 @@
 
             const coords = parseCoordinates(inputVal);
             if (!coords) {
-                showStatus(STRINGS.error + ": Invalid coordinates format. Use 'lat, lon'", 'error');
+                showMessage("Use decimal degrees", 'error');
                 searchButton.disabled = false;
                 searchButton.textContent = STRINGS.btn_default;
                 return;
@@ -395,20 +401,16 @@
 
                 if (response.ok) {
                     success = true;
-                    // Update quota display regardless of results
-                    console.log("[DEBUG] Quota from server:", data.quota_remaining);
-                    console.log("[DEBUG] quotaDisplay element before update:", quotaDisplay);
-                    if (data.quota_remaining !== undefined) {
-                        quotaDisplay.textContent = Math.max(0, data.quota_remaining);
-                        console.log("[DEBUG] Updated display to:", quotaDisplay.textContent);
-                    }
-
                     if (data.results.length === 0) {
-                        showStatus(STRINGS.zero_results, 'success');
+                        showMessage(STRINGS.zero_results, 'success');
                     } else {
                         renderResults(data);
-                        showStatus(`${STRINGS.success}! Found ${data.results.length} projects.`, 'success');
+                        showMessage(`${STRINGS.success}`, 'success', `Found ${data.results.length} projects.`);
                     }
+                    userStatusText.textContent = data.user_status?.text || userStatusText.textContent;
+                    appState.can_search = !!data.can_search;
+                    appState.turnstile_required = !!data.turnstile_required;
+                    if (widgetContainer) widgetContainer.style.display = appState.turnstile_required ? 'block' : 'none';
                 } else {
                     let errMsg = 'Unknown error';
                     if (data.detail) {
@@ -417,18 +419,18 @@
                         } else {
                             errMsg = JSON.stringify(data.detail);
                         }
-
-                        // Update quota display only when quota exceeded
-                        if (data.detail.error === "QUOTA_EXCEEDED" && data.detail.quota_remaining !== undefined) {
-                            quotaDisplay.textContent = Math.max(0, data.detail.quota_remaining);
-                        }
                     }
 
                     // Append Request ID to error message if available
                     if (reqId) {
                         errMsg += ` (Req ID: ${reqId})`;
                     }
-                    showStatus(`${STRINGS.error}: ${errMsg}`, 'error');
+                    if (data.detail && data.detail.error === "QUOTA_EXCEEDED") {
+                        togglePaymentModal();
+                        userStatusText.textContent = "{{ t.status_limit if t.status_limit else 'Daily limit reached' }}";
+                    } else {
+                        showMessage(`${STRINGS.error}: ${errMsg}`, 'error');
+                    }
 
                     if (data.detail && data.detail.error === "CHALLENGE_REQUIRED") {
                         resetTurnstile();
@@ -437,18 +439,18 @@
             } catch (err) {
                 console.error('Fetch error:', err);
                 if (!success) {
-                    showStatus(`${STRINGS.error}: Network error.`, 'error');
+                    showMessage(`${STRINGS.error}: Network error.`, 'error');
                 }
             } finally {
                 searchButton.disabled = false;
                 searchButton.textContent = STRINGS.btn_default;
 
-                // Status update timeout
                 setTimeout(() => {
-                    showStatus(STRINGS.waiting, 'waiting');
+                    showMessage(STRINGS.waiting, 'info');
                 }, 10000);
             }
         });
+        refreshStatus();
     </script>
 
 </body>
