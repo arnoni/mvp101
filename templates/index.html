@@ -105,7 +105,14 @@
             <div class="flex justify-between items-center">
                 <label for="coordinates" class="block text-sm font-medium text-slate-700">{{ t.input_label }}</label>
                 <!-- Item 3: Tutorial Link -->
-                <a href="#" class="text-xs text-blue-500 hover:text-blue-700 hover:underline">{{ t.how_to_use }}</a>
+                <button type="button"
+                        onclick="toggleAboutModal()"
+                        class="text-xs text-blue-500 hover:text-blue-700 rounded p-1"
+                        aria-label="{{ t.how_to_use }}"
+                        title="{{ t.how_to_use }}">
+                    <span aria-hidden="true" class="font-bold">?</span>
+                    <span class="sr-only">{{ t.how_to_use }}</span>
+                </button>
             </div>
             <input type="text" id="coordinates" name="coordinates" required placeholder="{{ t.placeholder }}"
                 class="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-lg shadow-sm transition-all duration-200">
