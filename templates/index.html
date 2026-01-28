@@ -151,8 +151,8 @@
                         <circle cx="48" cy="22" r="4" fill="currentColor" opacity="0.5"/>
                     </svg>
                 </div>
-                <p class="text-slate-700 font-medium">Welcome to DillDrill</p>
-                <p class="text-slate-500 text-sm">Results will be displayed here.</p>
+                <p class="text-slate-700 font-medium">{{ t.results_empty_title }}</p>
+                <p class="text-slate-500 text-sm">{{ t.results_empty_subtitle }}</p>
             </div>
             <div id="results-list" class="space-y-4"></div>
 
@@ -202,21 +202,10 @@
         <div class="bg-white rounded-xl shadow-2xl max-w-md w-full p-8 text-left transform transition-all scale-100">
             <h3 class="text-2xl font-bold text-slate-900 mb-4 text-center">{{ t.about }}</h3>
             <div class="text-slate-600 space-y-3 text-sm leading-relaxed">
-                <p>
-                    DillDrill is an independent international research tool that helps identify areas that may be
-                    affected by construction activity before visiting or renting.
-                </p>
-                <p>
-                    Enter latitude and longitude coordinates in decimal degrees format to explore nearby construction
-                    related signals.
-                </p>
-                <p class="text-xs text-slate-500 italic">
-                    Results are informational only and may be incomplete, outdated, or inaccurate. Always verify
-                    independently.
-                </p>
-                <p>
-                    Optional support helps cover infrastructure costs and may unlock additional daily usage capacity.
-                </p>
+                <p>{{ t.about_body_p1 }}</p>
+                <p>{{ t.about_body_p2 }}</p>
+                <p class="text-xs text-slate-500 italic">{{ t.about_disclaimer }}</p>
+                <p>{{ t.about_support }}</p>
                 <div class="text-center pt-4 border-t border-slate-200 mt-4">
                     <p class="font-semibold text-slate-800">DillDrill&trade;</p>
                     <p class="text-xs text-slate-400 mt-1">2026 All rights reserved.</p>
@@ -224,7 +213,7 @@
             </div>
             <button onclick="toggleAboutModal()"
                 class="mt-6 w-full bg-slate-100 text-slate-700 py-2 rounded-lg font-medium hover:bg-slate-200 transition">
-                Close
+                {{ t.close }}
             </button>
         </div>
     </div>
