@@ -1,0 +1,324 @@
+Use the improved code for config, main wiring, DTOs, and POI service, aligned to the new response contract and safer defaults.
+
+```python
+# app/core/config.py
+from typing import Optional
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    DATABASE_URL: Optional[str] = Field(
+        default=None,
+        description="Postgres connection string, include sslmode=require",
+    )
+
+    SEARCH_RADIUS_KM: float = Field(default=0.8, ge=0.05, le=10.0)
+    MIN_SPACING_M: int = Field(default=30, ge=0, le=2000)
+    MAX_RESULTS_DEFAULT: int = Field(default=5, ge=1, le=20)
+
+
+settings = Settings()
+```
+
+```python
+# app/models/dto.py
+from pydantic import BaseModel, Field, HttpUrl, ConfigDict
+from typing import Optional, List
+
+
+class PublicPOIResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(..., description="POI display name.")
+    distance_m: int = Field(..., ge=0, description="Distance from user in meters.")
+    google_maps_link: HttpUrl = Field(..., description="Google Maps directions link.")
+    image_url: Optional[HttpUrl] = Field(None, description="Optional thumbnail URL.")
+
+
+class PublicPOIResultWithCoords(PublicPOIResult):
+    lat: float = Field(..., ge=-90, le=90, description="Latitude.")
+    lon: float = Field(..., ge=-180, le=180, description="Longitude.")
+
+
+class SearchResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    results: List[PublicPOIResult]
+    note: Optional[str] = Field(None, description="Optional user-facing note.")
+```
+
+```python
+# app/services/poi_service.py
+from typing import List, Tuple, Optional
+
+import structlog
+from sqlalchemy import text, bindparam
+from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.types import Text
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+from app.core.config import settings
+from app.models.dto import PublicPOIResult, PublicPOIResultWithCoords
+from app.utils.haversine import haversine
+
+logger = structlog.get_logger(__name__)
+
+
+class POIService:
+    def __init__(self, engine: Optional[AsyncEngine]):
+        self.engine = engine
+
+    async def find_nearest_pois(
+        self,
+        user_lat: float,
+        user_lon: float,
+        max_results: Optional[int] = None,
+        include_coords: bool = False,
+    ) -> Tuple[List[PublicPOIResult], List[str]]:
+        """
+        Returns:
+          results: list of public POI results
+          logs: internal debug strings (DO NOT return to public clients in prod)
+        """
+        logs: List[str] = []
+
+        if not self.engine:
+            logs.append("DB engine not available")
+            return [], logs
+
+        max_results = max_results or settings.MAX_RESULTS_DEFAULT
+        radius_m = int(settings.SEARCH_RADIUS_KM * 1000)
+        initial_limit = max(max_results * 5, 25)
+
+        logs.append(f"postgis_search radius_m={radius_m} limit={initial_limit}")
+
+        sql = text(
+            """
+            SELECT
+              name,
+              ST_Distance(
+                geom,
+                ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::GEOGRAPHY
+              ) AS distance_m,
+              ST_Y(geom::geometry) AS lat,
+              ST_X(geom::geometry) AS lon
+            FROM pois
+            WHERE ST_DWithin(
+              geom,
+              ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::GEOGRAPHY,
+              :radius
+            )
+            ORDER BY distance_m
+            LIMIT :limit
+            """
+        )
+
+        candidates: List[Tuple[float, str, float, float]] = []
+
+        try:
+            async with self.engine.connect() as conn:
+                result = await conn.execute(
+                    sql,
+                    {"lon": user_lon, "lat": user_lat, "radius": radius_m, "limit": initial_limit},
+                )
+                for name, distance_m, lat, lon in result.fetchall():
+                    candidates.append((float(distance_m), str(name), float(lat), float(lon)))
+        except Exception as exc:
+            logger.error("postgis_query_failed", error=str(exc))
+            logs.append("Search failed")
+            return [], logs
+
+        if not candidates:
+            logs.append("No results")
+            return [], logs
+
+        # Enforce minimum spacing between POIs (anti-clustering)
+        min_spacing_km = settings.MIN_SPACING_M / 1000.0
+        selected: List[Tuple[float, str, float, float]] = []
+
+        for distance_m, name, lat, lon in candidates:
+            if len(selected) >= max_results:
+                break
+
+            ok = True
+            for _, _, s_lat, s_lon in selected:
+                if haversine(lat, lon, s_lat, s_lon) < min_spacing_km:
+                    ok = False
+                    break
+
+            if ok:
+                selected.append((distance_m, name, lat, lon))
+
+        results: List[PublicPOIResult] = []
+        for distance_m, name, lat, lon in selected:
+            gmaps = (
+                "https://www.google.com/maps/dir/?api=1"
+                f"&origin={user_lat},{user_lon}"
+                f"&destination={lat},{lon}"
+            )
+
+            if include_coords:
+                results.append(
+                    PublicPOIResultWithCoords(
+                        name=name,
+                        distance_m=int(round(distance_m)),
+                        google_maps_link=gmaps,
+                        image_url=None,
+                        lat=lat,
+                        lon=lon,
+                    )
+                )
+            else:
+                results.append(
+                    PublicPOIResult(
+                        name=name,
+                        distance_m=int(round(distance_m)),
+                        google_maps_link=gmaps,
+                        image_url=None,
+                    )
+                )
+
+        return results, logs
+
+    async def get_pois_by_names(self, names: List[str], include_coords: bool = False) -> List[PublicPOIResult]:
+        if not self.engine or not names:
+            return []
+
+        sql = (
+            text(
+                """
+                SELECT
+                  name,
+                  ST_Y(geom::geometry) AS lat,
+                  ST_X(geom::geometry) AS lon
+                FROM pois
+                WHERE name = ANY(:names)
+                """
+            )
+            .bindparams(bindparam("names", type_=ARRAY(Text)))
+        )
+
+        out: List[PublicPOIResult] = []
+        try:
+            async with self.engine.connect() as conn:
+                result = await conn.execute(sql, {"names": names})
+                for name, lat, lon in result.fetchall():
+                    gmaps = f"https://www.google.com/maps/dir/?api=1&destination={float(lat)},{float(lon)}"
+                    if include_coords:
+                        out.append(
+                            PublicPOIResultWithCoords(
+                                name=str(name),
+                                distance_m=0,
+                                google_maps_link=gmaps,
+                                image_url=None,
+                                lat=float(lat),
+                                lon=float(lon),
+                            )
+                        )
+                    else:
+                        out.append(
+                            PublicPOIResult(
+                                name=str(name),
+                                distance_m=0,
+                                google_maps_link=gmaps,
+                                image_url=None,
+                            )
+                        )
+        except Exception as exc:
+            logger.error("postgis_names_query_failed", error=str(exc))
+            return []
+
+        return out
+```
+
+```python
+# app/main.py
+from contextlib import asynccontextmanager
+from fastapi import FastAPI, HTTPException, status
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.pool import NullPool
+from sqlalchemy import text
+import structlog
+
+from app.core.config import settings
+from app.services.poi_service import POIService
+from app.models.dto import SearchResponse
+
+logger = structlog.get_logger(__name__)
+
+
+def build_async_engine() -> AsyncEngine:
+    url = settings.DATABASE_URL
+    if not url:
+        raise RuntimeError("DATABASE_URL is not set")
+
+    async_url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+
+    return create_async_engine(
+        async_url,
+        poolclass=NullPool,
+        pool_pre_ping=True,
+    )
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    app.state.db_engine = None
+    app.state.poi_service = None
+
+    if not settings.DATABASE_URL:
+        logger.warning("db_not_configured")
+        yield
+        return
+
+    try:
+        engine = build_async_engine()
+        app.state.db_engine = engine
+        app.state.poi_service = POIService(engine)
+        logger.info("poi_service_ready")
+        yield
+    except Exception as exc:
+        logger.error("lifespan_init_failed", error=str(exc))
+        yield
+    finally:
+        engine = getattr(app.state, "db_engine", None)
+        if engine:
+            await engine.dispose()
+            logger.info("db_engine_disposed")
+
+
+app = FastAPI(lifespan=lifespan)
+
+
+@app.get("/health/db", status_code=status.HTTP_200_OK)
+async def db_health():
+    engine = getattr(app.state, "db_engine", None)
+    if not engine:
+        raise HTTPException(status_code=503, detail="database not configured")
+
+    try:
+        async with engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        return {"db": "ok"}
+    except Exception:
+        raise HTTPException(status_code=503, detail="database unavailable")
+
+
+# Example search endpoint using the new response model
+@app.post("/api/search", response_model=SearchResponse)
+async def search(lat: float, lon: float, max_results: int = settings.MAX_RESULTS_DEFAULT):
+    poi_service = getattr(app.state, "poi_service", None)
+    if not poi_service:
+        raise HTTPException(status_code=503, detail="service unavailable")
+
+    results, logs = await poi_service.find_nearest_pois(lat, lon, max_results=max_results, include_coords=False)
+
+    # IMPORTANT: do not return logs in production responses
+    return SearchResponse(
+        results=results,
+        note="This result reflects observed signals, not guarantees.",
+    )
+```

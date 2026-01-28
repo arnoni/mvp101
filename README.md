@@ -20,7 +20,7 @@
 - **Accessibility**: "How to use" icon with `aria-label`; Message Board uses `role="status"`.
 
 ## Architecture
-The project follows a Domain-First architecture using FastAPI, Redis (Upstash), and Jinja2.
+The project follows a Domain-First architecture using FastAPI, Redis (Upstash), and PostGIS (Neon PostgreSQL) for POIs, with server-rendered Jinja2.
 
 ## Developer Guide
 For a detailed introduction to the codebase, modules, and architecture, please read the **[Developer Introduction & Architecture Guide](DEVELOPER_GUIDE.md)**.

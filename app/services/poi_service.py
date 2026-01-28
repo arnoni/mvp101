@@ -1,138 +1,143 @@
 # app/services/poi_service.py
-# Implements TSD Section 4.1: Repository Pattern for MasterList (in‑memory cache on startup)
-# Implements TSD FR-005: Find Nearest 5 POIs
-# Implements TSD Section 8: Never expose internal_notes or full MasterList
-
-import json
-import logging
-import os
 from typing import List, Tuple
-
-from app.models.dto import POI, PublicPOIResult, MasterList
+import structlog
+from sqlalchemy import text, bindparam
+from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.types import Text
+from sqlalchemy.ext.asyncio import AsyncEngine
+from app.models.dto import PublicPOIResult, PublicPOIResultWithCoords
 from app.utils.haversine import haversine
 from app.core.config import settings
-
-import structlog
 
 logger = structlog.get_logger(__name__)
 
 class POIService:
-    """Service layer for handling Point‑of‑Interest (POI) data.
+    def __init__(self, engine: AsyncEngine | None):
+        self.engine = engine
+        self.master_list = []
 
-    - Loads `MasterList.json` into memory on startup.
-    - Provides `find_nearest_pois` to return the 5 closest POIs.
-    """
-
-    def __init__(self):
-        self.master_list: List[POI] = []
-        self._load_master_list()
-
-    def _load_master_list(self):
-        """Load the MasterList JSON file and validate it with the Pydantic model."""
-        file_path = os.path.join(
-            os.path.dirname(__file__), "..", "..", "static", "masterlist.json"
-        )
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-
-            # Validate using the MasterList DTO (which contains a list of POI objects)
-            master = MasterList.model_validate(data)
-            self.master_list = master.points
-            self.master_list = master.points
-            logger.info("masterlist_loaded", count=len(self.master_list))
-        except FileNotFoundError:
-            logger.error("masterlist_file_not_found", path=file_path)
-            self.master_list = []
-        except Exception as e:
-            logger.exception("masterlist_load_error", error=str(e))
-            self.master_list = []
-
-    async def initialize_semantic_search(self):
-        """Deprecated: Semantic search removed in favor of direct coordinate support."""
-        pass
-
-    def find_nearest_pois(self, user_lat: float, user_lon: float, max_results: int = 5) -> Tuple[List[PublicPOIResult], List[str]]:
-        """
-        Calculate distances to all POIs and return the nearest results 
-        that satisfy the 30m minimum spacing rule.
-        
-        Returns:
-            Tuple[List[PublicPOIResult], List[str]]: (Filtered results, Debug logs)
-        """
+    async def find_nearest_pois(self, user_lat: float, user_lon: float, max_results: int = 5, include_coords: bool = False) -> Tuple[List[PublicPOIResult], List[str]]:
         logs: List[str] = []
-        logs.append(f"Total POIs in MasterList: {len(self.master_list)}")
-
-        if not self.master_list:
-            logs.append("MasterList is empty.")
+        if not self.engine or not settings.DATABASE_URL:
+            logs.append("DATABASE_URL is not configured.")
             return [], logs
 
-        # 1. Gather all candidates within 100m (0.1 km)
-        search_radius_km = 0.1 # Fixed TDD requirement
-        candidates: List[Tuple[float, POI]] = []
-        
-        logs.append(f"Searching near {user_lat:.5f}, {user_lon:.5f} in radius {search_radius_km}km")
-        
-        for poi in self.master_list:
-            physical_dist = haversine(user_lat, user_lon, poi.lat, poi.lon)
-            if physical_dist <= search_radius_km:
-                candidates.append((physical_dist, poi))
-                logs.append(f"Candidate found: {poi.name} at {physical_dist*1000:.1f}m")
+        radius_m = int(settings.SEARCH_RADIUS_KM * 1000)
+        logs.append(f"Searching near {user_lat:.5f}, {user_lon:.5f} within {radius_m}m via PostGIS")
+
+        sql = text(
+            "SELECT name, "
+            "ST_Distance(geom, ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::GEOGRAPHY) AS distance_m, "
+            "ST_Y(geom::geometry) AS lat, ST_X(geom::geometry) AS lon "
+            "FROM pois "
+            "WHERE ST_DWithin(geom, ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::GEOGRAPHY, :radius) "
+            "ORDER BY distance_m LIMIT :limit"
+        )
+
+        # Query more candidates than needed to allow spacing filter
+        initial_limit = max(max_results * 5, 25)
+
+        candidates: List[Tuple[float, Tuple[str, float, float]]] = []
+        try:
+            async with self.engine.connect() as conn:
+                result = await conn.execute(
+                    sql.bindparams(lon=user_lon, lat=user_lat, radius=radius_m, limit=initial_limit)
+                )
+                rows = result.fetchall()
+                for row in rows:
+                    name, distance_m, lat, lon = row
+                    candidates.append((distance_m / 1000.0, (name, lat, lon)))
+                    logs.append(f"Candidate: {name} at {distance_m:.1f}m")
+        except Exception as e:
+            logs.append(f"DB query failed: {e}")
+            logger.error("postgis_query_failed", error=str(e))
+            return [], logs
 
         if not candidates:
             logs.append("No candidates found within search radius.")
             return [], logs
 
-        # 2. Sort by distance from user (closest first)
-        logs.append(f"Sorting {len(candidates)} candidates by distance...")
-        candidates.sort(key=lambda x: x[0])
-        logs.append("Sort complete.")
-        
-        # 3. Greedy Selection with 30m Spacing
-        selected_tuples: List[Tuple[float, POI]] = []
-        min_spacing_km = 0.03 # 30 meters
-        
-        for dist_from_user, candidate_poi in candidates:
-            if len(selected_tuples) >= max_results:
-                logs.append(f"Max results ({max_results}) reached.")
+        selected: List[Tuple[float, Tuple[str, float, float]]] = []
+        min_spacing_km = 0.03
+        for dist_km, (name, lat, lon) in candidates:
+            if len(selected) >= max_results:
                 break
-                
-            # Check spacing against ALL already selected POIs
             is_far_enough = True
-            for _, selected_poi in selected_tuples:
-                inter_poi_dist = haversine(
-                    candidate_poi.lat, candidate_poi.lon, 
-                    selected_poi.lat, selected_poi.lon
-                )
-                if inter_poi_dist < min_spacing_km:
+            for _, (_, s_lat, s_lon) in selected:
+                inter_poi_dist_km = haversine(lat, lon, s_lat, s_lon)
+                if inter_poi_dist_km < min_spacing_km:
                     is_far_enough = False
-                    logs.append(f"Skipping {candidate_poi.name}: Too close ({inter_poi_dist*1000:.1f}m) to {selected_poi.name}")
+                    logs.append(f"Skip {name}: too close ({inter_poi_dist_km*1000:.1f}m)")
                     break
-            
             if is_far_enough:
-                logs.append(f"Spacing check passed for {candidate_poi.name} (checked against {len(selected_tuples)} selected)")
-                try:
-                    selected_tuples.append((dist_from_user, candidate_poi))
-                    logs.append(f"Selected {candidate_poi.name} (Dist: {dist_from_user*1000:.1f}m)")
-                except Exception as e:
-                    logs.append(f"Error selecting {candidate_poi.name}: {e}")
+                selected.append((dist_km, (name, lat, lon)))
+                logs.append(f"Selected {name} (Dist: {dist_km*1000:.1f}m)")
 
-        # 4. Build DTOs for the response
         results: List[PublicPOIResult] = []
-        for dist_km, poi in selected_tuples:
-            google_maps_link = (
-                f"https://www.google.com/maps/dir/?api=1&origin={user_lat},{user_lon}&destination={poi.lat},{poi.lon}"
-            )
-            image_url = f"/static/images/{poi.images[0]}" if poi.images else ""
-
-            results.append(
-                PublicPOIResult(
-                    name=poi.name,
-                    distance_km=round(dist_km, 3), # Higher precision for meters check
-                    google_maps_link=google_maps_link,
-                    image_url=image_url,
-                    lat=poi.lat,
-                    lon=poi.lon,
+        for dist_km, (name, lat, lon) in selected:
+            google_maps_link = f"https://www.google.com/maps/dir/?api=1&origin={user_lat},{user_lon}&destination={lat},{lon}"
+            distance_m = int(round(dist_km * 1000))
+            if include_coords:
+                results.append(
+                    PublicPOIResultWithCoords(
+                        name=name,
+                        distance_m=distance_m,
+                        google_maps_link=google_maps_link,
+                        image_url=None,
+                        lat=lat,
+                        lon=lon,
+                    )
                 )
-            )
+            else:
+                results.append(
+                    PublicPOIResult(
+                        name=name,
+                        distance_m=distance_m,
+                        google_maps_link=google_maps_link,
+                        image_url=None,
+                    )
+                )
         return results, logs
+
+    async def get_pois_by_names(self, names: List[str], include_coords: bool = True) -> List[PublicPOIResult]:
+        if not self.engine or not settings.DATABASE_URL or not names:
+            return []
+        sql = (
+            text(
+                "SELECT name, ST_Y(geom::geometry) AS lat, ST_X(geom::geometry) AS lon "
+                "FROM pois WHERE name = ANY(:names)"
+            )
+            .bindparams(bindparam("names", type_=ARRAY(Text)))
+        )
+        results: List[PublicPOIResult] = []
+        try:
+            async with self.engine.connect() as conn:
+                result = await conn.execute(sql, {"names": names})
+                rows = result.fetchall()
+                for row in rows:
+                    name, lat, lon = row
+                    gmaps = f"https://www.google.com/maps/dir/?api=1&destination={lat},{lon}"
+                    if include_coords:
+                        results.append(
+                            PublicPOIResultWithCoords(
+                                name=name,
+                                distance_m=0,
+                                google_maps_link=gmaps,
+                                image_url=None,
+                                lat=lat,
+                                lon=lon,
+                            )
+                        )
+                    else:
+                        results.append(
+                            PublicPOIResult(
+                                name=name,
+                                distance_m=0,
+                                google_maps_link=gmaps,
+                                image_url=None,
+                            )
+                        )
+        except Exception as e:
+            logger.error("postgis_names_query_failed", error=str(e))
+            return []
+        return results

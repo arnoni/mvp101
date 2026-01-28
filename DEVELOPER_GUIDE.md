@@ -28,7 +28,7 @@ graph TD
         PolicyEngine -->|Check| Entitlement[Entitlement Service]
         
         Route -->|If Allowed| POIService[POI Service]
-        POIService -->|Read| MasterList[MasterList.json]
+        POIService -->|Read| PostGIS[Neon PostgreSQL]
     end
     
     POIService -->|Results| Route
@@ -54,11 +54,10 @@ This is where the business logic lives.
 *   **`poi_service.py` (The Search):**
     *   **Responsibility:** Finds relevant data.
     *   **Algorithm (Greedy 30m):**
-        1.  Find all POIs within 100m.
-        2.  Sort by distance.
-        3.  Pick the closest.
-        4.  Pick the next closest *only if* it is >30m away from *all* already picked points.
-    *   **Data Source:** Loads `static/masterlist.json` into memory on startup.
+        1.  Query PostGIS for POIs within 100m using `ST_DWithin`.
+        2.  Order by `ST_Distance` ascending.
+        3.  Apply 30m spacing client-side (Greedy) to ensure diversity.
+    *   **Data Source:** Neon PostgreSQL with PostGIS (`pois` table).
 
 *   **`quota_repository.py` (The State):**
     *   **Responsibility:** specific usage tracking.

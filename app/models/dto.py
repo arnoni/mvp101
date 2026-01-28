@@ -1,7 +1,7 @@
 # Implements TSD Section 4.2: Data Models
 # Implements TSD Section 7.2: Type hints mandatory
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, HttpUrl, ConfigDict
 from typing import List, Optional
 
 # --- Internal Data Models (MasterList) ---
@@ -22,14 +22,15 @@ class MasterList(BaseModel):
 # --- Public Data Transfer Objects (DTOs) ---
 
 class PublicPOIResult(BaseModel):
-    """Public DTO for a single nearest POI result."""
-    # Implements TSD Section 4.2: Public Response DTO
-    name: str = Field(..., description="Name of the project.")
-    distance_km: float = Field(..., description="Distance from user in kilometers.")
-    google_maps_link: str = Field(..., description="Universal Google Maps navigation link.")
-    image_url: str = Field(..., description="CDN URL for the project thumbnail.")
-    lat: float = Field(..., description="Latitude of the project.")
-    lon: float = Field(..., description="Longitude of the project.")
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(..., description="POI display name.")
+    distance_m: int = Field(..., ge=0, description="Distance from user in meters.")
+    google_maps_link: HttpUrl = Field(..., description="Google Maps directions link.")
+    image_url: Optional[HttpUrl] = Field(None, description="Optional thumbnail URL.")
+
+class PublicPOIResultWithCoords(PublicPOIResult):
+    lat: float = Field(..., ge=-90, le=90, description="Latitude.")
+    lon: float = Field(..., ge=-180, le=180, description="Longitude.")
 
 class UserStatus(BaseModel):
     state: str = Field(..., description="quiet|active|limit")

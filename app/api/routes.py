@@ -4,14 +4,7 @@ from typing import Optional
 from urllib.parse import quote, unquote
 
 from app.core.config import settings
-from app.models.dto import (
-    FindNearestRequest, 
-    FindNearestResponse, 
-    ErrorResponse, 
-    PublicPOIResult,
-    StatusResponse,
-    UserStatus,
-)
+from app.models.dto import FindNearestRequest, FindNearestResponse, ErrorResponse, PublicPOIResultWithCoords, StatusResponse, UserStatus
 from app.services.area_bucketer import AreaBucketer
 from app.services.entitlement_service import EntitlementService, TierStatus
 from app.services.policy_engine import PolicyEngine, RequestContext, PolicyVerdict, PolicyDecision
@@ -202,9 +195,9 @@ async def find_nearest(
             else:
                 challenge_satisfied = True
 
-        # 4. Fetch Data (30m greedy)
+        # 4. Fetch Data (30m greedy, PostGIS-backed)
         try:
-            results, logs = poi_service.find_nearest_pois(data.lat, data.lon, max_results=decision.max_results)
+            results, logs = await poi_service.find_nearest_pois(data.lat, data.lon, max_results=decision.max_results)
         except Exception as e:
             logger.critical("poi_service_crashed", error=str(e), exc_info=True)
             raise HTTPException(
@@ -340,20 +333,7 @@ async def download_kmz(
     
     target_names_str = unquote(result_ids_str)
     target_names = target_names_str.split(",")
-    target_pois = [p for p in poi_service.master_list if p.name in target_names]
-    
-    mock_results: list[PublicPOIResult] = []
-    for poi in target_pois:
-        mock_results.append(
-            PublicPOIResult(
-                name=poi.name,
-                distance_km=0.0,
-                google_maps_link="",
-                image_url="",
-                lat=poi.lat,
-                lon=poi.lon
-            )
-        )
+    mock_results: list[PublicPOIResultWithCoords] = await poi_service.get_pois_by_names(target_names, include_coords=True)
         
     try:
         kmz_content = await generate_kmz(mock_results)

@@ -13,13 +13,13 @@ from fastkml.kml import Placemark
 from fastkml.geometry import Point
 # AltitudeMode enum removed; not needed for basic KMZ generation
 from fastapi import HTTPException, status
-from app.models.dto import PublicPOIResult, ErrorResponse
+from app.models.dto import PublicPOIResultWithCoords, ErrorResponse
 
 import structlog
 
 logger = structlog.get_logger(__name__)
 
-async def generate_kmz(results: List[PublicPOIResult]) -> bytes:
+async def generate_kmz(results: List[PublicPOIResultWithCoords]) -> bytes:
     """
     Generates a KMZ file containing the top 5 POI results.
     Implements TSD FR-007.
@@ -46,11 +46,7 @@ async def generate_kmz(results: List[PublicPOIResult]) -> bytes:
     # 2. Add Placemarks for each result
     for i, poi in enumerate(results):
         # Create a Placemark
-        pm = Placemark(
-            name=poi.name,
-            description=f"Distance: {poi.distance_km} km. <a href='{poi.google_maps_link}'>Navigate Here</a>",
-            styleUrl="#icon-style" # Use a default style if defined
-        )
+        pm = Placemark(name=poi.name, description=f"Distance: {poi.distance_m} m. <a href='{poi.google_maps_link}'>Navigate Here</a>", styleUrl="#icon-style")
         
         pm.geometry = Point((poi.lon, poi.lat))
         

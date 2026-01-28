@@ -16,29 +16,47 @@ from app.core.config import settings
 from app.services.poi_service import POIService
 from app.logging import configure_logging
 from app.middleware.logging import LoggingMiddleware
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy import text
+from sqlalchemy.pool import NullPool
 
 # Configure logging (Structlog)
 configure_logging()
 logger = logging.getLogger(__name__)
+
+def build_async_engine() -> AsyncEngine:
+    url = settings.DATABASE_URL
+    if not url:
+        raise RuntimeError("DATABASE_URL is not set")
+    async_url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    return create_async_engine(
+        async_url,
+        poolclass=NullPool,
+        pool_pre_ping=True,
+    )
 
 # --- Application Lifecycle Management ---
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Application startup
     logger.info(f"Application startup: v{settings.VERSION}")
-    logger.info("Initializing POI Service and loading MasterList...")
+    logger.info("Initializing POI Service (PostGIS-backed)...")
     
     # 1. Initialize POI Service
     # 1. Initialize POI Service
     try:
-        app.state.poi_service = POIService()
-        logger.info(f"MasterList loaded successfully with {len(app.state.poi_service.master_list)} points.")
+        app.state.db_engine = None
+        if settings.DATABASE_URL:
+            app.state.db_engine = build_async_engine()
+        app.state.poi_service = POIService(app.state.db_engine)
+        logger.info("POI Service initialized.")
     except Exception as e:
         logger.critical(f"Failed to initialize POI Service: {e}")
         # Let's ensure app.state.poi_service exists.
         class EmptyPOIService:
              master_list = []
-             def find_nearest_pois(self, *args, **kwargs): return [], ["POI Service failed to initialize"]
+             async def find_nearest_pois(self, *args, **kwargs): return [], ["POI Service failed to initialize"]
+             async def get_pois_by_names(self, names): return []
         app.state.poi_service = EmptyPOIService()
 
     # 2. Initialize Redis & Quota Repository
@@ -65,6 +83,12 @@ async def lifespan(app: FastAPI):
     
     # Application shutdown
     logger.info("Application shutdown: Cleaning up resources.")
+    try:
+        db_engine = getattr(app.state, "db_engine", None)
+        if db_engine:
+            await db_engine.dispose()
+    except Exception:
+        pass
 
 
 # --- FastAPI Application Initialization ---
@@ -223,6 +247,18 @@ async def health_check():
     return {
         "status": "ok",
     }
+
+@app.get("/health/db", status_code=status.HTTP_200_OK)
+async def db_health():
+    db_engine = getattr(app.state, "db_engine", None)
+    if not db_engine:
+        raise HTTPException(status_code=503, detail="database not configured")
+    try:
+        async with db_engine.connect() as conn:
+            await conn.execute(text("SELECT 1"))
+        return {"db": "ok"}
+    except Exception:
+        raise HTTPException(status_code=503, detail="database unavailable")
 
 # --- Global Exception Handler (for unhandled errors) ---
 @app.exception_handler(Exception)
