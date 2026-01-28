@@ -18,3 +18,8 @@
 - Social proof strip with anonymized daily counts
 - UGC reporting flow for POI corrections
 - Support modal improvements and contribution telemetry
+
+## Follow-ups
+- Update frontend to consume `distance_m` (meters) instead of `distance_km`.
+- Ensure KMZ flow uses coordinate-bearing DTOs consistently.
+- Document Windows dev setup for `asyncpg` (MSVC Build Tools) or recommend WSL/Linux.

@@ -38,7 +38,10 @@ graph TD
 ## 3. Module Guide
 
 ### 3.1 Core (`app/core/`)
-*   **`config.py`**: Centralized configuration using Pydantic `BaseSettings`. Handles environment variables, feature flags (e.g., `ENABLE_REDIS`), and constants like `DA_NANG_BBOX`.
+*   **`config.py`**: Centralized configuration using Pydantic `BaseSettings`. Handles environment variables, feature flags (e.g., `ENABLE_REDIS`), constants like `DA_NANG_BBOX`, and search defaults:
+    *   `SEARCH_RADIUS_KM` (default 0.8)
+    *   `MIN_SPACING_M` (default 30)
+    *   `MAX_RESULTS_DEFAULT` (default 5)
 *   **`middleware.py`**:
     *   **`AnonIdMiddleware`**: Ensures each request carries `dd_anon_id`. If missing, computes a SHA256 fingerprint using User-Agent + Accept-Language + `dd_lang` and sets cookies: `dd_anon_id` (HttpOnly, Secure in prod, SameSite=Strict) and `dd_lang`. Once set, the ID is not recomputed.
 
@@ -53,11 +56,12 @@ This is where the business logic lives.
 
 *   **`poi_service.py` (The Search):**
     *   **Responsibility:** Finds relevant data.
-    *   **Algorithm (Greedy 30m):**
-        1.  Query PostGIS for POIs within 100m using `ST_DWithin`.
+    *   **Algorithm (Greedy spacing):**
+        1.  Query PostGIS for POIs within `SEARCH_RADIUS_KM` using `ST_DWithin`.
         2.  Order by `ST_Distance` ascending.
-        3.  Apply 30m spacing client-side (Greedy) to ensure diversity.
+        3.  Apply spacing via `MIN_SPACING_M` client-side (Greedy) to ensure diversity.
     *   **Data Source:** Neon PostgreSQL with PostGIS (`pois` table).
+    *   **Implementation notes:** SQLAlchemy 2 async engine; typed Postgres array bind with `ARRAY(Text)` for `WHERE name = ANY(:names)`.
 
 *   **`quota_repository.py` (The State):**
     *   **Responsibility:** specific usage tracking.
@@ -81,7 +85,7 @@ This is where the business logic lives.
 *   **`routes.py`**:
     *   **`/api/status`**: Preflight gating endpoint. Computes `user_status`, `can_search`, `turnstile_required`, `checks_today`, and `tier` without consuming quota. Respects admin bypass via `X-Admin-Auth` when `settings.ADMIN_BYPASS_TOKEN` is set. See [routes.py](file:///c:/Users/arnon/Documents/dev/projects/github/mine/trae_ide/mvp101/app/api/routes.py#L44-L108).
     *   **`/api/find-nearest`**: The main search endpoint. It accepts Lat/Lng, invokes the Policy Engine, and if allowed, calls the POI Service. Turnstile is required for Free tier requests when the token is missing.
-    *   **`/download-kmz`**: Generates a file download based on the previous search and counts as a read. Quota key uses the daily scoped pattern `daily_read:{YYYYMMDD}:{anon_id}`. See [routes.py](file:///c:/Users/arnon/Documents/dev/projects/github/mine/trae_ide/mvp101/app/api/routes.py#L358-L366).
+    *   **`/download-kmz`**: Generates a file download based on the previous search and counts as a read. Quota key uses the daily scoped pattern `daily_read:{YYYYMMDD}:{anon_id}`. Uses coordinate-bearing DTOs for KMZ. See [routes.py](file:///c:/Users/arnon/Documents/dev/projects/github/mine/trae_ide/mvp101/app/api/routes.py#L329-L336).
     *   **Admin Bypass**: If `settings.ADMIN_BYPASS_TOKEN` is set, requests with header `X-Admin-Auth` equal to that token bypass quotas and Turnstile (does not overwrite quota keys). See [find_nearest](file:///c:/Users/arnon/Documents/dev/projects/github/mine/trae_ide/mvp101/app/api/routes.py#L137-L156).
 
 ### 3.4 Utils (`app/utils/`)
@@ -108,6 +112,7 @@ If you are modifying the code, ensure you adhere to these strict rules from the 
     *   If the Policy Engine returns `CHALLENGE_REQUIRED`, the client must present a valid `turnstile_token`.
 4.  **Privacy:** Never log precise coordinates associated with a user ID. Use `AreaBucketer` if you need to aggregate spatial data.
 5.  **Logging:** Use `structlog` for structured logging. Do not use standard `logging` directly for application logic.
+6.  **DTOs:** Public results are strict (extra forbidden). Use meters (`distance_m`), `HttpUrl` types for links. Use a separate DTO variant when coordinates are required (e.g., KMZ).
 
 ## 4.1 Internationalization & Accessibility
 *   Enum-first i18n on the frontend; server text acts as a fallback only. Language preference `dd_lang` is persisted and folded into anonymous fingerprinting.
@@ -119,18 +124,23 @@ If you are modifying the code, ensure you adhere to these strict rules from the 
 
 ## 5. Getting Started
 
-1.  **Environment Variables:** Ensure your `.env` file has:
+1.  **Environment Variables:** Ensure your `.env` file has (Redis/Turnstile optional):
     ```env
-    UPSTASH_REDIS_REST_URL="https://..."
-    UPSTASH_REDIS_REST_TOKEN="..."
-    CLOUDFLARE_TURNSTILE_SECRET="your-secret"
-    CLOUDFLARE_TURNSTILE_SITE_KEY="your-public-key"
+    DATABASE_URL="postgresql://user:pass@host/db?sslmode=require"
+    ENABLE_REDIS="false"
+    UPSTASH_REDIS_REST_URL=""
+    UPSTASH_REDIS_REST_TOKEN=""
+    CLOUDFLARE_TURNSTILE_SECRET=""
+    CLOUDFLARE_TURNSTILE_SITE_KEY=""
     ENV="development" # or "production"
     ```
 2.  **Run Locally:**
     ```bash
     uvicorn app.main:app --reload
     ```
+    Health endpoints:
+    *   `GET /health` → status only
+    *   `GET /health/db` → requires `DATABASE_URL`; returns {"db":"ok"} when reachable
 3.  **Testing Quotas:**
     *   The app uses cookies. To reset your identity/quota locally, delete the `dd_anon_id` cookie in your browser dev tools.
 
