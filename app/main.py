@@ -150,6 +150,8 @@ async def offline():
 async def root(request: Request, lang: str = "en"):
     # Implements TSD Section 12: I18n
     from app.services.i18n import get_translations
+    from app.services.entitlement_service import EntitlementService, TierStatus
+    from app.services.policy_engine import PolicyEngine, RequestContext, PolicyVerdict, PolicyDecision
     
     using_fallback_quota = False
     try:
@@ -164,16 +166,52 @@ async def root(request: Request, lang: str = "en"):
         if cookie_lang:
             lang = cookie_lang
     
+    anon_id = getattr(request.state, "anon_id", "unknown_anon")
+    paid_session_cookie = request.cookies.get("dd_paid_session")
+    tier = EntitlementService.check_access(paid_session_cookie) if paid_session_cookie else TierStatus.FREE
+    client_ip = request.client.host if request.client else None
+    area_code = "global"
+    policy_engine = PolicyEngine(request.app.state.quota_repo)
+    context_eval = RequestContext(
+        anon_id=anon_id,
+        paid_tier=tier,
+        area_code=area_code,
+        client_ip=client_ip or "",
+        turnstile_token=None
+    )
+    decision = await policy_engine.evaluate(context_eval)
+    limit = PolicyEngine.FREE_TIER_DAILY_LIMIT if tier == TierStatus.FREE else PolicyEngine.PAID_TIER_DAILY_LIMIT
+    can_search = decision.verdict != PolicyVerdict.BLOCK
+    turnstile_required = decision.verdict == PolicyVerdict.CHALLENGE_REQUIRED
+    quota_remaining = decision.quota_remaining
+    checks_today = max(0, limit - quota_remaining)
+    tdict = get_translations(lang)
+    if not can_search:
+        status_text = tdict.get("status_limit", "Daily limit reached")
+        state = "limit"
+    elif checks_today == 0:
+        status_text = tdict.get("status_quiet", "Quiet check available")
+        state = "quiet"
+    elif checks_today == 1:
+        status_text = tdict.get("status_active_one", "You’ve checked 1 place today")
+        state = "active"
+    else:
+        status_text = tdict.get("status_active_many", "You’ve checked {n} places today").replace("{n}", str(checks_today))
+        state = "active"
+    tier_str = "pro" if tier == TierStatus.PAID else "free"
+    
     context = {
         "request": request,
         "turnstile_site_key": settings.CLOUDFLARE_TURNSTILE_SITE_KEY,
         "settings": settings,
-        "t": get_translations(lang),
+        "t": tdict,
         "current_lang": lang,
-        # Mock initial state for UI
-        "user_plan": "FREE", 
-        "quota_remaining": 2,
-        "using_fallback_quota": using_fallback_quota
+        "using_fallback_quota": using_fallback_quota,
+        "initial_user_status": {"state": state, "text": status_text},
+        "initial_can_search": can_search,
+        "initial_turnstile_required": turnstile_required,
+        "initial_checks_today": checks_today,
+        "initial_tier": tier_str
     }
     return templates.TemplateResponse("index.html", context)
 

@@ -31,6 +31,10 @@ class PublicPOIResult(BaseModel):
     lat: float = Field(..., description="Latitude of the project.")
     lon: float = Field(..., description="Longitude of the project.")
 
+class UserStatus(BaseModel):
+    state: str = Field(..., description="quiet|active|limit")
+    text: str = Field(..., description="Localized fallback text")
+
 class FindNearestResponse(BaseModel):
     """Public DTO for the /api/find-nearest response."""
     # Implements TSD Section 4.2: Public Response DTO
@@ -40,6 +44,13 @@ class FindNearestResponse(BaseModel):
     quota_remaining: int = Field(..., description="Remaining daily quota.")
     share_url: Optional[str] = Field(None, description="Shareable URL for this search.")
     debug_logs: Optional[List[str]] = Field(None, description="Debug logs for dev mode.")
+    user_status: UserStatus = Field(..., description="User-facing status object.")
+    can_search: bool = Field(..., description="Whether a search can proceed.")
+    turnstile_required: bool = Field(..., description="Whether Turnstile is required for this request.")
+    checks_today: int = Field(..., description="Number of checks performed today.")
+    tier: Optional[str] = Field(None, description="free|pro|null")
+    results_state: str = Field(..., description="never|empty|found")
+    errors: Optional["ErrorResponse"] = Field(None, description="Optional non-blocking error envelope.")
 
 # --- API Request Models ---
 
@@ -61,3 +72,10 @@ class ErrorResponse(BaseModel):
     retry_after_seconds: Optional[int] = None
     quota_remaining: Optional[int] = None
     error_id: Optional[str] = None
+
+class StatusResponse(BaseModel):
+    user_status: UserStatus
+    can_search: bool
+    turnstile_required: bool
+    checks_today: int
+    tier: Optional[str] = None
