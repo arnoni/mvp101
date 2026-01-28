@@ -5,6 +5,7 @@
 ## Features (v1.1)
 - **Direct Coordinate Input**: No address geocoding; fast and privacy-preserving.
 - **Privacy First**: Anonymous IDs via fingerprint stored in a cookie; no account required.
+- **Privacy Logging**: Logs use coarse area codes only; no precise coordinates.
 - **Smart Filtering**: "Greedy 30m" algorithm ensures result diversity.
 - **Tiered Access**:
   - **Free Tier**: 2 searches/day, 1 result per search.
@@ -14,6 +15,9 @@
 - **KMZ Export**: Download results for Google Earth.
 - **Internationalization**: English, Spanish, Russian, Korean.
 - **Dev Mode Visibility**: Landing page indicates when Redis fallback (in-memory quota) is active.
+- **Preflight Status**: `/api/status` endpoint powers instant gating (can_search, turnstile_required).
+- **SSR Hydration**: Initial status and tier are pre-rendered on the server.
+- **Accessibility**: "How to use" icon with `aria-label`; Message Board uses `role="status"`.
 
 ## Architecture
 The project follows a Domain-First architecture using FastAPI, Redis (Upstash), and Jinja2.
@@ -44,6 +48,12 @@ For a detailed introduction to the codebase, modules, and architecture, please r
     uvicorn app.main:app --reload
     ```
 
-### Known Issues
-- KMZ download currently increments a non-day-scoped quota key; aligning to daily scoping is planned.
-- Dev Mode displays Redis fallback status on the landing page.
+### UI Contract v1 Highlights
+- Backend returns user_status, can_search, turnstile_required, checks_today, tier, results_state.
+- Frontend uses enums for i18n; server text acts only as a fallback.
+- Status Strip is clickable and opens Support modal; Message Board shows narratives; Results Board remains visual.
+- Status refresh queries `/api/status` on load and window focus with debounce.
+
+### Notes
+- KMZ quota is aligned to the daily key pattern (`daily_read:{YYYYMMDD}:{anon_id}`).
+- Dev Mode shows Redis fallback and Turnstile indicators.

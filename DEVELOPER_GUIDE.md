@@ -80,13 +80,22 @@ This is where the business logic lives.
 
 ### 3.3 API (`app/api/`)
 *   **`routes.py`**:
+    *   **`/api/status`**: Preflight gating endpoint. Computes `user_status`, `can_search`, `turnstile_required`, `checks_today`, and `tier` without consuming quota. Respects admin bypass via `X-Admin-Auth` when `settings.ADMIN_BYPASS_TOKEN` is set. See [routes.py](file:///c:/Users/arnon/Documents/dev/projects/github/mine/trae_ide/mvp101/app/api/routes.py#L44-L108).
     *   **`/api/find-nearest`**: The main search endpoint. It accepts Lat/Lng, invokes the Policy Engine, and if allowed, calls the POI Service. Turnstile is required for Free tier requests when the token is missing.
-    *   **`/download-kmz`**: Generates a file download based on the previous search and counts as a read. Note: daily scoping applies in general; the KMZ route key scoping will be aligned.
-    *   **Admin Bypass**: If `settings.ADMIN_BYPASS_TOKEN` is set, requests with header `X-Admin-Auth` equal to that token bypass quotas and Turnstile.
+    *   **`/download-kmz`**: Generates a file download based on the previous search and counts as a read. Quota key uses the daily scoped pattern `daily_read:{YYYYMMDD}:{anon_id}`. See [routes.py](file:///c:/Users/arnon/Documents/dev/projects/github/mine/trae_ide/mvp101/app/api/routes.py#L358-L366).
+    *   **Admin Bypass**: If `settings.ADMIN_BYPASS_TOKEN` is set, requests with header `X-Admin-Auth` equal to that token bypass quotas and Turnstile (does not overwrite quota keys). See [find_nearest](file:///c:/Users/arnon/Documents/dev/projects/github/mine/trae_ide/mvp101/app/api/routes.py#L137-L156).
 
 ### 3.4 Utils (`app/utils/`)
 *   **`security.py`**: Handles Cloudflare Turnstile verification.
 *   **`haversine.py`**: Calculates distances between coordinates.
+
+## 3.5 Frontend & SSR Hydration
+
+The root endpoint pre-computes initial UI state and performs SSR hydration for the landing page:
+*   Hydrates `initial_user_status`, `initial_can_search`, `initial_turnstile_required`, `initial_checks_today`, and `initial_tier` into the Jinja2 template.
+*   Uses `dd_lang` cookie to select server-side translations.
+*   Indicates whether Redis quota is using a fallback (in-memory) for developer visibility.
+See [main.py root](file:///c:/Users/arnon/Documents/dev/projects/github/mine/trae_ide/mvp101/app/main.py#L147-L216).
 
 ## 4. TDD v1.1 Specification Highlights
 
@@ -100,6 +109,14 @@ If you are modifying the code, ensure you adhere to these strict rules from the 
     *   If the Policy Engine returns `CHALLENGE_REQUIRED`, the client must present a valid `turnstile_token`.
 4.  **Privacy:** Never log precise coordinates associated with a user ID. Use `AreaBucketer` if you need to aggregate spatial data.
 5.  **Logging:** Use `structlog` for structured logging. Do not use standard `logging` directly for application logic.
+
+## 4.1 Internationalization & Accessibility
+*   Enum-first i18n on the frontend; server text acts as a fallback only. Language preference `dd_lang` is persisted and folded into anonymous fingerprinting.
+*   "How to use" is presented as an icon button with `aria-label`; Message Board uses `role="status"` to narrate outcomes for screen readers.
+
+## 4.2 Status Refresh & Staleness
+*   Initial status is hydrated on the server at page render.
+*   Client re-fetches `/api/status` on load and on window focus with a debounce to avoid excessive polling.
 
 ## 5. Getting Started
 

@@ -13,3 +13,8 @@
 - Define token format and signing secret
 - Middleware or dependency to validate header
 - Add tests and observability (structured logs)
+
+## Deferred Features
+- Social proof strip with anonymized daily counts
+- UGC reporting flow for POI corrections
+- Support modal improvements and contribution telemetry
