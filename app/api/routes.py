@@ -170,6 +170,7 @@ async def find_nearest(
                 ).model_dump()
             )
 
+        challenge_satisfied = False
         if decision.verdict == PolicyVerdict.CHALLENGE_REQUIRED and not admin_bypass:
             if not data.turnstile_token:
                  raise HTTPException(
@@ -198,6 +199,8 @@ async def find_nearest(
                         error_id=get_req_id(request)
                     ).model_dump()
                  )
+            else:
+                challenge_satisfied = True
 
         # 4. Fetch Data (30m greedy)
         try:
@@ -248,7 +251,7 @@ async def find_nearest(
         else:
             status_text = t.get("status_active_many", "You’ve checked {n} places today").replace("{n}", str(checks_today))
             state = "active"
-        turnstile_required = (decision.verdict == PolicyVerdict.CHALLENGE_REQUIRED and not admin_bypass)
+        turnstile_required = (decision.verdict == PolicyVerdict.CHALLENGE_REQUIRED and not admin_bypass and not challenge_satisfied)
         results_state = "found" if len(results) > 0 else "empty"
         tier_str = "pro" if tier == TierStatus.PAID else "free"
         resp = FindNearestResponse(

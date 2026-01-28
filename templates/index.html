@@ -140,10 +140,20 @@
             </button>
         </form>
 
-        <div id="message-board" class="mt-4 p-3 text-sm rounded-lg hidden" role="status"></div>
-
-        <div id="results-section" class="mt-8 space-y-4 hidden">
+        <div id="results-section" class="mt-8 space-y-4">
             <h2 class="text-xl font-semibold text-slate-800">{{ t.results_header }}</h2>
+            <div id="results-empty" class="bg-gradient-to-r from-slate-50 to-slate-100 border border-slate-200 rounded-lg p-6 text-center">
+                <div class="mx-auto w-24 h-24 mb-3">
+                    <svg viewBox="0 0 64 64" class="w-full h-full text-slate-400">
+                        <rect x="10" y="22" width="44" height="28" rx="4" fill="currentColor" opacity="0.2"/>
+                        <rect x="18" y="26" width="12" height="16" rx="2" fill="currentColor" opacity="0.35"/>
+                        <rect x="34" y="26" width="12" height="12" rx="2" fill="currentColor" opacity="0.35"/>
+                        <circle cx="48" cy="22" r="4" fill="currentColor" opacity="0.5"/>
+                    </svg>
+                </div>
+                <p class="text-slate-700 font-medium">Welcome to DillDrill</p>
+                <p class="text-slate-500 text-sm">Results will be displayed here.</p>
+            </div>
             <div id="results-list" class="space-y-4"></div>
 
             <div class="mt-6 pt-4 border-t border-slate-100 text-center">
@@ -154,6 +164,7 @@
             <!-- Quota & Share Info -->
             <div id="meta-info" class="mt-4 text-xs text-slate-400 text-center"></div>
         </div>
+        <div id="message-board" class="mt-4 p-3 text-sm rounded-lg hidden" role="status"></div>
 
         <footer class="mt-8 text-center text-xs text-slate-400 space-y-2">
             <div>v{{ settings.VERSION }}</div>
@@ -323,6 +334,8 @@
 
         function renderResults(data) {
             resultsList.innerHTML = '';
+            const emptyState = document.getElementById('results-empty');
+            if (emptyState) emptyState.classList.add('hidden');
 
             data.results.forEach(poi => {
                 const meters = Math.round(poi.distance_km * 1000);
@@ -408,6 +421,8 @@
 
                 if (response.ok) {
                     success = true;
+                    coordsInput.value = '';
+                    coordsInput.blur();
                     if (data.results.length === 0) {
                         showMessage(STRINGS.zero_results, 'success');
                     } else {
@@ -417,7 +432,7 @@
                     userStatusText.textContent = data.user_status?.text || userStatusText.textContent;
                     appState.can_search = !!data.can_search;
                     appState.turnstile_required = !!data.turnstile_required;
-                    if (widgetContainer) widgetContainer.style.display = appState.turnstile_required ? 'block' : 'none';
+                    if (widgetContainer) widgetContainer.style.display = 'none';
                 } else {
                     let errMsg = 'Unknown error';
                     if (data.detail) {
@@ -452,9 +467,11 @@
                 searchButton.disabled = false;
                 searchButton.textContent = STRINGS.btn_default;
 
-                setTimeout(() => {
-                    showMessage(STRINGS.waiting, 'info');
-                }, 10000);
+                if (!success && resultsList.childElementCount === 0) {
+                    setTimeout(() => {
+                        showMessage(STRINGS.waiting, 'info');
+                    }, 10000);
+                }
             }
         });
         refreshStatus();

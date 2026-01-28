@@ -121,7 +121,7 @@ class POIService:
         results: List[PublicPOIResult] = []
         for dist_km, poi in selected_tuples:
             google_maps_link = (
-                f"https://www.google.com/maps/dir/?api=1&destination={poi.lat},{poi.lon}"
+                f"https://www.google.com/maps/dir/?api=1&origin={user_lat},{user_lon}&destination={poi.lat},{poi.lon}"
             )
             image_url = f"/static/images/{poi.images[0]}" if poi.images else ""
 
