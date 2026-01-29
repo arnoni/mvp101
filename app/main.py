@@ -19,6 +19,7 @@ from app.middleware.logging import LoggingMiddleware
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy import text
 from sqlalchemy.pool import NullPool
+from redis.asyncio import Redis
 
 # Configure logging (Structlog)
 configure_logging()
@@ -29,6 +30,8 @@ def build_async_engine() -> AsyncEngine:
     if not url:
         raise RuntimeError("DATABASE_URL is not set")
     async_url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    if "neon.tech" in url and "-pooler.neon.tech" not in url:
+        logger.warning("database_url_not_using_pooler")
     return create_async_engine(
         async_url,
         poolclass=NullPool,
@@ -41,6 +44,10 @@ async def lifespan(app: FastAPI):
     # Application startup
     logger.info(f"Application startup: v{settings.VERSION}")
     logger.info("Initializing POI Service (PostGIS-backed)...")
+    
+    # Startup contract: Redis required in production when ENABLE_REDIS true
+    if settings.ENV == "production" and settings.ENABLE_REDIS and not settings.REDIS_URL:
+        raise RuntimeError("ENABLE_REDIS=true requires REDIS_URL in production")
     
     # 1. Initialize POI Service
     # 1. Initialize POI Service
@@ -59,25 +66,24 @@ async def lifespan(app: FastAPI):
              async def get_pois_by_names(self, names): return []
         app.state.poi_service = EmptyPOIService()
 
-    # 2. Initialize Redis & Quota Repository
-    if settings.ENABLE_REDIS:
-        from app.services.redis_client import redis_client
-        from app.services.quota_repository import QuotaRepository
+    # 2. Initialize Redis & Quota Repository (async client; fail closed if required but missing)
+    from app.services.quota_repository import QuotaRepository
+    app.state.redis = None
+    app.state.quota_repo = None
+    if settings.ENABLE_REDIS and settings.REDIS_URL:
         try:
-             # Use global REST-based Redis client
-             app.state.redis_client = redis_client
-             
-             # Create Quota Repo
-             app.state.quota_repo = QuotaRepository(redis_client)
-             logger.info("QuotaRepository initialized with Real Redis.")
+            app.state.redis = Redis.from_url(settings.REDIS_URL, decode_responses=True)
+            pong = await app.state.redis.ping()
+            if not pong:
+                raise RuntimeError("Redis ping failed")
+            app.state.quota_repo = QuotaRepository(app.state.redis)
+            logger.info("Redis connected and QuotaRepository ready")
         except Exception as e:
-             logger.error(f"Failed to connect to Redis: {e}. Degrading to in-memory quota.")
-             from app.services.quota_repository import QuotaRepository
-             app.state.quota_repo = QuotaRepository(None)
-    else:
-         logger.info("Redis disabled via config. Using in-memory quota.")
-         from app.services.quota_repository import QuotaRepository
-         app.state.quota_repo = QuotaRepository(None)
+            logger.error(f"Redis initialization failed: {e}")
+            app.state.redis = None
+            app.state.quota_repo = None
+    elif settings.ENABLE_REDIS:
+        logger.error("ENABLE_REDIS set but REDIS_URL missing")
 
     yield
     
@@ -87,6 +93,12 @@ async def lifespan(app: FastAPI):
         db_engine = getattr(app.state, "db_engine", None)
         if db_engine:
             await db_engine.dispose()
+    except Exception:
+        pass
+    try:
+        redis_cli = getattr(app.state, "redis", None)
+        if redis_cli:
+            await redis_cli.close()
     except Exception:
         pass
 
@@ -106,6 +118,8 @@ app = FastAPI(
 from app.core.middleware import AnonIdMiddleware
 app.add_middleware(LoggingMiddleware) # Add structured logging middleware first (outermost or close to it)
 app.add_middleware(AnonIdMiddleware)
+from app.core.middleware import EntitlementMiddleware
+app.add_middleware(EntitlementMiddleware)
 
 # --- Static Files and Templates ---
 # Implements TSD Section 7.1: /static/ and /templates/
@@ -174,7 +188,7 @@ async def offline():
 async def root(request: Request, lang: str = "en"):
     # Implements TSD Section 12: I18n
     from app.services.i18n import get_translations
-    from app.services.entitlement_service import EntitlementService, TierStatus
+    from app.services.entitlement_service import TierStatus
     from app.services.policy_engine import PolicyEngine, RequestContext, PolicyVerdict, PolicyDecision
     
     using_fallback_quota = False
@@ -191,8 +205,7 @@ async def root(request: Request, lang: str = "en"):
             lang = cookie_lang
     
     anon_id = getattr(request.state, "anon_id", "unknown_anon")
-    paid_session_cookie = request.cookies.get("dd_paid_session")
-    tier = EntitlementService.check_access(paid_session_cookie) if paid_session_cookie else TierStatus.FREE
+    tier = getattr(request.state, "tier", TierStatus.FREE)
     client_ip = request.client.host if request.client else None
     area_code = "global"
     policy_engine = PolicyEngine(request.app.state.quota_repo)

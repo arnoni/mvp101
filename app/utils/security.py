@@ -16,6 +16,22 @@ except Exception:
 
 logger = logging.getLogger(__name__)
 
+async def protect_mutation(request: Request):
+    # A. Enforce JSON only
+    ct = request.headers.get("content-type", "")
+    if "application/json" not in ct:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid content-type")
+    # B. Enforce Origin/Referer
+    origin = request.headers.get("origin") or request.headers.get("referer") or ""
+    app_origin = settings.APP_ORIGIN or ""
+    if not app_origin or not origin.startswith(app_origin):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="origin not allowed")
+    # C. Enforce CSRF token
+    csrf_hdr = request.headers.get("x-csrf-token")
+    csrf_state = getattr(request.state, "csrf", None)
+    if not csrf_hdr or not csrf_state or csrf_hdr != csrf_state:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid csrf token")
+    return True
 async def verify_turnstile(token: str, anon_id: Optional[str] = None, client_ip: Optional[str] = None) -> bool:
     """
     Verifies the Cloudflare Turnstile token against the Cloudflare API.

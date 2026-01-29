@@ -11,7 +11,7 @@ from app.services.policy_engine import PolicyEngine, RequestContext, PolicyVerdi
 from app.services.poi_service import POIService
 from app.services.quota_repository import QuotaRepository
 from app.services.kmz_service import generate_kmz
-from app.utils.security import verify_turnstile, get_client_ip
+from app.utils.security import verify_turnstile, get_client_ip, protect_mutation
 from app.services.i18n import get_translations
 
 router = APIRouter()
@@ -43,8 +43,7 @@ async def status(
     try:
         anon_id = getattr(request.state, "anon_id", "unknown_anon")
         client_ip = get_client_ip(request)
-        paid_session_cookie = request.cookies.get("dd_paid_session")
-        tier = EntitlementService.check_access(paid_session_cookie) if paid_session_cookie else TierStatus.FREE
+        tier = getattr(request.state, "tier", TierStatus.FREE)
         admin_hdr = request.headers.get("X-Admin-Auth")
         admin_bypass = bool(settings.ADMIN_BYPASS_TOKEN and admin_hdr and admin_hdr == settings.ADMIN_BYPASS_TOKEN)
 
@@ -118,14 +117,15 @@ async def find_nearest(
     poi_service: POIService = Depends(get_poi_service),
     quota_repo: QuotaRepository = Depends(get_quota_repo),
 ):
+    # CSRF protection for quota-consuming POST
+    await protect_mutation(request)
     # 1. Build Context
     try:
         anon_id = getattr(request.state, "anon_id", "unknown_anon")
         client_ip = get_client_ip(request)
 
         # Entitlement Check
-        paid_session_cookie = request.cookies.get("dd_paid_session")
-        tier = EntitlementService.check_access(paid_session_cookie) if paid_session_cookie else TierStatus.FREE
+        tier = getattr(request.state, "tier", TierStatus.FREE)
         
         # Admin bypass via signed header (ignored quotas; does not overwrite keys)
         admin_bypass = False
@@ -209,13 +209,28 @@ async def find_nearest(
                 ).model_dump()
             )
 
-        # 5. Consume Quota
+        # 5. Consume Quota (fail-closed if Redis unavailable)
         from datetime import datetime
         day = datetime.utcnow().strftime("%Y%m%d")
-        quota_key = f"daily_read:{day}:{anon_id}"
+        session_id = getattr(request.state, "session_id", anon_id)
+        quota_key = f"quota:{session_id}:{day}"
         if not admin_bypass:
-            await quota_repo.increment(quota_key)
-            remaining_after = max(0, decision.quota_remaining - 1)
+            try:
+                limit = PolicyEngine.FREE_TIER_DAILY_LIMIT if tier == TierStatus.FREE else PolicyEngine.PAID_TIER_DAILY_LIMIT
+                allowed, remaining_after = await quota_repo.check_and_consume(quota_key, limit)
+                if not allowed:
+                    raise HTTPException(
+                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                        detail=ErrorResponse(
+                            error="QUOTA_EXCEEDED",
+                            detail="Daily quota exceeded.",
+                            retry_after_seconds=3600 * 24,
+                            quota_remaining=0,
+                            error_id=get_req_id(request)
+                        ).model_dump()
+                    )
+            except RuntimeError:
+                raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="enforcement unavailable")
         else:
             remaining_after = decision.quota_remaining
 
@@ -293,8 +308,7 @@ async def download_kmz(
     """
     anon_id = getattr(request.state, "anon_id", "unknown_anon")
     client_ip = get_client_ip(request)
-    paid_session_cookie = request.cookies.get("dd_paid_session")
-    tier = EntitlementService.check_access(paid_session_cookie) if paid_session_cookie else TierStatus.FREE
+    tier = getattr(request.state, "tier", TierStatus.FREE)
     
     # Dummy area or generic. 
     context = RequestContext(
@@ -338,11 +352,18 @@ async def download_kmz(
     try:
         kmz_content = await generate_kmz(mock_results)
         
-        # Consume Quota
+        # Consume Quota (fail-closed)
         from datetime import datetime
         day = datetime.utcnow().strftime("%Y%m%d")
-        quota_key = f"daily_read:{day}:{anon_id}"
-        await quota_repo.increment(quota_key)
+        session_id = getattr(request.state, "session_id", anon_id)
+        quota_key = f"quota:{session_id}:{day}"
+        try:
+            limit = PolicyEngine.FREE_TIER_DAILY_LIMIT if tier == TierStatus.FREE else PolicyEngine.PAID_TIER_DAILY_LIMIT
+            allowed, _ = await quota_repo.check_and_consume(quota_key, limit)
+            if not allowed:
+                raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Daily quota exceeded.")
+        except RuntimeError:
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="enforcement unavailable")
         
         return Response(
             content=kmz_content,
@@ -362,3 +383,29 @@ async def download_kmz(
                 error_id=get_req_id(request)
             ).model_dump(),
         )
+
+@router.post("/api/pay")
+async def pay_success(request: Request):
+    """
+    Stub: issues a server-side session for paid tier with CSRF seed.
+    """
+    redis_cli = getattr(request.app.state, "redis", None)
+    if not redis_cli:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="enforcement unavailable")
+    import secrets, json, time
+    sid = secrets.token_urlsafe(24)
+    csrf = secrets.token_urlsafe(24)
+    payload = {"tier": "PAID", "csrf": csrf, "created_at": int(time.time())}
+    key = f"session:{sid}"
+    await redis_cli.set(key, json.dumps(payload), ex=86400)
+    response = Response(content=json.dumps({"ok": True}), media_type="application/json")
+    response.set_cookie(
+        key="dd_session",
+        value=sid,
+        max_age=86400,
+        httponly=True,
+        secure=(settings.ENV == "production"),
+        samesite="lax",
+        path="/",
+    )
+    return response

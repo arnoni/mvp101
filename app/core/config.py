@@ -17,8 +17,7 @@ class Settings(BaseSettings):
     MAPBOX_TOKEN: Optional[str] = Field(None, description="Mapbox Geocoding API Token (Disabled)")
     CLOUDFLARE_TURNSTILE_SECRET: Optional[str] = Field(None, description="Cloudflare Turnstile Secret Key")
     CLOUDFLARE_TURNSTILE_SITE_KEY: Optional[str] = Field(None, description="Cloudflare Turnstile Site Key (Public)")
-    UPSTASH_REDIS_REST_URL: Optional[str] = Field(None, description="URL for Upstash Redis REST API")
-    UPSTASH_REDIS_REST_TOKEN: Optional[str] = Field(None, description="Token for Upstash Redis REST API")
+    REDIS_URL: Optional[str] = Field(None, description="Redis URL for quota/session enforcement")
     ENV: str = Field("development", description="Application environment (e.g., production, development)")
     MAX_MAPBOX_MONTHLY: int = Field(90000, description="Hard cap for Mapbox requests per month (TSD 10)")
 
@@ -27,6 +26,7 @@ class Settings(BaseSettings):
     ENABLE_PAID_TIER: bool = Field(True, description="Feature flag for Paid Tier")
     ADMIN_BYPASS_TOKEN: Optional[str] = Field(None, description="Signed admin token to bypass quotas/fallbacks")
     DATABASE_URL: Optional[str] = Field(None, description="PostgreSQL connection string (e.g., Neon) with sslmode=require")
+    APP_ORIGIN: Optional[str] = Field(None, description="Allowed origin for CSRF checks, e.g. https://yourdomain.com")
 
     # --- Constraints & Limitations (TSD Section 10) ---
     # Da Nang Bounding Box: 16.00–16.12 N, 108.10–108.30 E
