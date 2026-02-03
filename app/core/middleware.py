@@ -127,18 +127,15 @@ class EntitlementMiddleware(BaseHTTPMiddleware):
         redis_cli = getattr(request.app.state, "redis", None)
         
         # Check entitlement cache
-        tier = await EntitlementService.get_tier(user_id, redis_cli)
-        request.state.tier = tier
+        # We assume 5 minutes TTL for freshness check
+        entitlement_result = await EntitlementService.get_tier(user_id, redis_cli, ttl_seconds=300)
         
-        # 2. Enforce Protection
-        if allowlisted:
-            return await call_next(request)
-
-        # For protected routes, we require a valid session
-        if not getattr(request.state, "session_id", None):
-            from fastapi.responses import JSONResponse
-            if not redis_cli:
-                return JSONResponse(status_code=503, content={"detail": "enforcement unavailable"})
-            return JSONResponse(status_code=401, content={"detail": "session required"})
+        request.state.tier = entitlement_result.tier
+        request.state.entitlement_stale = entitlement_result.is_stale
+        request.state.entitlement_data = entitlement_result.raw_data
+        
+        # 2. Enforce Protection (Explicit dependencies only - no path prefix blocking)
+        # Note: Previous logic for path-based blocking is removed as per policy update.
+        # Protection is now handled by Depends(require_paid) or Depends(require_login).
             
         return await call_next(request)
