@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     # --- Feature Flags (Impl Plan 2.1) ---
     ENABLE_REDIS: bool = Field(False, description="Feature flag for Redis")
     ENABLE_PAID_TIER: bool = Field(True, description="Feature flag for Paid Tier")
+    SECRET_KEY: str = Field("dev_insecure_secret", description="Secret key for signing cookies")
     ADMIN_BYPASS_TOKEN: Optional[str] = Field(None, description="Signed admin token to bypass quotas/fallbacks")
     DATABASE_URL: Optional[str] = Field(None, description="PostgreSQL connection string (e.g., Neon) with sslmode=require")
     APP_ORIGIN: Optional[str] = Field(None, description="Allowed origin for CSRF checks, e.g. https://yourdomain.com")

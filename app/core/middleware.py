@@ -1,39 +1,57 @@
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 import hashlib
+import hmac
+import uuid
+from typing import Optional
 from app.core.config import settings
 from app.services.entitlement_service import TierStatus
 
+def sign_value(val: str) -> str:
+    sig = hmac.new(settings.SECRET_KEY.encode(), val.encode(), hashlib.sha256).hexdigest()
+    return f"{val}.{sig}"
+
+def unsign_value(val: str) -> Optional[str]:
+    try:
+        payload, sig = val.rsplit(".", 1)
+        expected_sig = hmac.new(settings.SECRET_KEY.encode(), payload.encode(), hashlib.sha256).hexdigest()
+        if hmac.compare_digest(sig, expected_sig):
+            return payload
+    except Exception:
+        pass
+    return None
+
 class AnonIdMiddleware(BaseHTTPMiddleware):
     """
-    Ensures every client has a 'dd_anon_id' for quota tracking.
+    Ensures every client has a signed 'dd_anon_id' for quota tracking.
+    Minted randomly (UUID) if missing or invalid signature.
     """
     async def dispatch(self, request: Request, call_next):
-        # 1. Identity Resolution (Fingerprint-based with language component)
-        anon_id = request.cookies.get("dd_anon_id")
-        created_new = False
-        lang_choice = request.cookies.get("dd_lang")
+        # 1. Identity Resolution
+        raw_cookie = request.cookies.get("dd_anon_id")
+        anon_id = None
         
-        # If no persisted language, derive a default from Accept-Language header
-        if not lang_choice:
-            accept_lang = request.headers.get("accept-language", "")
-            # Simple best-effort extraction (e.g., "ru,en;q=0.9")
-            lang_choice = (accept_lang.split(",")[0].split("-")[0] or "en").strip()
-        
-        if not anon_id:
-            ua = request.headers.get("user-agent", "")
-            accept_lang = request.headers.get("accept-language", "")
-            fp_source = f"{ua}|{accept_lang}|{lang_choice}"
-            anon_id = hashlib.sha256(fp_source.encode("utf-8")).hexdigest()
-            created_new = True
+        if raw_cookie:
+            anon_id = unsign_value(raw_cookie)
             
-        # Attach to request state for downstream usage (e.g. PolicyEngine)
+        created_new = False
+        if not anon_id:
+            anon_id = uuid.uuid4().hex
+            created_new = True
+
+        # Attach to request state
         request.state.anon_id = anon_id
         
+        # Language resolution (preserve existing logic)
+        lang_choice = request.cookies.get("dd_lang")
+        if not lang_choice:
+            accept_lang = request.headers.get("accept-language", "")
+            lang_choice = (accept_lang.split(",")[0].split("-")[0] or "en").strip()
+            
         # 2. Process Request
         response = await call_next(request)
         
-        # 3. Set Cookies if new/derived
+        # 3. Set Cookies
         if not request.cookies.get("dd_lang"):
             response.set_cookie(
                 key="dd_lang",
@@ -43,15 +61,16 @@ class AnonIdMiddleware(BaseHTTPMiddleware):
                 secure=(settings.ENV == "production"),
                 samesite="lax"
             )
-        
+            
         if created_new:
+            signed_val = sign_value(anon_id)
             response.set_cookie(
                 key="dd_anon_id",
-                value=anon_id,
+                value=signed_val,
                 max_age=60 * 60 * 24 * 730,
                 httponly=True,
                 secure=(settings.ENV == "production"),
-                samesite="strict"
+                samesite="lax"
             )
             
         return response
