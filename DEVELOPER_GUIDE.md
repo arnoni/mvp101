@@ -42,8 +42,11 @@ graph TD
     *   `SEARCH_RADIUS_KM` (default 0.8)
     *   `MIN_SPACING_M` (default 30)
     *   `MAX_RESULTS_DEFAULT` (default 5)
+    *   `SECRET_KEY` (required for cookie signing)
+    *   `REDIS_URL` (connection string)
 *   **`middleware.py`**:
-    *   **`AnonIdMiddleware`**: Ensures each request carries `dd_anon_id`. If missing, computes a SHA256 fingerprint using User-Agent + Accept-Language + `dd_lang` and sets cookies: `dd_anon_id` (HttpOnly, Secure in prod, SameSite=Strict) and `dd_lang`. Once set, the ID is not recomputed.
+    *   **`AnonIdMiddleware`**: Ensures each request carries `dd_anon_id`. If missing or invalidly signed, mints a new random UUID and sets a signed cookie (HMAC-SHA256). Attributes: `HttpOnly`, `Secure` (prod), `SameSite=Lax`.
+    *   **`EntitlementMiddleware`**: Hydrates session state from Redis (`tier`, `csrf`, `user_id`) if `dd_session` cookie is present. Enforces session requirements on protected routes.
 
 ### 3.2 Services (`app/services/`)
 This is where the business logic lives.
@@ -65,7 +68,7 @@ This is where the business logic lives.
 
 *   **`quota_repository.py` (The State):**
     *   **Responsibility:** specific usage tracking.
-    *   **Implementation:** Primary backing is **Upstash Redis**. If Redis fails or is disabled via config, it gracefully degrades to an in-memory dictionary.
+    *   **Implementation:** Primary backing is **Redis**. If Redis fails in production, it fails closed (raises error).
     *   **Async:** Fully async operation.
 
 *   **`area_bucketer.py`:**
@@ -127,12 +130,13 @@ If you are modifying the code, ensure you adhere to these strict rules from the 
 1.  **Environment Variables:** Ensure your `.env` file has (Redis/Turnstile optional):
     ```env
     DATABASE_URL="postgresql://user:pass@host/db?sslmode=require"
-    ENABLE_REDIS="false"
-    UPSTASH_REDIS_REST_URL=""
-    UPSTASH_REDIS_REST_TOKEN=""
+    ENABLE_REDIS="true"
+    REDIS_URL="redis://..."
+    SECRET_KEY="dev_insecure_secret"
     CLOUDFLARE_TURNSTILE_SECRET=""
     CLOUDFLARE_TURNSTILE_SITE_KEY=""
     ENV="development" # or "production"
+    APP_ORIGIN="http://localhost:8000"
     ```
 2.  **Run Locally:**
     ```bash

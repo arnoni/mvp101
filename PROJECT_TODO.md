@@ -20,6 +20,9 @@
 - Support modal improvements and contribution telemetry
 
 ## Follow-ups
-- Update frontend to consume `distance_m` (meters) instead of `distance_km`.
-- Ensure KMZ flow uses coordinate-bearing DTOs consistently.
-- Document Windows dev setup for `asyncpg` (MSVC Build Tools) or recommend WSL/Linux.
+- [x] Update frontend to consume `distance_m` (meters) instead of `distance_km`.
+- [x] Implement signed admin bypass header for QA/dev superusers (via `X-Admin-Auth` and config token)
+- [ ] Implement server-side session hydration (currently partial/stubbed in middleware).
+- [ ] Finalize CSRF protection for mutation endpoints.
+- [ ] Ensure KMZ flow uses coordinate-bearing DTOs consistently.
+- [ ] Document Windows dev setup for `asyncpg` (MSVC Build Tools) or recommend WSL/Linux.

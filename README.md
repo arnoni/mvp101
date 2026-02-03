@@ -4,7 +4,7 @@
 
 ## Features (v1.1)
 - **Direct Coordinate Input**: No address geocoding; fast and privacy-preserving.
-- **Privacy First**: Anonymous IDs via fingerprint stored in a cookie; no account required.
+- **Privacy First**: Anonymous IDs are random UUIDs stored in signed cookies (HMAC); no account required.
 - **Privacy Logging**: Logs use coarse area codes only; no precise coordinates.
 - **Smart Filtering**: "Greedy 30m" algorithm ensures result diversity.
 - **Tiered Access**:
@@ -20,9 +20,10 @@
 - **Accessibility**: "How to use" icon with `aria-label`; Message Board uses `role="status"`.
 - **PostGIS-backed Search**: Uses Neon PostgreSQL with PostGIS and SQLAlchemy 2 async engine (NullPool + pre_ping).
 - **Strict DTOs**: Public responses use meters (`distance_m`) and typed URLs; extra fields are forbidden.
+- **Fail-Closed Security**: Quota enforcement fails closed if Redis is unavailable (no in-memory fallback in production).
 
 ## Architecture
-The project follows a Domain-First architecture using FastAPI, Redis (Upstash), and PostGIS (Neon PostgreSQL) for POIs, with server-rendered Jinja2. Database access is standardized via SQLAlchemy 2 async engine with `NullPool` and `pool_pre_ping`, and the engine is disposed in app shutdown.
+The project follows a Domain-First architecture using FastAPI, Redis (Upstash), and PostGIS (Neon PostgreSQL) for POIs, with server-rendered Jinja2. Database access is standardized via SQLAlchemy 2 async engine with `NullPool` and `pool_pre_ping`. Quota enforcement is strict and backed by Redis.
 
 ## Developer Guide
 For a detailed introduction to the codebase, modules, and architecture, please read the **[Developer Introduction & Architecture Guide](DEVELOPER_GUIDE.md)**.
@@ -36,15 +37,16 @@ For a detailed introduction to the codebase, modules, and architecture, please r
     ```
     On Windows, building `asyncpg` may require Microsoft C++ Build Tools. Alternatively, use WSL/Linux or Python 3.11/3.12 environments where prebuilt wheels are available.
 3.  **Configure Environment**:
-    Create a `.env` file (Redis/Turnstile optional; DB recommended):
+    Create a `.env` file:
     ```env
     DATABASE_URL="postgresql://user:pass@host/db?sslmode=require"
-    ENABLE_REDIS="false"
-    UPSTASH_REDIS_REST_URL=""
-    UPSTASH_REDIS_REST_TOKEN=""
+    ENABLE_REDIS="true"
+    REDIS_URL="redis://..."
+    SECRET_KEY="your_secret_key_here"
     CLOUDFLARE_TURNSTILE_SECRET=""
     CLOUDFLARE_TURNSTILE_SITE_KEY=""
     ENV="development" # or "production"
+    APP_ORIGIN="http://localhost:8000"
     # Optional: enable admin bypass with a static token
     ADMIN_BYPASS_TOKEN="..."
     ```
