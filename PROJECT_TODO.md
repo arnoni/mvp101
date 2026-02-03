@@ -24,5 +24,7 @@
 - [x] Implement signed admin bypass header for QA/dev superusers (via `X-Admin-Auth` and config token)
 - [ ] Implement server-side session hydration (currently partial/stubbed in middleware).
 - [ ] Finalize CSRF protection for mutation endpoints.
+- [ ] Implement Entitlement Service with Redis -> DB fallback logic using `subscriptions` table.
+- [ ] Implement Webhook processing pipeline (`webhook_events` -> `subscriptions` update).
 - [ ] Ensure KMZ flow uses coordinate-bearing DTOs consistently.
 - [ ] Document Windows dev setup for `asyncpg` (MSVC Build Tools) or recommend WSL/Linux.

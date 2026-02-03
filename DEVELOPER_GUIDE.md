@@ -76,7 +76,11 @@ This is where the business logic lives.
 
 *   **`entitlement_service.py`:**
     *   **Responsibility:** Determines if a user is `tier: FREE` or `tier: PAID`.
-    *   **Current State:** Checks for a `dd_paid_session` cookie.
+    *   **Logic:**
+        1.  **Cache Check:** Reads `session:{sid}` from Redis to get cached `{user_id, tier, csrf}`.
+        2.  **Cache Miss:** If missing, queries the `subscriptions` table in Postgres using the session's user identity.
+        3.  **Cache Refresh:** Updates Redis with the fresh status (short TTL) to minimize DB load.
+    *   **Data Source:** `subscriptions` table (Postgres).
 
 *   **`kmz_service.py`:**
     *   **Responsibility:** Generates Google Earth (`.kmz`) files dynamically from search results.
@@ -148,10 +152,44 @@ If you are modifying the code, ensure you adhere to these strict rules from the 
 3.  **Testing Quotas:**
     *   The app uses cookies. To reset your identity/quota locally, delete the `dd_anon_id` cookie in your browser dev tools.
 
-## 6. Directory Structure
+## 7. Database Schema
 
-```text
-.
+We use Neon PostgreSQL with PostGIS.
+
+### Core Tables
+
+#### `pois` (Spatial Data)
+*   `name`: Text
+*   `geom`: Geography(Point, 4326)
+*   Spatial Index: GIST on `geom`
+
+#### `users` (Identity)
+*   `id`: UUID (PK)
+*   `email`: Text (Unique)
+*   `created_at`, `updated_at`: Timestamps
+
+#### `subscriptions` (Billing)
+*   `id`: UUID (PK)
+*   `user_id`: UUID (FK -> users.id)
+*   `provider`: Text (e.g., 'paddle', 'lemon_squeezy')
+*   `provider_subscription_id`: Text (Unique)
+*   `plan`: Text ('basic', 'pro')
+*   `status`: Text ('active', 'trialing', 'past_due', 'canceled')
+*   `current_period_end`: Timestamp
+
+#### `webhook_events` (Idempotency)
+*   `provider`: Text (PK Component)
+*   `event_id`: Text (PK Component)
+*   `payload`: JSONB
+*   `status`: Text ('received', 'processed', 'failed')
+
+## 8. Webhook Processing Flow
+
+1.  **Ingest:** Webhook received -> Insert into `webhook_events` (provider, event_id).
+    *   *Conflict?* -> Return 200 OK (Idempotent).
+2.  **Process:** Parse payload -> Update `subscriptions` table.
+    *   *Success?* -> Update `webhook_events.status` to 'processed'.
+3.  **Reflect:** Next user request triggers Entitlement Service -> Cache Miss -> DB Read -> Redis Update.
 ├── app/
 │   ├── api/            # Routes & endpoints
 │   ├── core/           # Config, middleware

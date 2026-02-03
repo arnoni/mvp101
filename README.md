@@ -21,6 +21,8 @@
 - **PostGIS-backed Search**: Uses Neon PostgreSQL with PostGIS and SQLAlchemy 2 async engine (NullPool + pre_ping).
 - **Strict DTOs**: Public responses use meters (`distance_m`) and typed URLs; extra fields are forbidden.
 - **Fail-Closed Security**: Quota enforcement fails closed if Redis is unavailable (no in-memory fallback in production).
+- **Hybrid Entitlement**: Redis acts as a hot cache for user tier/status, falling back to the PostgreSQL `subscriptions` table on miss.
+- **Idempotent Webhooks**: Billing events are deduplicated via `webhook_events` before processing.
 
 ## Architecture
 The project follows a Domain-First architecture using FastAPI, Redis (Upstash), and PostGIS (Neon PostgreSQL) for POIs, with server-rendered Jinja2. Database access is standardized via SQLAlchemy 2 async engine with `NullPool` and `pool_pre_ping`. Quota enforcement is strict and backed by Redis.
