@@ -89,29 +89,41 @@ class EntitlementMiddleware(BaseHTTPMiddleware):
             path.startswith("/api/status") or
             path.startswith("/api/pay")
         )
+        # Attempt to hydrate session for all requests if cookie exists
+        redis_cli = getattr(request.app.state, "redis", None)
+        sid = request.cookies.get("dd_session")
+        
+        if redis_cli and sid:
+            try:
+                session_key = f"session:{sid}"
+                data = await redis_cli.get(session_key)
+                if data:
+                    import json
+                    payload = json.loads(data)
+                    request.state.session_id = sid
+                    request.state.tier = TierStatus(payload.get("tier", "FREE"))
+                    request.state.csrf = payload.get("csrf")
+                    request.state.user_id = payload.get("user_id")
+            except Exception:
+                # Log error but don't fail yet (unless required)
+                pass
+
         if allowlisted:
             return await call_next(request)
-        # Require Redis and session for protected routes
-        redis_cli = getattr(request.app.state, "redis", None)
+
+        # Enforcement for protected routes
         if not redis_cli:
             from fastapi.responses import JSONResponse
             return JSONResponse(status_code=503, content={"detail": "enforcement unavailable"})
-        sid = request.cookies.get("dd_session")
-        if not sid:
+            
+        if not getattr(request.state, "session_id", None):
+            # If session_id wasn't set above (missing cookie, redis down, or invalid session)
             from fastapi.responses import JSONResponse
-            return JSONResponse(status_code=401, content={"detail": "session required"})
-        session_key = f"session:{sid}"
-        data = await redis_cli.get(session_key)
-        if not data:
-            from fastapi.responses import JSONResponse
-            return JSONResponse(status_code=401, content={"detail": "session invalid"})
-        try:
-            import json
-            payload = json.loads(data)
-            request.state.session_id = sid
-            request.state.tier = TierStatus(payload.get("tier", "FREE"))
-            request.state.csrf = payload.get("csrf")
-        except Exception:
-            from fastapi.responses import JSONResponse
-            return JSONResponse(status_code=401, content={"detail": "session parse error"})
+            status_code = 503 if not redis_cli else 401
+            detail = "enforcement unavailable" if not redis_cli else "session required"
+            # If we had a cookie but failed to load data, it's invalid
+            if sid and redis_cli: 
+                 detail = "session invalid"
+            return JSONResponse(status_code=status_code, content={"detail": detail})
+            
         return await call_next(request)

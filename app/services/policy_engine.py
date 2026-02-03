@@ -19,6 +19,7 @@ class RequestContext(BaseModel):
     area_code: str
     client_ip: str
     turnstile_token: Optional[str] = None
+    user_id: Optional[str] = None
 
 class PolicyDecision(BaseModel):
     verdict: PolicyVerdict
@@ -74,7 +75,11 @@ class PolicyEngine:
         # Scope quota per day to avoid permanent accumulation
         from datetime import datetime
         day = datetime.utcnow().strftime("%Y%m%d")
-        quota_key = f"daily_read:{day}:{context.anon_id}"
+        
+        if context.user_id:
+            quota_key = f"quota:user:{context.user_id}:{day}"
+        else:
+            quota_key = f"quota:anon:{context.anon_id}:{day}"
         
         current_usage = await self.quota_repo.get_usage(quota_key)
         quota_remaining = max(0, limit - current_usage)

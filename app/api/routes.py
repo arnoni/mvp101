@@ -42,6 +42,7 @@ async def status(
 ):
     try:
         anon_id = getattr(request.state, "anon_id", "unknown_anon")
+        user_id = getattr(request.state, "user_id", None)
         client_ip = get_client_ip(request)
         tier = getattr(request.state, "tier", TierStatus.FREE)
         admin_hdr = request.headers.get("X-Admin-Auth")
@@ -53,7 +54,8 @@ async def status(
             paid_tier=tier,
             area_code=area_code,
             client_ip=client_ip,
-            turnstile_token=None
+            turnstile_token=None,
+            user_id=user_id
         )
 
         decision = PolicyDecision(verdict=PolicyVerdict.ALLOW, quota_remaining=999, max_results=5) if admin_bypass else await policy_engine.evaluate(context)
@@ -122,6 +124,7 @@ async def find_nearest(
     # 1. Build Context
     try:
         anon_id = getattr(request.state, "anon_id", "unknown_anon")
+        user_id = getattr(request.state, "user_id", None)
         client_ip = get_client_ip(request)
 
         # Entitlement Check
@@ -141,7 +144,8 @@ async def find_nearest(
             paid_tier=tier,
             area_code=area_code,
             client_ip=client_ip,
-            turnstile_token=data.turnstile_token
+            turnstile_token=data.turnstile_token,
+            user_id=user_id
         )
 
         # 2. Policy Evaluate (or bypass for admin)
@@ -212,8 +216,12 @@ async def find_nearest(
         # 5. Consume Quota (fail-closed if Redis unavailable)
         from datetime import datetime
         day = datetime.utcnow().strftime("%Y%m%d")
-        session_id = getattr(request.state, "session_id", anon_id)
-        quota_key = f"quota:{session_id}:{day}"
+        
+        if user_id:
+            quota_key = f"quota:user:{user_id}:{day}"
+        else:
+            quota_key = f"quota:anon:{anon_id}:{day}"
+
         if not admin_bypass:
             try:
                 limit = PolicyEngine.FREE_TIER_DAILY_LIMIT if tier == TierStatus.FREE else PolicyEngine.PAID_TIER_DAILY_LIMIT
@@ -307,6 +315,7 @@ async def download_kmz(
     Generate KMZ. Counts as a read.
     """
     anon_id = getattr(request.state, "anon_id", "unknown_anon")
+    user_id = getattr(request.state, "user_id", None)
     client_ip = get_client_ip(request)
     tier = getattr(request.state, "tier", TierStatus.FREE)
     
@@ -316,7 +325,8 @@ async def download_kmz(
         paid_tier=tier,
         area_code="global",
         client_ip=client_ip,
-        turnstile_token=None 
+        turnstile_token=None,
+        user_id=user_id 
     )
     
     # Policy Check
@@ -355,8 +365,11 @@ async def download_kmz(
         # Consume Quota (fail-closed)
         from datetime import datetime
         day = datetime.utcnow().strftime("%Y%m%d")
-        session_id = getattr(request.state, "session_id", anon_id)
-        quota_key = f"quota:{session_id}:{day}"
+        if user_id:
+            quota_key = f"quota:user:{user_id}:{day}"
+        else:
+            quota_key = f"quota:anon:{anon_id}:{day}"
+        
         try:
             limit = PolicyEngine.FREE_TIER_DAILY_LIMIT if tier == TierStatus.FREE else PolicyEngine.PAID_TIER_DAILY_LIMIT
             allowed, _ = await quota_repo.check_and_consume(quota_key, limit)
@@ -392,10 +405,12 @@ async def pay_success(request: Request):
     redis_cli = getattr(request.app.state, "redis", None)
     if not redis_cli:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="enforcement unavailable")
-    import secrets, json, time
+    import secrets, json, time, uuid
     sid = secrets.token_urlsafe(24)
     csrf = secrets.token_urlsafe(24)
-    payload = {"tier": "PAID", "csrf": csrf, "created_at": int(time.time())}
+    # Stub: mint a user_id here. In reality, this comes from DB after magic link redemption.
+    user_id = str(uuid.uuid4())
+    payload = {"tier": "PAID", "csrf": csrf, "user_id": user_id, "created_at": int(time.time())}
     key = f"session:{sid}"
     await redis_cli.set(key, json.dumps(payload), ex=86400)
     response = Response(content=json.dumps({"ok": True}), media_type="application/json")
