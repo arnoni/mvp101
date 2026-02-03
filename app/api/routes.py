@@ -397,30 +397,3 @@ async def download_kmz(
             ).model_dump(),
         )
 
-@router.post("/api/pay")
-async def pay_success(request: Request):
-    """
-    Stub: issues a server-side session for paid tier with CSRF seed.
-    """
-    redis_cli = getattr(request.app.state, "redis", None)
-    if not redis_cli:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="enforcement unavailable")
-    import secrets, json, time, uuid
-    sid = secrets.token_urlsafe(24)
-    csrf = secrets.token_urlsafe(24)
-    # Stub: mint a user_id here. In reality, this comes from DB after magic link redemption.
-    user_id = str(uuid.uuid4())
-    payload = {"tier": "PAID", "csrf": csrf, "user_id": user_id, "created_at": int(time.time())}
-    key = f"session:{sid}"
-    await redis_cli.set(key, json.dumps(payload), ex=86400)
-    response = Response(content=json.dumps({"ok": True}), media_type="application/json")
-    response.set_cookie(
-        key="dd_session",
-        value=sid,
-        max_age=86400,
-        httponly=True,
-        secure=(settings.ENV == "production"),
-        samesite="lax",
-        path="/",
-    )
-    return response

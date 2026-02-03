@@ -75,23 +75,20 @@ class AnonIdMiddleware(BaseHTTPMiddleware):
             
         return response
 
-class EntitlementMiddleware(BaseHTTPMiddleware):
+class SessionMiddleware(BaseHTTPMiddleware):
     """
-    Enforces server-side session presence for protected routes.
-    Allowlist: /, /static, /health, /api/status, /api/pay
+    Hydrates user session from Redis if 'dd_session' cookie is present.
+    Sets request.state.session_id, request.state.user_id, request.state.csrf.
+    Does NOT determine tier.
     """
     async def dispatch(self, request: Request, call_next):
-        path = request.url.path
-        allowlisted = (
-            path == "/" or
-            path.startswith("/static") or
-            path.startswith("/health") or
-            path.startswith("/api/status") or
-            path.startswith("/api/pay")
-        )
-        # Attempt to hydrate session for all requests if cookie exists
         redis_cli = getattr(request.app.state, "redis", None)
         sid = request.cookies.get("dd_session")
+        
+        # Initialize state
+        request.state.session_id = None
+        request.state.user_id = None
+        request.state.csrf = None
         
         if redis_cli and sid:
             try:
@@ -101,29 +98,47 @@ class EntitlementMiddleware(BaseHTTPMiddleware):
                     import json
                     payload = json.loads(data)
                     request.state.session_id = sid
-                    request.state.tier = TierStatus(payload.get("tier", "FREE"))
-                    request.state.csrf = payload.get("csrf")
                     request.state.user_id = payload.get("user_id")
+                    request.state.csrf = payload.get("csrf")
             except Exception:
-                # Log error but don't fail yet (unless required)
                 pass
+                
+        return await call_next(request)
 
+class EntitlementMiddleware(BaseHTTPMiddleware):
+    """
+    Determines user tier using EntitlementService.
+    Enforces authentication for protected routes.
+    Allowlist: /, /static, /health, /api/status
+    """
+    async def dispatch(self, request: Request, call_next):
+        from app.services.entitlement_service import EntitlementService
+        
+        path = request.url.path
+        allowlisted = (
+            path == "/" or
+            path.startswith("/static") or
+            path.startswith("/health") or
+            path.startswith("/api/status")
+        )
+        
+        # 1. Determine Tier (independent of route protection)
+        user_id = getattr(request.state, "user_id", None)
+        redis_cli = getattr(request.app.state, "redis", None)
+        
+        # Check entitlement cache
+        tier = await EntitlementService.get_tier(user_id, redis_cli)
+        request.state.tier = tier
+        
+        # 2. Enforce Protection
         if allowlisted:
             return await call_next(request)
 
-        # Enforcement for protected routes
-        if not redis_cli:
-            from fastapi.responses import JSONResponse
-            return JSONResponse(status_code=503, content={"detail": "enforcement unavailable"})
-            
+        # For protected routes, we require a valid session
         if not getattr(request.state, "session_id", None):
-            # If session_id wasn't set above (missing cookie, redis down, or invalid session)
             from fastapi.responses import JSONResponse
-            status_code = 503 if not redis_cli else 401
-            detail = "enforcement unavailable" if not redis_cli else "session required"
-            # If we had a cookie but failed to load data, it's invalid
-            if sid and redis_cli: 
-                 detail = "session invalid"
-            return JSONResponse(status_code=status_code, content={"detail": detail})
+            if not redis_cli:
+                return JSONResponse(status_code=503, content={"detail": "enforcement unavailable"})
+            return JSONResponse(status_code=401, content={"detail": "session required"})
             
         return await call_next(request)

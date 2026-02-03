@@ -118,8 +118,9 @@ app = FastAPI(
 from app.core.middleware import AnonIdMiddleware
 app.add_middleware(LoggingMiddleware) # Add structured logging middleware first (outermost or close to it)
 app.add_middleware(AnonIdMiddleware)
-from app.core.middleware import EntitlementMiddleware
+from app.core.middleware import EntitlementMiddleware, SessionMiddleware
 app.add_middleware(EntitlementMiddleware)
+app.add_middleware(SessionMiddleware)
 
 # --- Static Files and Templates ---
 # Implements TSD Section 7.1: /static/ and /templates/
