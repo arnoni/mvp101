@@ -197,6 +197,119 @@ We use Neon PostgreSQL with PostGIS.
 *   `payload`: JSONB
 *   `status`: Text ('received', 'processed', 'failed')
 
+### UGC Reports Schema (Neon SQL)
+
+```sql
+-- Enum for moderation lifecycle
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'ugc_report_status') THEN
+    CREATE TYPE ugc_report_status AS ENUM (
+      'pending',
+      'approved',
+      'rejected',
+      'hidden',
+      'duplicate'
+    );
+  END IF;
+END
+$$;
+
+-- Main UGC reports table
+CREATE TABLE ugc_reports (
+  id BIGSERIAL PRIMARY KEY,
+
+  -- reporter identity (server generated)
+  reporter_anon_id TEXT NOT NULL,
+  reporter_user_id BIGINT NULL,
+  reporter_tier TEXT NOT NULL DEFAULT 'free',
+
+  -- user submitted content
+  title TEXT NOT NULL,
+  description TEXT NOT NULL,
+  category TEXT NULL CHECK (char_length(category) <= 50),
+  noise_type TEXT NULL CHECK (char_length(noise_type) <= 50),
+  severity SMALLINT NULL CHECK (severity BETWEEN 1 AND 5),
+  occurred_at TIMESTAMPTZ NULL,
+
+  -- spatial data
+  geom GEOGRAPHY(POINT, 4326) NOT NULL,
+
+  -- moderation lifecycle
+  status ugc_report_status NOT NULL DEFAULT 'pending',
+  moderator_note TEXT NULL,
+  moderated_at TIMESTAMPTZ NULL,
+
+  -- dedup + clustering helpers (server generated)
+  content_hash TEXT NOT NULL,
+  geo_cell TEXT NOT NULL,
+  duplicate_of_id BIGINT NULL REFERENCES ugc_reports(id),
+
+  -- optional POI linkage
+  nearest_poi_id BIGINT NULL REFERENCES pois(id),
+  nearest_poi_distance_m INTEGER NULL,
+
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Evidence URLs normalized
+CREATE TABLE ugc_report_evidence (
+  id BIGSERIAL PRIMARY KEY,
+  report_id BIGINT NOT NULL REFERENCES ugc_reports(id) ON DELETE CASCADE,
+  url TEXT NOT NULL CHECK (char_length(url) <= 2000),
+  url_hash TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- --------------------
+-- INDEXES
+-- --------------------
+
+-- spatial queries (nearby reports)
+CREATE INDEX ugc_reports_geom_gist
+ON ugc_reports USING GIST (geom);
+
+-- duplicate detection helpers
+CREATE INDEX ugc_reports_geo_cell_created_at
+ON ugc_reports (geo_cell, created_at DESC);
+
+CREATE INDEX ugc_reports_content_hash
+ON ugc_reports (content_hash);
+
+CREATE INDEX ugc_reports_reporter_anon_created_at
+ON ugc_reports (reporter_anon_id, created_at DESC);
+
+-- feed and moderation queries
+CREATE INDEX ugc_reports_status_created_at
+ON ugc_reports (status, created_at DESC);
+
+CREATE INDEX ugc_reports_status_occurred_at
+ON ugc_reports (status, occurred_at DESC);
+
+-- evidence lookup
+CREATE INDEX ugc_report_evidence_report_id
+ON ugc_report_evidence (report_id);
+
+CREATE UNIQUE INDEX ugc_report_evidence_unique_per_report
+ON ugc_report_evidence (report_id, url_hash);
+
+-- --------------------
+-- updated_at auto-maintenance
+-- --------------------
+CREATE OR REPLACE FUNCTION set_updated_at()
+RETURNS trigger AS $$
+BEGIN
+  NEW.updated_at = now();
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER ugc_reports_set_updated_at
+BEFORE UPDATE ON ugc_reports
+FOR EACH ROW
+EXECUTE FUNCTION set_updated_at();
+```
 ## 8. Webhook Processing Flow
 
 1.  **Ingest:** Webhook received -> Insert into `webhook_events` (provider, event_id).
