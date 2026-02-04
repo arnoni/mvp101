@@ -45,6 +45,7 @@ async def status(
         user_id = getattr(request.state, "user_id", None)
         client_ip = get_client_ip(request)
         tier = getattr(request.state, "tier", TierStatus.FREE)
+        entitlement_stale = getattr(request.state, "entitlement_stale", False)
         admin_hdr = request.headers.get("X-Admin-Auth")
         admin_bypass = bool(settings.ADMIN_BYPASS_TOKEN and admin_hdr and admin_hdr == settings.ADMIN_BYPASS_TOKEN)
 
@@ -55,7 +56,8 @@ async def status(
             area_code=area_code,
             client_ip=client_ip,
             turnstile_token=None,
-            user_id=user_id
+            user_id=user_id,
+            entitlement_stale=entitlement_stale
         )
 
         decision = PolicyDecision(verdict=PolicyVerdict.ALLOW, quota_remaining=999, max_results=5) if admin_bypass else await policy_engine.evaluate(context)
@@ -129,6 +131,7 @@ async def find_nearest(
 
         # Entitlement Check
         tier = getattr(request.state, "tier", TierStatus.FREE)
+        entitlement_stale = getattr(request.state, "entitlement_stale", False)
         
         # Admin bypass via signed header (ignored quotas; does not overwrite keys)
         admin_bypass = False
@@ -145,7 +148,8 @@ async def find_nearest(
             area_code=area_code,
             client_ip=client_ip,
             turnstile_token=data.turnstile_token,
-            user_id=user_id
+            user_id=user_id,
+            entitlement_stale=entitlement_stale
         )
 
         # 2. Policy Evaluate (or bypass for admin)
@@ -214,13 +218,7 @@ async def find_nearest(
             )
 
         # 5. Consume Quota (fail-closed if Redis unavailable)
-        from datetime import datetime
-        day = datetime.utcnow().strftime("%Y%m%d")
-        
-        if user_id:
-            quota_key = f"quota:user:{user_id}:{day}"
-        else:
-            quota_key = f"quota:anon:{anon_id}:{day}"
+        quota_key = PolicyEngine.get_quota_key(user_id, anon_id, tier, entitlement_stale)
 
         if not admin_bypass:
             try:
@@ -318,6 +316,7 @@ async def download_kmz(
     user_id = getattr(request.state, "user_id", None)
     client_ip = get_client_ip(request)
     tier = getattr(request.state, "tier", TierStatus.FREE)
+    entitlement_stale = getattr(request.state, "entitlement_stale", False)
     
     # Dummy area or generic. 
     context = RequestContext(
@@ -326,7 +325,8 @@ async def download_kmz(
         area_code="global",
         client_ip=client_ip,
         turnstile_token=None,
-        user_id=user_id 
+        user_id=user_id,
+        entitlement_stale=entitlement_stale
     )
     
     # Policy Check
@@ -363,12 +363,7 @@ async def download_kmz(
         kmz_content = await generate_kmz(mock_results)
         
         # Consume Quota (fail-closed)
-        from datetime import datetime
-        day = datetime.utcnow().strftime("%Y%m%d")
-        if user_id:
-            quota_key = f"quota:user:{user_id}:{day}"
-        else:
-            quota_key = f"quota:anon:{anon_id}:{day}"
+        quota_key = PolicyEngine.get_quota_key(user_id, anon_id, tier, entitlement_stale)
         
         try:
             limit = PolicyEngine.FREE_TIER_DAILY_LIMIT if tier == TierStatus.FREE else PolicyEngine.PAID_TIER_DAILY_LIMIT

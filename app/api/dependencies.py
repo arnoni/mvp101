@@ -34,20 +34,14 @@ async def require_paid(
     tier = getattr(request.state, "tier", TierStatus.FREE)
     is_stale = getattr(request.state, "entitlement_stale", True)
     
-    # If stale/missing, we cannot verify Paid status safely.
-    # The user asked: "If miss and route is paid required, fail closed."
-    # Also: "If verified_at is older than TTL, treat as miss." (Handled in Service)
-    
+    # 503: Entitlement verification failed due to transient issues (stale/miss)
     if is_stale:
-        # If we are stale, we don't trust the tier (even if it says PAID in the stale cache? 
-        # Actually Service.get_tier returns tier from cache even if stale, but marks is_stale=True.
-        # But if it's stale, we should treat it as "Unknown/Miss".
-        # So we fail closed.
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Entitlement check failed. Please re-authenticate."
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "ENTITLEMENT_UNVERIFIED", "message": "Could not verify subscription status."}
         )
         
+    # 403: User is logged in but not paid (and verification is fresh)
     if tier != TierStatus.PAID:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

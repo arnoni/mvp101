@@ -20,6 +20,7 @@ class RequestContext(BaseModel):
     client_ip: str
     turnstile_token: Optional[str] = None
     user_id: Optional[str] = None
+    entitlement_stale: bool = False
 
 class PolicyDecision(BaseModel):
     verdict: PolicyVerdict
@@ -51,6 +52,18 @@ class PolicyEngine:
     def __init__(self, quota_repo: QuotaInterface):
         self.quota_repo = quota_repo
 
+    @staticmethod
+    def get_quota_key(user_id: Optional[str], anon_id: str, tier: TierStatus, entitlement_stale: bool) -> str:
+        from datetime import datetime
+        day = datetime.utcnow().strftime("%Y%m%d")
+        
+        # STRICT RULE: If tier is PAID and entitlement is not stale -> user_id
+        if tier == TierStatus.PAID and not entitlement_stale and user_id:
+             return f"quota:user:{user_id}:{day}"
+        
+        # Fallback to anon_id
+        return f"quota:anon:{anon_id}:{day}"
+
     async def evaluate(self, context: RequestContext) -> PolicyDecision:
         """
         Evaluates the request context against policy rules.
@@ -65,21 +78,12 @@ class PolicyEngine:
             max_results = self.PAID_TIER_RESULTS
             
         # 2. Check Quota
-        # Key strategy: "quota:{date}:{anon_id}" or "quota:{date}:{user_id}"
-        # For MVP we can rely on anon_id or ip if anon_id is missing (though middleware should ensure it)
-        # We'll assume the context always has a valid identifier.
-        # Note: The caller is responsible for INCREMENTING the quota if allowed.
-        # Here we just peek. Or we can have `check_and_incr` logic.
-        # TDD suggests "Check Quota".
-        
-        # Scope quota per day to avoid permanent accumulation
-        from datetime import datetime
-        day = datetime.utcnow().strftime("%Y%m%d")
-        
-        if context.user_id:
-            quota_key = f"quota:user:{context.user_id}:{day}"
-        else:
-            quota_key = f"quota:anon:{context.anon_id}:{day}"
+        quota_key = self.get_quota_key(
+            context.user_id, 
+            context.anon_id, 
+            context.paid_tier, 
+            context.entitlement_stale
+        )
         
         current_usage = await self.quota_repo.get_usage(quota_key)
         quota_remaining = max(0, limit - current_usage)

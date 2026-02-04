@@ -25,22 +25,12 @@ class EntitlementService:
         Determines the tier for a given user ID.
         Checks Redis cache first.
         If verified_at is older than TTL, marks as stale.
-        
-        Args:
-            user_id: The user's ID.
-            redis_cli: Async Redis client.
-            ttl_seconds: Max age of verification before considered stale.
-            
-        Returns:
-            EntitlementResult: Contains tier and stale status.
         """
         if not user_id:
             return EntitlementResult(TierStatus.FREE)
             
         if not redis_cli:
-            # If Redis is down, we can't verify. Treat as stale FREE? 
-            # Or just FREE? User said: "If miss and route is paid required, fail closed."
-            # We'll return FREE with is_stale=True to indicate we couldn't verify.
+            # If Redis is down, we can't verify. Treat as stale FREE.
             return EntitlementResult(TierStatus.FREE, is_stale=True)
             
         key = f"entitlement:user:{user_id}"
@@ -48,21 +38,37 @@ class EntitlementService:
         try:
             data = await redis_cli.get(key)
             if data:
-                payload = json.loads(data)
-                tier = TierStatus(payload.get("tier", "FREE"))
-                verified_at = payload.get("verified_at", 0)
+                try:
+                    payload = json.loads(data)
+                except json.JSONDecodeError:
+                    # Corrupt cache -> self heal
+                    await redis_cli.delete(key)
+                    return EntitlementResult(TierStatus.FREE, is_stale=True)
                 
-                # Check for staleness
+                tier_val = payload.get("tier", "FREE")
+                try:
+                    tier = TierStatus(tier_val)
+                except ValueError:
+                    tier = TierStatus.FREE
+                
+                verified_at = payload.get("verified_at")
+                
+                # Monotonic & Existence Checks
                 now = int(time.time())
-                is_stale = (now - verified_at) > ttl_seconds
+                is_stale = False
+                
+                if verified_at is None:
+                    is_stale = True
+                elif verified_at > (now + 60): # Future timestamp (clock skew > 1 min)
+                    is_stale = True
+                elif (now - verified_at) > ttl_seconds:
+                    is_stale = True
                 
                 return EntitlementResult(tier, is_stale=is_stale, raw_data=payload)
         except Exception:
             pass
             
         # Cache Miss -> Fallback to Postgres (TODO)
-        # For now, return FREE and stale because we haven't implemented Postgres yet
-        # Once Postgres is implemented, this would fetch from DB and return non-stale result
         return EntitlementResult(TierStatus.FREE, is_stale=True)
 
     @staticmethod
@@ -84,6 +90,7 @@ class EntitlementService:
             
         key = f"entitlement:user:{user_id}"
         payload = {
+            "schema_version": 1,
             "tier": tier.value,
             "verified_at": int(time.time()),
             "provider": provider,
@@ -91,4 +98,6 @@ class EntitlementService:
             "plan": plan,
             "period_end": period_end
         }
+        # Set Redis TTL slightly longer than verification TTL to allow for grace logic if needed,
+        # but for now we keep them sync or user provided.
         await redis_cli.set(key, json.dumps(payload), ex=ttl_seconds)
