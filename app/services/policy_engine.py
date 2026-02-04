@@ -155,9 +155,13 @@ async def run_gate(
     tier: TierStatus,
     entitlement_stale: bool,
     area_code: str,
+    force_turnstile_required: bool = False,
+    disallow_admin_bypass: bool = False,
 ) -> GateResult:
     admin_hdr = request.headers.get("X-Admin-Auth")
     admin_bypass = bool(settings.ADMIN_BYPASS_TOKEN and admin_hdr and admin_hdr == settings.ADMIN_BYPASS_TOKEN)
+    if disallow_admin_bypass:
+        admin_bypass = False
 
     client_ip = get_client_ip(request)
     context = RequestContext(
@@ -188,7 +192,7 @@ async def run_gate(
             ).model_dump(),
         )
 
-    if decision.verdict == PolicyVerdict.CHALLENGE_REQUIRED:
+    if decision.verdict == PolicyVerdict.CHALLENGE_REQUIRED or force_turnstile_required:
         if not data_turnstile_token:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

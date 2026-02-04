@@ -41,6 +41,7 @@ class UGCReportRequest(BaseModel):
     lat: float
     lon: float
     category: Optional[str] = Field(default=None, max_length=50)
+    severity: Optional[int] = None
     evidence_urls: Optional[list[str]] = None
     turnstile_token: Optional[str] = None
 
@@ -311,21 +312,38 @@ async def ugc_report_submit(
     quota_repo: QuotaRepository = Depends(get_quota_repo),
     policy_engine: PolicyEngine = Depends(get_policy_engine),
 ):
-    # 1. CSRF protection for mutation
-    await protect_mutation(request)
-    # 2. Build Context
     anon_id = getattr(request.state, "anon_id", "unknown_anon")
     user_id = getattr(request.state, "user_id", None)
     tier = getattr(request.state, "tier", TierStatus.FREE)
     entitlement_stale = getattr(request.state, "entitlement_stale", False)
-    # Cheap validation first (block nonsense early)
     if not is_inside_da_nang_bbox(data.lat, data.lon):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=ErrorResponse(error="OUT_OF_BOUNDS", detail="Coordinates outside allowed area.").model_dump()
         )
+    if data.severity is not None:
+        if data.severity < 1 or data.severity > 5:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=ErrorResponse(error="INVALID_SEVERITY", detail="Severity must be between 1 and 5.").model_dump()
+            )
+    if data.evidence_urls is not None:
+        if len(data.evidence_urls) > 5:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=ErrorResponse(error="TOO_MANY_EVIDENCE_URLS", detail="Maximum 5 evidence URLs allowed.").model_dump()
+            )
+        for u in data.evidence_urls:
+            if len(u) > 500:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=ErrorResponse(error="EVIDENCE_URL_TOO_LONG", detail="Evidence URL exceeds maximum length.").model_dump()
+                )
+    anon_id = getattr(request.state, "anon_id", "unknown_anon")
+    user_id = getattr(request.state, "user_id", None)
+    tier = getattr(request.state, "tier", TierStatus.FREE)
+    entitlement_stale = getattr(request.state, "entitlement_stale", False)
     area_code = AreaBucketer.get_area_code(data.lat, data.lon)
-    # 3. Gate (consume quota before heavier work), pass token if provided
     gate_result = await run_gate(
         request=request,
         data_turnstile_token=data.turnstile_token,
@@ -336,33 +354,95 @@ async def ugc_report_submit(
         tier=tier,
         entitlement_stale=entitlement_stale,
         area_code=area_code,
+        force_turnstile_required=True,
+        disallow_admin_bypass=True,
     )
-    # 5. Dedup check and write (Redis-backed)
-    import hashlib, json, time
+    import hashlib, json, time, uuid
+    from sqlalchemy import text
     redis_cli = getattr(request.app.state, "redis", None)
     if not redis_cli:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="enforcement unavailable")
-    normalized = f"{data.title.strip().lower()}|{area_code}|{anon_id or 'anon'}"
-    rid = hashlib.sha1(normalized.encode("utf-8")).hexdigest()
-    key = f"ugc:report:{rid}"
-    payload = {
-        "title": data.title,
-        "description": data.description,
-        "lat": data.lat,
-        "lon": data.lon,
-        "area_code": area_code,
-        "category": data.category,
-        "evidence_urls": data.evidence_urls or [],
-        "by_user_id": user_id,
-        "by_anon_id": anon_id,
-        "created_at": int(time.time())
-    }
-    try:
-        # NX -> only set if not exists, TTL 7 days
-        ok = await redis_cli.set(key, json.dumps(payload), ex=7 * 24 * 3600, nx=True)
-        duplicate = False if ok else True
-    except Exception:
+    def norm_text(s: str) -> str:
+        return " ".join((s or "").strip().lower().split())
+    title_n = norm_text(data.title)
+    desc_n = norm_text(data.description)
+    cat_n = norm_text(data.category or "")
+    lat_q = round(float(data.lat), 3)
+    lon_q = round(float(data.lon), 3)
+    geo_cell = f"{lat_q}:{lon_q}"
+    content_hash = hashlib.sha256(f"{title_n}|{desc_n}|{cat_n}".encode("utf-8")).hexdigest()
+    day_bucket = time.strftime("%Y%m%d", time.gmtime())
+    dedup_key = hashlib.sha256(f"{anon_id}|{geo_cell}|{content_hash}|{day_bucket}".encode("utf-8")).hexdigest()
+    dedup_redis_key = f"ugc:dedup:{dedup_key}"
+    public_id = str(uuid.uuid4())
+    claimed = await redis_cli.set(dedup_redis_key, public_id, ex=7 * 24 * 3600, nx=True)
+    if not claimed:
+        existing = await redis_cli.get(dedup_redis_key)
+        return {"ok": True, "report_id": existing, "duplicate": True}
+    db_engine = getattr(request.app.state, "db_engine", None)
+    if not db_engine:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="enforcement unavailable")
-    # 6. Return
-    return {"ok": True, "report_id": rid, "duplicate": duplicate}
+    UGC_INSERT_SQL = text("""
+    INSERT INTO ugc_reports (
+      public_id,
+      reporter_anon_id,
+      reporter_user_id,
+      reporter_tier,
+      title,
+      description,
+      category,
+      severity,
+      geom,
+      status,
+      content_hash,
+      geo_cell
+    )
+    VALUES (
+      :public_id::uuid,
+      :reporter_anon_id,
+      :reporter_user_id,
+      :reporter_tier,
+      :title,
+      :description,
+      :category,
+      :severity,
+      ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
+      'pending'::ugc_report_status,
+      :content_hash,
+      :geo_cell
+    )
+    RETURNING id, public_id
+    """)
+    try:
+      async with db_engine.begin() as conn:
+        row = (await conn.execute(
+          UGC_INSERT_SQL,
+          {
+            "public_id": public_id,
+            "reporter_anon_id": anon_id,
+            "reporter_user_id": user_id,
+            "reporter_tier": "pro" if tier == TierStatus.PAID else "free",
+            "title": data.title,
+            "description": data.description,
+            "category": data.category,
+            "severity": data.severity,
+            "lat": float(data.lat),
+            "lon": float(data.lon),
+            "content_hash": content_hash,
+            "geo_cell": geo_cell,
+          }
+        )).first()
+        public_id = str(row.public_id)
+    except Exception:
+      raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=ErrorResponse(error="STORAGE_UNAVAILABLE", detail="Database unavailable.").model_dump())
+    if data.evidence_urls:
+        try:
+            await redis_cli.set(f"ugc:evidence:{public_id}", json.dumps(data.evidence_urls), ex=7 * 24 * 3600)
+        except Exception:
+            pass
+    try:
+        await redis_cli.set(dedup_redis_key, public_id, ex=7 * 24 * 3600)
+    except Exception:
+        pass
+    return {"ok": True, "report_id": public_id, "duplicate": False}
 
