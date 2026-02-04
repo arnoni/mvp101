@@ -119,6 +119,8 @@ from app.core.middleware import AnonIdMiddleware
 app.add_middleware(LoggingMiddleware) # Add structured logging middleware first (outermost or close to it)
 app.add_middleware(AnonIdMiddleware)
 from app.core.middleware import EntitlementMiddleware, SessionMiddleware
+# Middleware executes in reverse order; inner runs first.
+# SessionMiddleware will run before EntitlementMiddleware.
 app.add_middleware(EntitlementMiddleware)
 app.add_middleware(SessionMiddleware)
 
@@ -134,39 +136,7 @@ templates = Jinja2Templates(directory=templates_dir)
 from app.api.routes import router as api_router
 app.include_router(api_router, prefix="/api")
 
-# --- Turnstile Verification Endpoint (Legacy/Backup?) ---
-# Note: Verification logic is now mostly in app.utils.security and PolicyEngine
-# But we can keep this for direct frontend testing if needed.
-TURNSTILE_VERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
-
-@app.post("/api/turnstile/verify")
-async def api_turnstile_verify(request: Request):
-    body = await request.json()
-    token = body.get("token")
-    if not token:
-        raise HTTPException(status_code=400, detail="Missing Turnstile token")
-
-    # Access secret directly from settings (loaded from env)
-    secret = settings.CLOUDFLARE_TURNSTILE_SECRET
-    if not secret:
-        raise HTTPException(status_code=500, detail="Turnstile secret not configured")
-
-    # optional: include user IP
-    client_ip = request.client.host if request.client else None
-
-    data = {"secret": secret, "response": token}
-    if client_ip:
-        data["remoteip"] = client_ip
-
-    async with httpx.AsyncClient(timeout=10.0) as client:
-        r = await client.post(TURNSTILE_VERIFY_URL, data=data)
-        result = r.json()
-
-    if not result.get("success"):
-        # Useful during debugging; you can log result.get("error-codes")
-        raise HTTPException(status_code=403, detail=result)
-
-    return {"ok": True}
+#
 
 @app.get("/privacy", response_class=HTMLResponse)
 async def privacy():

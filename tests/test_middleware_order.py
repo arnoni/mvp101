@@ -41,7 +41,7 @@ def test_middleware_order_and_entitlement():
         return response
 
     # Add middlewares
-    # Order: Session (Outer) -> Entitlement (Inner) -> App
+    # Note: Middleware executes in reverse order; Session runs before Entitlement.
     app.add_middleware(EntitlementMiddleware)
     app.add_middleware(SessionMiddleware)
     
