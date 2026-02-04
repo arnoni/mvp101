@@ -42,6 +42,7 @@ class UGCReportRequest(BaseModel):
     lon: float
     category: Optional[str] = Field(default=None, max_length=50)
     evidence_urls: Optional[list[str]] = None
+    turnstile_token: Optional[str] = None
 
 # --- Routes ---
 
@@ -317,11 +318,17 @@ async def ugc_report_submit(
     user_id = getattr(request.state, "user_id", None)
     tier = getattr(request.state, "tier", TierStatus.FREE)
     entitlement_stale = getattr(request.state, "entitlement_stale", False)
+    # Cheap validation first (block nonsense early)
+    if not is_inside_da_nang_bbox(data.lat, data.lon):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=ErrorResponse(error="OUT_OF_BOUNDS", detail="Coordinates outside allowed area.").model_dump()
+        )
     area_code = AreaBucketer.get_area_code(data.lat, data.lon)
-    # 3. Gate (consume quota before heavier work)
+    # 3. Gate (consume quota before heavier work), pass token if provided
     gate_result = await run_gate(
         request=request,
-        data_turnstile_token=None,
+        data_turnstile_token=data.turnstile_token,
         policy_engine=policy_engine,
         quota_repo=quota_repo,
         anon_id=anon_id,
@@ -330,12 +337,6 @@ async def ugc_report_submit(
         entitlement_stale=entitlement_stale,
         area_code=area_code,
     )
-    # 4. Deep validation
-    if not is_inside_da_nang_bbox(data.lat, data.lon):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=ErrorResponse(error="OUT_OF_BOUNDS", detail="Coordinates outside allowed area.").model_dump()
-        )
     # 5. Dedup check and write (Redis-backed)
     import hashlib, json, time
     redis_cli = getattr(request.app.state, "redis", None)

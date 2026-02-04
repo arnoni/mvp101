@@ -29,3 +29,10 @@
 - [ ] Ensure KMZ flow uses coordinate-bearing DTOs consistently.
 - [ ] Document Windows dev setup for `asyncpg` (MSVC Build Tools) or recommend WSL/Linux.
 - [ ] Consider introducing a `paid_router` mounted with `dependencies=[require_paid]` for consistent application across paid-only endpoints.
+
+### UGC vs Search Quota
+- UGC burning search quota: Currently `run_gate` applies the same daily limit across endpoints, so UGC submissions reduce "find-nearest" capacity.
+- If acceptable, keep as-is. If separation is desired without a large refactor, plan to support:
+  - `run_gate(action="search"|"ugc")`
+  - Gate chooses appropriate daily limit and whether Turnstile is always required for UGC.
+  - Minimal route changes required.
