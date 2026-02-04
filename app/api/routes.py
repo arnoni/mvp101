@@ -7,7 +7,7 @@ from app.core.config import settings
 from app.models.dto import FindNearestRequest, FindNearestResponse, ErrorResponse, PublicPOIResultWithCoords, StatusResponse, UserStatus
 from app.services.area_bucketer import AreaBucketer
 from app.services.entitlement_service import EntitlementService, TierStatus
-from app.services.policy_engine import PolicyEngine, RequestContext, PolicyVerdict, PolicyDecision
+from app.services.policy_engine import PolicyEngine, RequestContext, PolicyVerdict, PolicyDecision, run_gate
 from app.services.poi_service import POIService
 from app.services.quota_repository import QuotaRepository
 from app.services.kmz_service import generate_kmz
@@ -133,75 +133,20 @@ async def find_nearest(
         tier = getattr(request.state, "tier", TierStatus.FREE)
         entitlement_stale = getattr(request.state, "entitlement_stale", False)
         
-        # Admin bypass via signed header (ignored quotas; does not overwrite keys)
-        admin_bypass = False
-        admin_hdr = request.headers.get("X-Admin-Auth")
-        if settings.ADMIN_BYPASS_TOKEN and admin_hdr and admin_hdr == settings.ADMIN_BYPASS_TOKEN:
-            admin_bypass = True
-
         # Area Code
         area_code = AreaBucketer.get_area_code(data.lat, data.lon)
-
-        context = RequestContext(
+        gate_result = await run_gate(
+            request=request,
+            data_turnstile_token=data.turnstile_token,
+            policy_engine=policy_engine,
+            quota_repo=quota_repo,
             anon_id=anon_id,
-            paid_tier=tier,
-            area_code=area_code,
-            client_ip=client_ip,
-            turnstile_token=data.turnstile_token,
             user_id=user_id,
-            entitlement_stale=entitlement_stale
+            tier=tier,
+            entitlement_stale=entitlement_stale,
+            area_code=area_code,
         )
-
-        # 2. Policy Evaluate (or bypass for admin)
-        if admin_bypass:
-            decision = PolicyDecision(verdict=PolicyVerdict.ALLOW, quota_remaining=999, max_results=5)
-        else:
-            decision = await policy_engine.evaluate(context)
-
-        # 3. Handle Decision
-        if decision.verdict == PolicyVerdict.BLOCK:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=ErrorResponse(
-                    error="QUOTA_EXCEEDED",
-                    detail="Daily quota exceeded.",
-                    retry_after_seconds=decision.retry_after,
-                    quota_remaining=decision.quota_remaining,
-                    error_id=get_req_id(request)
-                ).model_dump()
-            )
-
-        challenge_satisfied = False
-        if decision.verdict == PolicyVerdict.CHALLENGE_REQUIRED and not admin_bypass:
-            if not data.turnstile_token:
-                 raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=ErrorResponse(
-                        error="CHALLENGE_REQUIRED",
-                        detail="Human verification required.",
-                        quota_remaining=decision.quota_remaining,
-                        error_id=get_req_id(request)
-                    ).model_dump()
-                 )
-
-            # Verify Token
-            is_valid = await verify_turnstile(
-                token=data.turnstile_token,
-                anon_id=anon_id,
-                client_ip=client_ip
-            )
-            if not is_valid:
-                 raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail=ErrorResponse(
-                        error="INVALID_CHALLENGE",
-                        detail="Verification failed. Please try again.",
-                        quota_remaining=decision.quota_remaining,
-                        error_id=get_req_id(request)
-                    ).model_dump()
-                 )
-            else:
-                challenge_satisfied = True
+        decision = gate_result.decision
 
         # 4. Fetch Data (30m greedy, PostGIS-backed)
         try:
@@ -217,28 +162,7 @@ async def find_nearest(
                 ).model_dump()
             )
 
-        # 5. Consume Quota (fail-closed if Redis unavailable)
-        quota_key = PolicyEngine.get_quota_key(user_id, anon_id, tier, entitlement_stale)
-
-        if not admin_bypass:
-            try:
-                limit = PolicyEngine.FREE_TIER_DAILY_LIMIT if tier == TierStatus.FREE else PolicyEngine.PAID_TIER_DAILY_LIMIT
-                allowed, remaining_after = await quota_repo.check_and_consume(quota_key, limit)
-                if not allowed:
-                    raise HTTPException(
-                        status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                        detail=ErrorResponse(
-                            error="QUOTA_EXCEEDED",
-                            detail="Daily quota exceeded.",
-                            retry_after_seconds=3600 * 24,
-                            quota_remaining=0,
-                            error_id=get_req_id(request)
-                        ).model_dump()
-                    )
-            except RuntimeError:
-                raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="enforcement unavailable")
-        else:
-            remaining_after = decision.quota_remaining
+        remaining_after = gate_result.remaining_after
 
         # 6. Response Cookie for KMZ continuity
         if results:
@@ -265,7 +189,7 @@ async def find_nearest(
         else:
             status_text = t.get("status_active_many", "You’ve checked {n} places today").replace("{n}", str(checks_today))
             state = "active"
-        turnstile_required = (decision.verdict == PolicyVerdict.CHALLENGE_REQUIRED and not admin_bypass and not challenge_satisfied)
+        turnstile_required = False
         results_state = "found" if len(results) > 0 else "empty"
         tier_str = "pro" if tier == TierStatus.PAID else "free"
         resp = FindNearestResponse(

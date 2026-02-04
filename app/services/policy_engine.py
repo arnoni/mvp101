@@ -1,5 +1,11 @@
 from enum import Enum
 from typing import Optional, Protocol
+from dataclasses import dataclass
+from fastapi import Request, HTTPException, status
+from app.core.config import settings
+from app.utils.security import verify_turnstile, get_client_ip
+from app.models.dto import ErrorResponse
+from app.services.quota_repository import QuotaRepository
 from pydantic import BaseModel
 from app.services.entitlement_service import TierStatus
 
@@ -132,3 +138,98 @@ class PolicyEngine:
             quota_remaining=quota_remaining,
             max_results=max_results
         )
+
+@dataclass
+class GateResult:
+    decision: PolicyDecision
+    remaining_after: int
+    admin_bypass: bool
+
+async def run_gate(
+    request: Request,
+    data_turnstile_token: Optional[str],
+    policy_engine: "PolicyEngine",
+    quota_repo: QuotaRepository,
+    anon_id: str,
+    user_id: Optional[str],
+    tier: TierStatus,
+    entitlement_stale: bool,
+    area_code: str,
+) -> GateResult:
+    admin_hdr = request.headers.get("X-Admin-Auth")
+    admin_bypass = bool(settings.ADMIN_BYPASS_TOKEN and admin_hdr and admin_hdr == settings.ADMIN_BYPASS_TOKEN)
+
+    client_ip = get_client_ip(request)
+    context = RequestContext(
+        anon_id=anon_id,
+        paid_tier=tier,
+        area_code=area_code,
+        client_ip=client_ip,
+        turnstile_token=data_turnstile_token,
+        user_id=user_id,
+        entitlement_stale=entitlement_stale,
+    )
+
+    if admin_bypass:
+        decision = PolicyDecision(verdict=PolicyVerdict.ALLOW, quota_remaining=999, max_results=5)
+        return GateResult(decision=decision, remaining_after=decision.quota_remaining or 999, admin_bypass=True)
+
+    decision = await policy_engine.evaluate(context)
+
+    if decision.verdict == PolicyVerdict.BLOCK:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=ErrorResponse(
+                error="QUOTA_EXCEEDED",
+                detail="Daily quota exceeded.",
+                retry_after_seconds=decision.retry_after,
+                quota_remaining=decision.quota_remaining,
+                error_id=getattr(request.state, "request_id", None),
+            ).model_dump(),
+        )
+
+    if decision.verdict == PolicyVerdict.CHALLENGE_REQUIRED:
+        if not data_turnstile_token:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=ErrorResponse(
+                    error="CHALLENGE_REQUIRED",
+                    detail="Human verification required.",
+                    quota_remaining=decision.quota_remaining,
+                    error_id=getattr(request.state, "request_id", None),
+                ).model_dump(),
+            )
+        ok = await verify_turnstile(token=data_turnstile_token, anon_id=anon_id, client_ip=client_ip)
+        if not ok:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=ErrorResponse(
+                    error="INVALID_CHALLENGE",
+                    detail="Verification failed. Please try again.",
+                    quota_remaining=decision.quota_remaining,
+                    error_id=getattr(request.state, "request_id", None),
+                ).model_dump(),
+            )
+
+    quota_key = PolicyEngine.get_quota_key(user_id, anon_id, tier, entitlement_stale)
+
+    limit = PolicyEngine.FREE_TIER_DAILY_LIMIT if tier == TierStatus.FREE else PolicyEngine.PAID_TIER_DAILY_LIMIT
+
+    try:
+        allowed, remaining_after = await quota_repo.check_and_consume(quota_key, limit)
+    except RuntimeError:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="enforcement unavailable")
+
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=ErrorResponse(
+                error="QUOTA_EXCEEDED",
+                detail="Daily quota exceeded.",
+                retry_after_seconds=3600 * 24,
+                quota_remaining=0,
+                error_id=getattr(request.state, "request_id", None),
+            ).model_dump(),
+        )
+
+    return GateResult(decision=decision, remaining_after=remaining_after, admin_bypass=False)

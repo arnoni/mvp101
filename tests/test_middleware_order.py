@@ -104,9 +104,9 @@ def test_middleware_order_and_entitlement():
     assert data["tier"] == "PAID" # It returns the tier from cache
     assert data["entitlement_stale"] is True # But marks it stale
     
-    # Check Paid Route (should fail)
+    # Check Paid Route (should fail with 503 ENTITLEMENT_UNVERIFIED)
     response = client.get("/paid-only", cookies={"dd_session": sid})
-    assert response.status_code == 401, "Should fail 401 on stale entitlement"
+    assert response.status_code == 503, "Should fail 503 on stale entitlement"
     
     # 3. Test Missing Entitlement (Fail Closed)
     async def mock_redis_get_miss(key):
@@ -117,7 +117,7 @@ def test_middleware_order_and_entitlement():
     redis_mock.get.side_effect = mock_redis_get_miss
     
     response = client.get("/paid-only", cookies={"dd_session": sid})
-    assert response.status_code == 401, "Should fail 401 on missing entitlement (stale/unknown)"
+    assert response.status_code == 503, "Should fail 503 on missing entitlement (stale/unknown)"
     
     print("Middleware Order & Entitlement Logic Verified!")
 
