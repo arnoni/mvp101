@@ -320,6 +320,18 @@ ALTER TABLE ugc_reports
 CREATE UNIQUE INDEX IF NOT EXISTS ugc_reports_public_id_uq 
   ON ugc_reports (public_id);
 ```
+### UGC Validity Notes
+- Short answer: yes, the UGC schema is valid and production-ready for MVP. The structure aligns with PostGIS best practices and supports scale.
+- Seeing "index already exists" when re-running migrations is expected with plain CREATE INDEX. Prefer CREATE INDEX IF NOT EXISTS for idempotent runs.
+- The enum creation uses DO/IF NOT EXISTS to avoid duplicate type errors when migrations are applied multiple times.
+- Validation checklist for UGC:
+  - Primary keys: ugc_reports.id, ugc_report_evidence.id
+  - Spatial: GEOGRAPHY(POINT, 4326) + GIST index ugc_reports_geom_gist
+  - Dedup: geo_cell + created_at index; content_hash index; evidence (report_id, url_hash) unique
+  - Moderation: ugc_report_status enum; status/created_at and status/occurred_at indexes
+  - Maintenance: set_updated_at() trigger function; ugc_reports_set_updated_at trigger
+  - External ref: public_id UUID + unique index
+  - Input constraints: length checks on category/noise_type and evidence URL
 ## 8. Webhook Processing Flow
 
 1.  **Ingest:** Webhook received -> Insert into `webhook_events` (provider, event_id).

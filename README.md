@@ -164,6 +164,19 @@ CREATE UNIQUE INDEX IF NOT EXISTS ugc_reports_public_id_uq
   ON ugc_reports (public_id);
 ```
 
+### UGC Validity Notes
+- Short answer: yes, the table is valid and very solid. Nothing is wrong here; the schema is appropriate for MVP and scales well with PostGIS.
+- "index already exists" messages are expected if a migration is re-run using plain CREATE INDEX. Use CREATE INDEX IF NOT EXISTS for idempotent migrations to avoid errors, as shown above.
+- The enum creation block uses a safe DO/IF NOT EXISTS pattern, which prevents duplicate type creation on repeated runs.
+- Validation checklist:
+  - Primary keys on ugc_reports and ugc_report_evidence
+  - GEOGRAPHY(POINT, 4326) with GIST index for spatial queries
+  - Dedup helpers: geo_cell, content_hash, and evidence unique per report (report_id, url_hash)
+  - Moderation lifecycle via ugc_report_status enum and status indexes
+  - updated_at trigger function and trigger on ugc_reports
+  - public_id column with unique index for external references
+  - Reasonable TEXT length checks on category/noise_type and evidence URL
+
 ## Getting Started
 
 1.  **Clone the repo**.

@@ -157,3 +157,15 @@ ALTER TABLE ugc_reports
 CREATE UNIQUE INDEX IF NOT EXISTS ugc_reports_public_id_uq 
   ON ugc_reports (public_id);
 ```
+### UGC Validity Notes
+- Short answer: yes, the UGC tables are valid and solid for MVP; nothing is wrong with the schema.
+- "index already exists" outputs occur when re-applying migrations with plain CREATE INDEX. Use CREATE INDEX IF NOT EXISTS for idempotency.
+- The enum type is created safely via DO/IF NOT EXISTS to avoid duplicate-type errors on repeated runs.
+- Validation checklist:
+  - PKs on ugc_reports and ugc_report_evidence
+  - GEOGRAPHY(POINT, 4326) + GIST index for spatial queries
+  - Dedup helpers and indexes: geo_cell, content_hash; evidence unique (report_id, url_hash)
+  - Moderation lifecycle enum and status indexes
+  - updated_at trigger and function present
+  - public_id UUID with unique index for external references
+  - Length constraints on category/noise_type and evidence URL
