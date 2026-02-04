@@ -27,6 +27,16 @@
 ## Architecture
 The project follows a Domain-First architecture using FastAPI, Redis (Upstash), and PostGIS (Neon PostgreSQL) for POIs, with server-rendered Jinja2. Database access is standardized via SQLAlchemy 2 async engine with `NullPool` and `pool_pre_ping`. Quota enforcement is strict and backed by Redis.
 
+### Security & Entitlement
+- **Session vs. Entitlement**: `SessionMiddleware` hydrates `user_id` and `csrf` only. `EntitlementMiddleware` computes `tier` using `EntitlementService` and sets `entitlement_stale`; it does not trust any session payload tier.
+- **Cache Blob Versioning**: Redis `entitlement:user:{user_id}` stores `schema_version`, `tier`, `verified_at`, `provider`, `subscription_status`, `plan`, `period_end`.
+- **Monotonic Staleness**: Treat as stale when `now - verified_at > ttl_seconds`, or if `verified_at` is missing/in the future (clock skew). Corrupt JSON self-heals by deleting the key.
+- **Error Mapping**:
+  - `401` — Missing/invalid `dd_session` (no `user_id` in session payload)
+  - `403` — Logged-in user but `tier == FREE` on paid-required routes
+  - `503` — Entitlement cannot be verified (stale/miss/Redis down) → returns `ENTITLEMENT_UNVERIFIED`
+- **Quota Identity Rule**: If `tier == PAID` and `entitlement_stale == False` and `user_id` exists, use user-scoped keys. Otherwise use anon-scoped keys.
+
 ## Developer Guide
 For a detailed introduction to the codebase, modules, and architecture, please read the **[Developer Introduction & Architecture Guide](DEVELOPER_GUIDE.md)**.
 

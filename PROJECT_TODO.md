@@ -22,9 +22,10 @@
 ## Follow-ups
 - [x] Update frontend to consume `distance_m` (meters) instead of `distance_km`.
 - [x] Implement signed admin bypass header for QA/dev superusers (via `X-Admin-Auth` and config token)
-- [ ] Implement server-side session hydration (currently partial/stubbed in middleware).
+- [x] Implement server-side session hydration (`SessionMiddleware` hydrates `user_id` and `csrf` from Redis).
 - [ ] Finalize CSRF protection for mutation endpoints.
-- [ ] Implement Entitlement Service with Redis -> DB fallback logic using `subscriptions` table.
+- [ ] Implement Entitlement Service DB fallback (subscriptions table). Redis cache includes `schema_version`, monotonic `verified_at` checks, and self-healing on corrupt JSON.
 - [ ] Implement Webhook processing pipeline (`webhook_events` -> `subscriptions` update).
 - [ ] Ensure KMZ flow uses coordinate-bearing DTOs consistently.
 - [ ] Document Windows dev setup for `asyncpg` (MSVC Build Tools) or recommend WSL/Linux.
+- [ ] Consider introducing a `paid_router` mounted with `dependencies=[require_paid]` for consistent application across paid-only endpoints.

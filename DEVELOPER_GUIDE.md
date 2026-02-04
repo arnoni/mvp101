@@ -46,7 +46,8 @@ graph TD
     *   `REDIS_URL` (connection string)
 *   **`middleware.py`**:
     *   **`AnonIdMiddleware`**: Ensures each request carries `dd_anon_id`. If missing or invalidly signed, mints a new random UUID and sets a signed cookie (HMAC-SHA256). Attributes: `HttpOnly`, `Secure` (prod), `SameSite=Lax`.
-    *   **`EntitlementMiddleware`**: Hydrates session state from Redis (`tier`, `csrf`, `user_id`) if `dd_session` cookie is present. Enforces session requirements on protected routes.
+    *   **`SessionMiddleware`**: Hydrates `user_id` and `csrf` from Redis `session:{sid}` based on `dd_session` cookie. Does not decide paid tier.
+    *   **`EntitlementMiddleware`**: Computes `tier` via `EntitlementService` and sets `request.state.tier` and `request.state.entitlement_stale`. It does not trust any tier in the session payload.
 
 ### 3.2 Services (`app/services/`)
 This is where the business logic lives.
@@ -77,10 +78,11 @@ This is where the business logic lives.
 *   **`entitlement_service.py`:**
     *   **Responsibility:** Determines if a user is `tier: FREE` or `tier: PAID`.
     *   **Logic:**
-        1.  **Cache Check:** Reads `session:{sid}` from Redis to get cached `{user_id, tier, csrf}`.
-        2.  **Cache Miss:** If missing, queries the `subscriptions` table in Postgres using the session's user identity.
-        3.  **Cache Refresh:** Updates Redis with the fresh status (short TTL) to minimize DB load.
-    *   **Data Source:** `subscriptions` table (Postgres).
+        1.  **Cache Check:** Reads `entitlement:user:{user_id}` from Redis. Payload includes `schema_version`, `tier`, `verified_at`, `provider`, `subscription_status`, `plan`, `period_end`.
+        2.  **Monotonic Staleness:** Treat as stale when `now - verified_at > ttl_seconds`. If `verified_at` is missing or in the future (clock skew), treat as stale.
+        3.  **Self-Healing:** If JSON parse fails, delete the corrupt key and treat as stale.
+        4.  **Fallback:** On cache miss or Redis down, mark as stale (`FREE` tier until DB fallback is implemented).
+    *   **Data Source:** Planned fallback to `subscriptions` (Postgres) on cache miss (TBD).
 
 *   **`kmz_service.py`:**
     *   **Responsibility:** Generates Google Earth (`.kmz`) files dynamically from search results.
@@ -94,6 +96,7 @@ This is where the business logic lives.
     *   **`/api/find-nearest`**: The main search endpoint. It accepts Lat/Lng, invokes the Policy Engine, and if allowed, calls the POI Service. Turnstile is required for Free tier requests when the token is missing.
     *   **`/download-kmz`**: Generates a file download based on the previous search and counts as a read. Quota key uses the daily scoped pattern `daily_read:{YYYYMMDD}:{anon_id}`. Uses coordinate-bearing DTOs for KMZ. See [routes.py](file:///c:/Users/arnon/Documents/dev/projects/github/mine/trae_ide/mvp101/app/api/routes.py#L329-L336).
     *   **Admin Bypass**: If `settings.ADMIN_BYPASS_TOKEN` is set, requests with header `X-Admin-Auth` equal to that token bypass quotas and Turnstile (does not overwrite quota keys). See [find_nearest](file:///c:/Users/arnon/Documents/dev/projects/github/mine/trae_ide/mvp101/app/api/routes.py#L137-L156).
+    *   **Paid Dependencies**: Use `require_login` for session presence and `require_paid` for paid-only routes. `require_paid` enforces 403 (logged in but FREE), and 503 with `ENTITLEMENT_UNVERIFIED` when entitlement is stale or cannot be verified.
 
 ### 3.4 Utils (`app/utils/`)
 *   **`security.py`**: Handles Cloudflare Turnstile verification.
@@ -121,6 +124,12 @@ If you are modifying the code, ensure you adhere to these strict rules from the 
 5.  **Logging:** Use `structlog` for structured logging. Do not use standard `logging` directly for application logic.
 6.  **DTOs:** Public results are strict (extra forbidden). Use meters (`distance_m`), `HttpUrl` types for links. Use a separate DTO variant when coordinates are required (e.g., KMZ).
 
+## 4.3 Quota Identity Rule
+*   Identity used for quota keys is governed strictly by entitlement:
+    *   If `tier == PAID` and entitlement is fresh (`entitlement_stale == False`) and `user_id` exists, use `quota:user:{user_id}:{YYYYMMDD}`.
+    *   Otherwise, use `quota:anon:{anon_id}:{YYYYMMDD}`.
+*   This prevents stale paid sessions from consuming paid quota.
+
 ## 4.1 Internationalization & Accessibility
 *   Enum-first i18n on the frontend; server text acts as a fallback only. Language preference `dd_lang` is persisted and folded into anonymous fingerprinting.
 *   "How to use" is presented as an icon button with `aria-label`; Message Board uses `role="status"` to narrate outcomes for screen readers.
@@ -128,6 +137,11 @@ If you are modifying the code, ensure you adhere to these strict rules from the 
 ## 4.2 Status Refresh & Staleness
 *   Initial status is hydrated on the server at page render.
 *   Client re-fetches `/api/status` on load and on window focus with a debounce to avoid excessive polling.
+
+## 6. Error Mapping
+*   **401** — Missing or invalid `dd_session` (no `user_id` in session payload).
+*   **403** — Logged-in user but `tier == FREE` for paid-required routes.
+*   **503** — Entitlement cannot be verified (stale/cache miss/Redis down) for paid-required routes. Returns a stable error code: `ENTITLEMENT_UNVERIFIED`.
 
 ## 5. Getting Started
 
