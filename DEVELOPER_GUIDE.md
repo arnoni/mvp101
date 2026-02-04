@@ -310,6 +310,16 @@ BEFORE UPDATE ON ugc_reports
 FOR EACH ROW
 EXECUTE FUNCTION set_updated_at();
 ```
+
+#### UGC Public ID Migration
+
+```sql
+ALTER TABLE ugc_reports 
+  ADD COLUMN IF NOT EXISTS public_id UUID NOT NULL DEFAULT gen_random_uuid();
+
+CREATE UNIQUE INDEX IF NOT EXISTS ugc_reports_public_id_uq 
+  ON ugc_reports (public_id);
+```
 ## 8. Webhook Processing Flow
 
 1.  **Ingest:** Webhook received -> Insert into `webhook_events` (provider, event_id).

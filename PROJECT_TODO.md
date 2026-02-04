@@ -149,4 +149,11 @@ CREATE TRIGGER ugc_reports_set_updated_at
 BEFORE UPDATE ON ugc_reports
 FOR EACH ROW
 EXECUTE FUNCTION set_updated_at();
+
+-- public_id for external references
+ALTER TABLE ugc_reports 
+  ADD COLUMN IF NOT EXISTS public_id UUID NOT NULL DEFAULT gen_random_uuid();
+
+CREATE UNIQUE INDEX IF NOT EXISTS ugc_reports_public_id_uq 
+  ON ugc_reports (public_id);
 ```

@@ -154,6 +154,16 @@ FOR EACH ROW
 EXECUTE FUNCTION set_updated_at();
 ```
 
+### UGC Public ID Migration
+
+```sql
+ALTER TABLE ugc_reports 
+  ADD COLUMN IF NOT EXISTS public_id UUID NOT NULL DEFAULT gen_random_uuid();
+
+CREATE UNIQUE INDEX IF NOT EXISTS ugc_reports_public_id_uq 
+  ON ugc_reports (public_id);
+```
+
 ## Getting Started
 
 1.  **Clone the repo**.
