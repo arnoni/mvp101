@@ -367,8 +367,10 @@ async def ugc_report_submit(
     title_n = norm_text(data.title)
     desc_n = norm_text(data.description)
     cat_n = norm_text(data.category or "")
-    lat_q = round(float(data.lat), 3)
-    lon_q = round(float(data.lon), 3)
+    def quantize_coord(v: float, step: float = 0.0005) -> float:
+        return round(round(v / step) * step, 6)
+    lat_q = quantize_coord(float(data.lat))
+    lon_q = quantize_coord(float(data.lon))
     geo_cell = f"{lat_q}:{lon_q}"
     content_hash = hashlib.sha256(f"{title_n}|{desc_n}|{cat_n}".encode("utf-8")).hexdigest()
     day_bucket = time.strftime("%Y%m%d", time.gmtime())
