@@ -172,6 +172,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS ugc_reports_public_id_uq
 - DTO: `title`, `description`, `lat`, `lon`, `category?`, `severity?`, `evidence_urls?` (≤5, each ≤500 chars), `turnstile_token` (required).
 - Validation: Bbox check; severity must be 1–5; evidence list constraints as above.
 - Dedup: 7-day TTL Redis key `ugc:dedup:{sha256(anon_id|geo_cell|content_hash|YYYYMMDD)}`; geo_cell quantized at ~50m via rounding to 3 decimals; content_hash is sha256 of normalized title|description|category.
+- Dedup: 7-day TTL Redis key `ugc:dedup:{sha256(anon_id|geo_cell|content_hash|YYYYMMDD)}`; geo_cell quantized on a 0.0005° grid (~50–55 m), coordinates snapped to nearest step; content_hash is sha256 of normalized title|description|category.
 - Postgres: Insert into `ugc_reports` with `public_id`, identity, content, `geom = ST_SetSRID(ST_MakePoint(lon, lat), 4326)::geography`, `status='pending'`, `content_hash`, `geo_cell`. Defaults handle timestamps.
 - Evidence: Store list in Redis at `ugc:evidence:{public_id}` (JSON; TTL 7 days).
 - Response: `{ ok: true, duplicate: boolean, report_id: public_id }`.

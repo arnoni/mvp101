@@ -174,7 +174,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS ugc_reports_public_id_uq
 - Turnstile mandatory for all; admin bypass disabled for UGC.
 - Quota consumed via `run_gate` before persistence; CSRF skipped by design.
 - DTO includes: `title`, `description`, `lat`, `lon`, `category?`, `severity?`, `evidence_urls?` (≤5, each ≤500 chars), `turnstile_token`.
-- Dedup: Redis `ugc:dedup:{sha256(anon_id|geo_cell|content_hash|YYYYMMDD)}` with 7-day TTL; geo_cell quantized at ~50m via rounding to 3 decimals.
+- Dedup: Redis `ugc:dedup:{sha256(anon_id|geo_cell|content_hash|YYYYMMDD)}` with 7-day TTL; geo_cell quantized on a 0.0005° grid (~50–55 m), coordinates snapped to nearest step.
 - Postgres insert: `public_id`, identity snapshot, content, `geom` geography, `status='pending'`, `content_hash`, `geo_cell`.
 - Evidence URLs: Redis `ugc:evidence:{public_id}` JSON list with 7-day TTL.
 - Response: `{ ok: true, duplicate: boolean, report_id: public_id }`.
