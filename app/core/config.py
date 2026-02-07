@@ -50,6 +50,10 @@ class Settings(BaseSettings):
     # Search Radius (TSD FR-005 modified)
     SEARCH_RADIUS_KM: float = 0.1 # 100 meters
 
+    # I18n cache controls
+    I18N_LRU_MAX: int = Field(8, description="Max cached languages in process memory", ge=1, le=64)
+    I18N_WARMUP: bool = Field(True, description="Warm up translation cache at import time")
+
     # Pydantic configuration
     model_config = SettingsConfigDict(
         env_file=".env",

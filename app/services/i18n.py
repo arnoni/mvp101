@@ -1,3 +1,6 @@
+from functools import lru_cache
+from app.core.config import settings
+
 TRANSLATIONS = {
     "en": {
         "title": "DillDrill",
@@ -149,8 +152,17 @@ TRANSLATIONS = {
     }
 }
 
-def get_translations(lang: str = "en") -> dict:
-    # Basic fallback
+_I18N_MAX = getattr(settings, "I18N_LRU_MAX", 8)
+
+@lru_cache(maxsize=_I18N_MAX)
+def _cached(lang: str = "en") -> dict:
     if lang not in TRANSLATIONS:
         lang = "en"
     return TRANSLATIONS[lang]
+
+def get_translations(lang: str = "en") -> dict:
+    return _cached(lang)
+
+if getattr(settings, "I18N_WARMUP", True):
+    for _lang in list(TRANSLATIONS.keys()):
+        _cached(_lang)
