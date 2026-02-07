@@ -14,6 +14,7 @@
 - **Language Persistence**: Stores `dd_lang` and uses it in anonymous fingerprinting; defaults to last choice.
 - **KMZ Export**: Download results for Google Earth.
 - **Internationalization**: English, Spanish, Russian, Korean.
+- **Translation Cache**: Server translations are kept in a process LRU cache with optional warmup at import time.
 - **Dev Mode Visibility**: Landing page indicates when Redis fallback (in-memory quota) is active.
 - **Preflight Status**: `/api/status` endpoint powers instant gating (can_search, turnstile_required).
 - **SSR Hydration**: Initial status and tier are pre-rendered on the server.
@@ -209,6 +210,9 @@ CREATE UNIQUE INDEX IF NOT EXISTS ugc_reports_public_id_uq
     CLOUDFLARE_TURNSTILE_SITE_KEY=""
     ENV="development" # or "production"
     APP_ORIGIN="http://localhost:8000"
+    # i18n cache controls
+    I18N_LRU_MAX="8"
+    I18N_WARMUP="true"
     # Optional: enable admin bypass with a static token
     ADMIN_BYPASS_TOKEN="..."
     ```
@@ -230,3 +234,13 @@ CREATE UNIQUE INDEX IF NOT EXISTS ugc_reports_public_id_uq
 ### Notes
 - KMZ quota is aligned to the daily key pattern (`daily_read:{YYYYMMDD}:{anon_id}`).
 - Dev Mode shows Redis fallback and Turnstile indicators.
+
+### Developer Tooling
+- Linting: Ruff configured via pyproject (rules: E, F, I, UP, B). Run:
+  ```bash
+  ruff .
+  ```
+- Import guard: Fail if `sqlalchemy.orm.Session` is imported outside migrations or admin scripts. Run:
+  ```bash
+  python check_no_session_import.py
+  ```

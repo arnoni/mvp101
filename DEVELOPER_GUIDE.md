@@ -89,6 +89,7 @@ This is where the business logic lives.
 
 *   **`i18n.py`:**
     *   **Responsibility:** Simple in-memory translation service for the server-rendered frontend (supports EN, ES, RU, KO).
+    *   **Performance:** Uses a process LRU cache with optional warmup at import time. Tunable via `I18N_LRU_MAX` and `I18N_WARMUP` in settings.
 
 ### 3.3 API (`app/api/`)
 *   **`routes.py`**:
@@ -144,6 +145,10 @@ If you are modifying the code, ensure you adhere to these strict rules from the 
 *   **403** — Logged-in user but `tier == FREE` for paid-required routes.
 *   **503** — Entitlement cannot be verified (stale/cache miss/Redis down) for paid-required routes. Returns a stable error code: `ENTITLEMENT_UNVERIFIED`.
 
+## 6.1 Developer Tooling
+*   **Ruff Linting:** Configured in `pyproject.toml` with rules `E,F,I,UP,B` and `line-length=100`. Run `ruff .`.
+*   **Import Guard:** `check_no_session_import.py` fails if `sqlalchemy.orm.Session` is imported outside migrations or admin scripts. Run `python check_no_session_import.py`.
+
 ## 5. Getting Started
 
 1.  **Environment Variables:** Ensure your `.env` file has (Redis/Turnstile optional):
@@ -156,6 +161,8 @@ If you are modifying the code, ensure you adhere to these strict rules from the 
     CLOUDFLARE_TURNSTILE_SITE_KEY=""
     ENV="development" # or "production"
     APP_ORIGIN="http://localhost:8000"
+    I18N_LRU_MAX="8"
+    I18N_WARMUP="true"
     ```
 2.  **Run Locally:**
     ```bash

@@ -29,6 +29,7 @@
 - [ ] Ensure KMZ flow uses coordinate-bearing DTOs consistently.
 - [ ] Document Windows dev setup for `asyncpg` (MSVC Build Tools) or recommend WSL/Linux.
 - [ ] Consider introducing a `paid_router` mounted with `dependencies=[require_paid]` for consistent application across paid-only endpoints.
+- [ ] Wire Ruff and import guard into CI/pre-commit (run `ruff .` and `python check_no_session_import.py`)
 
 ### UGC vs Search Quota
 - UGC burning search quota: Currently `run_gate` applies the same daily limit across endpoints, so UGC submissions reduce "find-nearest" capacity.
@@ -178,3 +179,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS ugc_reports_public_id_uq
 - Postgres insert: `public_id`, identity snapshot, content, `geom` geography, `status='pending'`, `content_hash`, `geo_cell`.
 - Evidence URLs: Redis `ugc:evidence:{public_id}` JSON list with 7-day TTL.
 - Response: `{ ok: true, duplicate: boolean, report_id: public_id }`.
+
+### Internationalization Cache
+- Translations are cached in-process using an LRU with optional warmup at import time.
+- Tunable via environment (`I18N_LRU_MAX`, `I18N_WARMUP`).
