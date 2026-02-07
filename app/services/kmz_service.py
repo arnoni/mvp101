@@ -14,11 +14,13 @@ from fastkml.geometry import Point
 # AltitudeMode enum removed; not needed for basic KMZ generation
 from fastapi import HTTPException, status
 from app.models.dto import PublicPOIResultWithCoords, ErrorResponse
+from pydantic import validate_call
 
 import structlog
 
 logger = structlog.get_logger(__name__)
 
+@validate_call
 async def generate_kmz(results: List[PublicPOIResultWithCoords]) -> bytes:
     """
     Generates a KMZ file containing the top 5 POI results.

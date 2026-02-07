@@ -9,6 +9,7 @@ import logging
 from app.core.config import settings
 from app.models.dto import ErrorResponse
 from typing import Optional
+from pydantic import validate_call
 try:
     from app.services.redis_client import redis_client
 except Exception:
@@ -32,6 +33,7 @@ async def protect_mutation(request: Request):
     if not csrf_hdr or not csrf_state or csrf_hdr != csrf_state:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid csrf token")
     return True
+@validate_call
 async def verify_turnstile(token: str, anon_id: Optional[str] = None, client_ip: Optional[str] = None) -> bool:
     """
     Verifies the Cloudflare Turnstile token against the Cloudflare API.

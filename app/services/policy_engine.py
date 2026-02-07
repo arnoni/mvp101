@@ -6,7 +6,7 @@ from app.core.config import settings
 from app.utils.security import verify_turnstile, get_client_ip
 from app.models.dto import ErrorResponse
 from app.services.quota_repository import QuotaRepository
-from pydantic import BaseModel
+from pydantic import BaseModel, validate_call
 from app.services.entitlement_service import TierStatus
 
 # --- Contracts ---
@@ -59,6 +59,7 @@ class PolicyEngine:
         self.quota_repo = quota_repo
 
     @staticmethod
+    @validate_call
     def get_quota_key(user_id: Optional[str], anon_id: str, tier: TierStatus, entitlement_stale: bool) -> str:
         from datetime import datetime
         day = datetime.utcnow().strftime("%Y%m%d")
@@ -70,6 +71,7 @@ class PolicyEngine:
         # Fallback to anon_id
         return f"quota:anon:{anon_id}:{day}"
 
+    @validate_call
     async def evaluate(self, context: RequestContext) -> PolicyDecision:
         """
         Evaluates the request context against policy rules.
@@ -145,6 +147,7 @@ class GateResult:
     remaining_after: int
     admin_bypass: bool
 
+@validate_call
 async def run_gate(
     request: Request,
     data_turnstile_token: Optional[str],

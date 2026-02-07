@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from app.models.dto import PublicPOIResult, PublicPOIResultWithCoords
 from app.utils.haversine import haversine
 from app.core.config import settings
+from pydantic import validate_call
 
 logger = structlog.get_logger(__name__)
 
@@ -16,6 +17,7 @@ class POIService:
         self.engine = engine
         self.master_list = []
 
+    @validate_call
     async def find_nearest_pois(self, user_lat: float, user_lon: float, max_results: int = 5, include_coords: bool = False) -> Tuple[List[PublicPOIResult], List[str]]:
         logs: List[str] = []
         if not self.engine or not settings.DATABASE_URL:
@@ -99,6 +101,7 @@ class POIService:
                 )
         return results, logs
 
+    @validate_call
     async def get_pois_by_names(self, names: List[str], include_coords: bool = True) -> List[PublicPOIResult]:
         if not self.engine or not settings.DATABASE_URL or not names:
             return []

@@ -1,4 +1,5 @@
 import math
+from pydantic import validate_call
 
 class AreaBucketer:
     """
@@ -7,6 +8,7 @@ class AreaBucketer:
     """
 
     @staticmethod
+    @validate_call
     def get_area_code(lat: float, lon: float, precision: int = 3) -> str:
         """
         Generates a simplified 'area code' by rounding coordinates.
