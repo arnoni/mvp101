@@ -3,7 +3,7 @@ import time
 from enum import Enum
 from typing import Optional, Any
 from redis.asyncio import Redis
-from pydantic import validate_call
+from pydantic import validate_call, ConfigDict
 
 class TierStatus(str, Enum):
     FREE = "FREE"
@@ -21,7 +21,7 @@ class EntitlementService:
     """
     
     @staticmethod
-    @validate_call
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def get_tier(user_id: Optional[str], redis_cli: Optional[Redis], ttl_seconds: int = 300) -> EntitlementResult:
         """
         Determines the tier for a given user ID.
@@ -74,7 +74,7 @@ class EntitlementService:
         return EntitlementResult(TierStatus.FREE, is_stale=True)
 
     @staticmethod
-    @validate_call
+    @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def cache_entitlement(
         user_id: str, 
         tier: TierStatus, 
