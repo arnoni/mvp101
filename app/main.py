@@ -70,7 +70,9 @@ async def lifespan(app: FastAPI):
     # 2. Initialize Redis & Quota Repository (async client; fail closed if required but missing)
     from app.services.quota_repository import QuotaRepository
     app.state.redis = None
-    app.state.quota_repo = None
+    # Always ensure quota_repo exists to avoid AttributeErrors in PolicyEngine
+    app.state.quota_repo = QuotaRepository(None) 
+    
     if settings.ENABLE_REDIS and settings.REDIS_URL:
         try:
             app.state.redis = Redis.from_url(settings.REDIS_URL, decode_responses=True)
@@ -82,7 +84,7 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Redis initialization failed: {e}")
             app.state.redis = None
-            app.state.quota_repo = None
+            # Keep the QuotaRepository(None) instance
     elif settings.ENABLE_REDIS:
         logger.error("ENABLE_REDIS set but REDIS_URL missing")
 

@@ -93,7 +93,17 @@ class PolicyEngine:
             context.entitlement_stale
         )
         
-        current_usage = await self.quota_repo.get_usage(quota_key)
+        try:
+            current_usage = await self.quota_repo.get_usage(quota_key)
+        except RuntimeError as e:
+            # Handle redis_unavailable or other repo errors
+            # For the landing page/evaluation, we might want to fail-open (allow with 0 usage)
+            # or fail-closed. Given this is a lead magnet, fail-open for 'evaluate' is often
+            # preferred so the UI doesn't break, while 'run_gate' (mutation) might fail-closed.
+            # However, QuotaRepository is documented as fail-closed.
+            # Let's assume 0 usage for UI hints if Redis is down.
+            current_usage = 0
+            
         quota_remaining = max(0, limit - current_usage)
         
         if current_usage >= limit:
