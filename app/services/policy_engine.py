@@ -6,7 +6,7 @@ from app.core.config import settings
 from app.utils.security import verify_turnstile, get_client_ip
 from app.models.dto import ErrorResponse
 from app.services.quota_repository import QuotaRepository
-from pydantic import BaseModel, validate_call
+from pydantic import BaseModel, validate_call, ConfigDict
 from app.services.entitlement_service import TierStatus
 
 # --- Contracts ---
@@ -147,7 +147,7 @@ class GateResult:
     remaining_after: int
     admin_bypass: bool
 
-@validate_call
+@validate_call(config=ConfigDict(arbitrary_types_allowed=True))
 async def run_gate(
     request: Request,
     data_turnstile_token: Optional[str],
