@@ -1,4 +1,4 @@
-# Implements TSD Section 7.4: Dependencies
+# Generated from pyproject.toml
 fastapi==0.115.0
 uvicorn[standard]==0.30.1
 pydantic==2.8.2
@@ -7,10 +7,11 @@ httpx==0.27.0
 fastkml==0.12
 Jinja2==3.1.4
 python-dotenv==1.0.1
+setuptools
 redis==5.0.0
-upstash-redis>=0.16.0
 structlog==24.4.0
+upstash-redis>=0.16.0
+sentry-sdk[fastapi]==2.12.0
 psycopg[binary]==3.3.2
 SQLAlchemy==2.0.36
 asyncpg==0.29.0
-sentry-sdk[fastapi]==2.12.0
