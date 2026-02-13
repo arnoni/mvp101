@@ -1,6 +1,7 @@
 import logging
 import sys
 import structlog
+from sentry_sdk.integrations.structlog import SentryProcessor
 from app.core.config import settings
 
 def configure_logging():
@@ -39,7 +40,7 @@ def configure_logging():
         # JSON for production
         processors = shared_processors + [
             structlog.processors.dict_tracebacks,
-            sentry_processor, # <--- Add this processor
+            SentryProcessor(event_level=logging.ERROR),
             structlog.processors.JSONRenderer()
         ]
 
