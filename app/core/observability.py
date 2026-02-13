@@ -1,6 +1,8 @@
 import sentry_sdk 
 from sentry_sdk.integrations.fastapi import FastApiIntegration 
 from sentry_sdk.integrations.starlette import StarletteIntegration 
+from sentry_sdk.integrations.logging import LoggingIntegration
+import logging
 
 def init_sentry(dsn: str | None, env: str, release: str | None) -> None: 
     """ 
@@ -10,6 +12,11 @@ def init_sentry(dsn: str | None, env: str, release: str | None) -> None:
     """ 
     if not dsn: 
         return 
+
+    sentry_logging = LoggingIntegration(
+        level=logging.INFO,        # Capture info and above as breadcrumbs
+        event_level=logging.ERROR  # Send errors as events
+    )
 
     sentry_sdk.init( 
         dsn=dsn, 
@@ -22,6 +29,7 @@ def init_sentry(dsn: str | None, env: str, release: str | None) -> None:
         integrations=[ 
             StarletteIntegration(transaction_style="endpoint"), 
             FastApiIntegration(transaction_style="endpoint"), 
+            sentry_logging,
         ], 
 
         # Performance Monitoring 
