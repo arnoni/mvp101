@@ -12,7 +12,6 @@
   - **Paid Tier**: 50 searches/day, 5 results per search.
 - **Cloudflare Turnstile**: Human verification required for Free tier; validated server-side.
 - **Language Persistence**: Stores `dd_lang` and uses it in anonymous fingerprinting; defaults to last choice.
-- **KMZ Export**: Download results for Google Earth (using `fastkml` 1.4+).
 - **Internationalization**: English, Spanish, Russian, Korean.
 - **Translation Cache**: Server translations are kept in a process LRU cache with optional warmup at import time.
 - **Dev Mode Visibility**: Landing page indicates when Redis fallback (in-memory quota) is active.

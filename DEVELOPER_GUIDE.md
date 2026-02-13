@@ -87,10 +87,6 @@ This is where the business logic lives.
         4.  **Fallback:** On cache miss or Redis down, mark as stale (`FREE` tier until DB fallback is implemented).
     *   **Data Source:** Planned fallback to `subscriptions` (Postgres) on cache miss (TBD).
 
-*   **`kmz_service.py`:**
-    *   **Responsibility:** Generates Google Earth (`.kmz`) files dynamically from search results.
-    *   **Implementation:** Uses `fastkml>=1.4.0` for modern Python compatibility, avoiding legacy `pkg_resources` dependencies.
-
 *   **`i18n.py`:**
     *   **Responsibility:** Simple in-memory translation service for the server-rendered frontend (supports EN, ES, RU, KO).
     *   **Performance:** Uses a process LRU cache with optional warmup at import time. Tunable via `I18N_LRU_MAX` and `I18N_WARMUP` in settings.
@@ -99,7 +95,6 @@ This is where the business logic lives.
 *   **`routes.py`**:
     *   **`/api/status`**: Preflight gating endpoint. Computes `user_status`, `can_search`, `turnstile_required`, `checks_today`, and `tier` without consuming quota. Respects admin bypass via `X-Admin-Auth` when `settings.ADMIN_BYPASS_TOKEN` is set. See [routes.py](file:///c:/Users/arnon/Documents/dev/projects/github/mine/trae_ide/mvp101/app/api/routes.py#L44-L108).
     *   **`/api/find-nearest`**: The main search endpoint. It accepts Lat/Lng, invokes the Policy Engine, and if allowed, calls the POI Service. Turnstile is required for Free tier requests when the token is missing.
-    *   **`/download-kmz`**: Generates a file download based on the previous search and counts as a read. Quota key uses the daily scoped pattern `daily_read:{YYYYMMDD}:{anon_id}`. Uses coordinate-bearing DTOs for KMZ. See [routes.py](file:///c:/Users/arnon/Documents/dev/projects/github/mine/trae_ide/mvp101/app/api/routes.py#L329-L336).
     *   **Admin Bypass**: If `settings.ADMIN_BYPASS_TOKEN` is set, requests with header `X-Admin-Auth` equal to that token bypass quotas and Turnstile (does not overwrite quota keys). See [find_nearest](file:///c:/Users/arnon/Documents/dev/projects/github/mine/trae_ide/mvp101/app/api/routes.py#L137-L156).
     *   **Paid Dependencies**: Use `require_login` for session presence and `require_paid` for paid-only routes. `require_paid` enforces 403 (logged in but FREE), and 503 with `ENTITLEMENT_UNVERIFIED` when entitlement is stale or cannot be verified.
     *   **`/api/ugc/report-submit`**: UGC submit (Plan v2). Turnstile mandatory for all; admin bypass disabled. Skips CSRF by design. Consumes quota via `run_gate` before persistence. Validates bbox, optional severity 1–5, evidence_urls count ≤ 5 and each ≤ 500 chars. Dedup via Redis `ugc:dedup:{sha256(anon_id|geo_cell|content_hash|YYYYMMDD)}`; geo_cell quantized on a 0.0005° grid (~50–55 m). Inserts into `ugc_reports` with `public_id`, identity snapshot, content, `geom = ST_SetSRID(ST_MakePoint(lon, lat), 4326)::geography`, `status='pending'`, `content_hash`, `geo_cell`. Evidence URLs stored in Redis `ugc:evidence:{public_id}` for 7 days. Returns `{ ok, duplicate, report_id }`.

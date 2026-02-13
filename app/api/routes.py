@@ -11,7 +11,6 @@ from app.services.entitlement_service import EntitlementService, TierStatus
 from app.services.policy_engine import PolicyEngine, RequestContext, PolicyVerdict, PolicyDecision, run_gate
 from app.services.poi_service import POIService
 from app.services.quota_repository import QuotaRepository
-from app.services.kmz_service import generate_kmz
 from app.utils.security import verify_turnstile, get_client_ip, protect_mutation
 from app.services.i18n import get_translations
 from app.core.config import is_inside_da_nang_bbox
@@ -177,13 +176,7 @@ async def find_nearest(
 
         remaining_after = gate_result.remaining_after
 
-        # 6. Response Cookie for KMZ continuity
-        if results:
-            result_names = ",".join([p.name for p in results])
-            safe_value = quote(result_names)
-            response.set_cookie(key="last_result_ids", value=safe_value, httponly=True, max_age=3600)
-
-        # 7. Construct Response
+        # 6. Construct Response
         limit = PolicyEngine.FREE_TIER_DAILY_LIMIT
         if tier == TierStatus.PAID:
             limit = PolicyEngine.PAID_TIER_DAILY_LIMIT
@@ -238,72 +231,6 @@ async def find_nearest(
             ).model_dump()
         )
 
-
-@router.get("/download-kmz")
-async def download_kmz(
-    request: Request,
-    poi_service: POIService = Depends(get_poi_service),
-    quota_repo: QuotaRepository = Depends(get_quota_repo),
-    policy_engine: PolicyEngine = Depends(get_policy_engine),
-):
-    """
-    Generate KMZ. Counts as a read.
-    """
-    anon_id = getattr(request.state, "anon_id", "unknown_anon")
-    user_id = getattr(request.state, "user_id", None)
-    tier = getattr(request.state, "tier", TierStatus.FREE)
-    entitlement_stale = getattr(request.state, "entitlement_stale", False)
-    
-    # Gate and consume quota before generating KMZ
-    gate_result = await run_gate(
-        request=request,
-        data_turnstile_token=None,
-        policy_engine=policy_engine,
-        quota_repo=quota_repo,
-        anon_id=anon_id,
-        user_id=user_id,
-        tier=tier,
-        entitlement_stale=entitlement_stale,
-        area_code="global",
-    )
-    decision = gate_result.decision
-    
-    # Generate KMZ
-    result_ids_str = request.cookies.get("last_result_ids")
-    if not result_ids_str:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=ErrorResponse(
-                error="NO_LAST_RESULT",
-                detail="No previous search result found.",
-                error_id=get_req_id(request)
-            ).model_dump(),
-        )
-    
-    target_names_str = unquote(result_ids_str)
-    target_names = target_names_str.split(",")
-    mock_results: list[PublicPOIResultWithCoords] = await poi_service.get_pois_by_names(target_names, include_coords=True)
-        
-    try:
-        kmz_content = await generate_kmz(mock_results)
-        return Response(
-            content=kmz_content,
-            media_type="application/vnd.google-earth.kmz",
-            headers={
-                "Content-Disposition": "attachment; filename=nearest_pois.kmz",
-                "X-KMZ-Status": "Success",
-            },
-        )
-    except Exception as e:
-        logger.error("kmz_generation_failed", error=str(e))
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=ErrorResponse(
-                error="KMZ_GEN_FAILED",
-                detail="Could not generate KMZ file.",
-                error_id=get_req_id(request)
-            ).model_dump(),
-        )
 
 @router.post("/ugc/report-submit")
 async def ugc_report_submit(
