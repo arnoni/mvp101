@@ -1,8 +1,13 @@
 {
-  "buildCommand": "pip install -r requirements.txt",
   "functions": {
-    "api/**/*.py": {
-      "runtime": "python3.11"
+    "app/main.py": {
+      "runtime": "@vercel/python"
     }
-  }
+  },
+  "rewrites": [
+    {
+      "source": "/(.*)",
+      "destination": "app/main.py"
+    }
+  ]
 }
