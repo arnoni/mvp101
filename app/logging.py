@@ -39,6 +39,7 @@ def configure_logging():
         # JSON for production
         processors = shared_processors + [
             structlog.processors.dict_tracebacks,
+            sentry_processor, # <--- Add this processor
             structlog.processors.JSONRenderer()
         ]
 

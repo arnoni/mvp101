@@ -19,6 +19,7 @@
 - **Preflight Status**: `/api/status` endpoint powers instant gating (can_search, turnstile_required).
 - **SSR Hydration**: Initial status and tier are pre-rendered on the server.
 - **Accessibility**: "How to use" icon with `aria-label`; Message Board uses `role="status"`.
+- **Sentry Observability**: Integrated error reporting and performance monitoring via `sentry-sdk` with FastAPI/Starlette integrations.
 - **PostGIS-backed Search**: Uses Neon PostgreSQL with PostGIS and SQLAlchemy 2 async engine (NullPool + pre_ping).
 - **Strict DTOs**: Public responses use meters (`distance_m`) and typed URLs; extra fields are forbidden.
 - **Fail-Closed Security**: Quota enforcement fails closed if Redis is unavailable (no in-memory fallback in production).

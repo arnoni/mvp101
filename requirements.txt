@@ -13,3 +13,4 @@ structlog==24.4.0
 psycopg[binary]==3.3.2
 SQLAlchemy==2.0.36
 asyncpg==0.29.0
+sentry-sdk[fastapi]==2.12.0

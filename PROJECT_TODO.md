@@ -22,6 +22,7 @@
 ## Follow-ups
 - [x] Update frontend to consume `distance_m` (meters) instead of `distance_km`.
 - [x] Implement signed admin bypass header for QA/dev superusers (via `X-Admin-Auth` and config token)
+- [x] Implement Sentry observability (error reporting + performance monitoring)
 - [x] Implement server-side session hydration (`SessionMiddleware` hydrates `user_id` and `csrf` from Redis).
 - [ ] Finalize CSRF protection for mutation endpoints.
 - [ ] Implement Entitlement Service DB fallback (subscriptions table). Redis cache includes `schema_version`, monotonic `verified_at` checks, and self-healing on corrupt JSON.

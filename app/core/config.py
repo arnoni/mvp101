@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     CLOUDFLARE_TURNSTILE_SITE_KEY: Optional[str] = Field(None, description="Cloudflare Turnstile Site Key (Public)")
     REDIS_URL: Optional[str] = Field(None, description="Redis URL for quota/session enforcement")
     ENV: str = Field("development", description="Application environment (e.g., production, development)")
+    SENTRY_DSN: Optional[str] = Field(None, description="Sentry DSN for error reporting")
+    RELEASE: Optional[str] = Field(None, description="Application release version for Sentry")
     MAX_MAPBOX_MONTHLY: int = Field(90000, description="Hard cap for Mapbox requests per month (TSD 10)")
 
     # --- Feature Flags (Impl Plan 2.1) ---

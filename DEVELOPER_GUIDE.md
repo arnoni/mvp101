@@ -48,6 +48,7 @@ graph TD
     *   **`AnonIdMiddleware`**: Ensures each request carries `dd_anon_id`. If missing or invalidly signed, mints a new random UUID and sets a signed cookie (HMAC-SHA256). Attributes: `HttpOnly`, `Secure` (prod), `SameSite=Lax`.
     *   **`SessionMiddleware`**: Hydrates `user_id` and `csrf` from Redis `session:{sid}` based on `dd_session` cookie. Does not decide paid tier.
     *   **`EntitlementMiddleware`**: Computes `tier` via `EntitlementService` and sets `request.state.tier` and `request.state.entitlement_stale`. It does not trust any tier in the session payload.
+*   **`observability.py`**: Initializes Sentry for error reporting and performance monitoring. Starlette and FastAPI integrations are used to capture the request lifecycle and specific route handling. Transaction style is set to "endpoint" for clear grouping. Sentry is initialized *before* the FastAPI app in `main.py`.
 
 ### 3.2 Services (`app/services/`)
 This is where the business logic lives.

@@ -13,6 +13,7 @@ import uuid
 
 # Local imports
 from app.core.config import settings
+from app.core.observability import init_sentry
 from app.services.poi_service import POIService
 from app.logging import configure_logging
 from app.middleware.logging import LoggingMiddleware
@@ -104,6 +105,10 @@ async def lifespan(app: FastAPI):
 
 
 # --- FastAPI Application Initialization ---
+# 1. Init Sentry BEFORE creating the app instance
+init_sentry(settings.SENTRY_DSN, settings.ENV, settings.RELEASE)
+
+# 2. Create App
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,

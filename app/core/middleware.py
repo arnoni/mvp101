@@ -1,12 +1,15 @@
+import sentry_sdk  # <--- NEW IMPORT
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 import hashlib
 import hmac
 import uuid
+import json
 from typing import Optional
 from app.core.config import settings
-from app.services.entitlement_service import TierStatus
+from app.services.entitlement_service import TierStatus, EntitlementService
 
+# --- Helper Functions (No changes needed) ---
 def sign_value(val: str) -> str:
     sig = hmac.new(settings.SECRET_KEY.encode(), val.encode(), hashlib.sha256).hexdigest()
     return f"{val}.{sig}"
@@ -22,10 +25,6 @@ def unsign_value(val: str) -> Optional[str]:
     return None
 
 class AnonIdMiddleware(BaseHTTPMiddleware):
-    """
-    Ensures every client has a signed 'dd_anon_id' for quota tracking.
-    Minted randomly (UUID) if missing or invalid signature.
-    """
     async def dispatch(self, request: Request, call_next):
         # 1. Identity Resolution
         raw_cookie = request.cookies.get("dd_anon_id")
@@ -42,16 +41,25 @@ class AnonIdMiddleware(BaseHTTPMiddleware):
         # Attach to request state
         request.state.anon_id = anon_id
         
-        # Language resolution (preserve existing logic)
+        # --- SENTRY INTEGRATION START ---
+        # We set this immediately. If they log in later (SessionMiddleware), 
+        # the user info will be updated/merged.
+        sentry_sdk.set_tag("anon_id", anon_id)
+        sentry_sdk.set_user({"id": anon_id, "ip_address": "{{auto}}"})
+        # --- SENTRY INTEGRATION END ---
+
+        # Language resolution
         lang_choice = request.cookies.get("dd_lang")
         if not lang_choice:
             accept_lang = request.headers.get("accept-language", "")
+            # Simple safe split
             lang_choice = (accept_lang.split(",")[0].split("-")[0] or "en").strip()
             
         # 2. Process Request
         response = await call_next(request)
         
         # 3. Set Cookies
+        # (Logic preserved)
         if not request.cookies.get("dd_lang"):
             response.set_cookie(
                 key="dd_lang",
@@ -76,16 +84,10 @@ class AnonIdMiddleware(BaseHTTPMiddleware):
         return response
 
 class SessionMiddleware(BaseHTTPMiddleware):
-    """
-    Hydrates user session from Redis if 'dd_session' cookie is present.
-    Sets request.state.session_id, request.state.user_id, request.state.csrf.
-    Does NOT determine tier.
-    """
     async def dispatch(self, request: Request, call_next):
         redis_cli = getattr(request.app.state, "redis", None)
         sid = request.cookies.get("dd_session")
         
-        # Initialize state
         request.state.session_id = None
         request.state.user_id = None
         request.state.csrf = None
@@ -95,47 +97,66 @@ class SessionMiddleware(BaseHTTPMiddleware):
                 session_key = f"session:{sid}"
                 data = await redis_cli.get(session_key)
                 if data:
-                    import json
                     payload = json.loads(data)
+                    user_id = payload.get("user_id")
+                    
                     request.state.session_id = sid
-                    request.state.user_id = payload.get("user_id")
+                    request.state.user_id = user_id
                     request.state.csrf = payload.get("csrf")
-            except Exception:
+
+                    # --- SENTRY INTEGRATION START ---
+                    # We found a real user. Overwrite the anonymous Sentry User.
+                    # This links the previous Anon actions to this real User ID.
+                    sentry_sdk.set_user({
+                        "id": str(user_id),
+                        "username": payload.get("username", "unknown"), # Optional if available
+                        "session_id": sid
+                    })
+                    # --- SENTRY INTEGRATION END ---
+
+            except Exception as e:
+                # --- IMPROVEMENT: DON'T SWALLOW SILENTLY ---
+                # If Redis fails, we want to know, but we don't want to crash the user's request.
+                # 'capture_exception' sends it to Sentry but lets code continue.
+                sentry_sdk.capture_exception(e)
+                # We proceed as if logged out
                 pass
                 
         return await call_next(request)
 
 class EntitlementMiddleware(BaseHTTPMiddleware):
-    """
-    Determines user tier using EntitlementService.
-    Enforces authentication for protected routes.
-    Allowlist: /, /static, /health, /api/status
-    """
     async def dispatch(self, request: Request, call_next):
-        from app.services.entitlement_service import EntitlementService
-        
-        path = request.url.path
-        allowlisted = (
-            path == "/" or
-            path.startswith("/static") or
-            path.startswith("/health") or
-            path.startswith("/api/status")
-        )
-        
-        # 1. Determine Tier (independent of route protection)
+        # 1. Determine Tier
         user_id = getattr(request.state, "user_id", None)
         redis_cli = getattr(request.app.state, "redis", None)
         
-        # Check entitlement cache
-        # We assume 5 minutes TTL for freshness check
-        entitlement_result = await EntitlementService.get_tier(user_id, redis_cli, ttl_seconds=300)
-        
-        request.state.tier = entitlement_result.tier
-        request.state.entitlement_stale = entitlement_result.is_stale
-        request.state.entitlement_data = entitlement_result.raw_data
-        
-        # 2. Enforce Protection (Explicit dependencies only - no path prefix blocking)
-        # Note: Previous logic for path-based blocking is removed as per policy update.
-        # Protection is now handled by Depends(require_paid) or Depends(require_login).
+        try:
+            # Check entitlement cache
+            entitlement_result = await EntitlementService.get_tier(user_id, redis_cli, ttl_seconds=300)
             
+            request.state.tier = entitlement_result.tier
+            request.state.entitlement_stale = entitlement_result.is_stale
+            request.state.entitlement_data = entitlement_result.raw_data
+            
+            # --- SENTRY INTEGRATION START ---
+            # Tag the transaction with the tier. 
+            # In Sentry, you can now search: `tier:free` AND `status:500`
+            sentry_sdk.set_tag("tier", entitlement_result.tier)
+            
+            # If we have complex raw_data, add it as extra context (debug data)
+            if entitlement_result.raw_data:
+                sentry_sdk.set_context("entitlements", entitlement_result.raw_data)
+            # --- SENTRY INTEGRATION END ---
+
+        except Exception as e:
+            # If entitlement service completely dies (e.g. DB down), capture it
+            # and potentially allow a fallback (or let it crash if that's preferred)
+            sentry_sdk.capture_exception(e)
+            
+            # Fallback to safe defaults so the app doesn't 500 loop
+            request.state.tier = "free_fallback" 
+            request.state.entitlement_stale = True
+            request.state.entitlement_data = {}
+            # Re-raise if you prefer strict failure: raise e
+        
         return await call_next(request)
