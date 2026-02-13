@@ -7,7 +7,7 @@ import zipfile
 import logging
 from typing import List
 from fastkml import kml
-from fastkml.styles import Style, IconStyle, LabelStyle
+from fastkml.styles import Style, IconStyle, LabelStyle, StyleUrl
 # fastkml newer versions expose Placemark via kml module
 from fastkml.kml import Placemark
 from fastkml.geometry import Point
@@ -48,7 +48,11 @@ async def generate_kmz(results: List[PublicPOIResultWithCoords]) -> bytes:
     # 2. Add Placemarks for each result
     for i, poi in enumerate(results):
         # Create a Placemark
-        pm = Placemark(name=poi.name, description=f"Distance: {poi.distance_m} m. <a href='{poi.google_maps_link}'>Navigate Here</a>", styleUrl="#icon-style")
+        pm = Placemark(
+            name=poi.name,
+            description=f"Distance: {poi.distance_m} m. <a href='{poi.google_maps_link}'>Navigate Here</a>",
+            style_url=StyleUrl(url="#icon-style")
+        )
         
         pm.geometry = Point((poi.lon, poi.lat))
         

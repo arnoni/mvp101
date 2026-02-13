@@ -28,6 +28,19 @@ wheels = [
 ]
 
 [[package]]
+name = "arrow"
+version = "1.4.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "python-dateutil" },
+    { name = "tzdata" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b9/33/032cdc44182491aa708d06a68b62434140d8c50820a087fac7af37703357/arrow-1.4.0.tar.gz", hash = "sha256:ed0cc050e98001b8779e84d461b0098c4ac597e88704a655582b21d116e526d7", size = 152931 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ed/c9/d7977eaacb9df673210491da99e6a247e93df98c715fc43fd136ce1d3d33/arrow-1.4.0-py3-none-any.whl", hash = "sha256:749f0769958ebdc79c173ff0b0670d59051a535fa26e8eba02953dc19eb43205", size = 68797 },
+]
+
+[[package]]
 name = "asyncpg"
 version = "0.29.0"
 source = { registry = "https://pypi.org/simple" }
@@ -89,15 +102,16 @@ wheels = [
 
 [[package]]
 name = "fastkml"
-version = "0.12"
+version = "1.4.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "arrow" },
     { name = "pygeoif" },
-    { name = "python-dateutil" },
+    { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/93/ef/6ed974aa4e014d05a609870d771acb6fe5f4c820d248a883b739595f001c/fastkml-0.12.tar.gz", hash = "sha256:34d8eb2f77b554002743bb8be5678f89d8ecea5a64ded1480028f43405d8b638", size = 68366 }
+sdist = { url = "https://files.pythonhosted.org/packages/d9/b4/490e0e3eea8ceb92cd859e931534283cf4f9d7cff495e2f110c23121d1af/fastkml-1.4.0.tar.gz", hash = "sha256:f9e09062f2e6557acb3618ecf6783a9329f4bb3f7e1d070a1b4d7bfab718e278", size = 91480 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/48/cd/f9937c54ba3d076dc908fa86bd8edae55fd4b8538925f58c5ebad5702b73/fastkml-0.12-py3-none-any.whl", hash = "sha256:73e68cf1f6640dd701d0bfeefb8f9a01145fec30b6a84beff0056f9ae04d7630", size = 62652 },
+    { url = "https://files.pythonhosted.org/packages/4a/73/f70d48a91a9915ebb7215d41d7500f991c6f5b56d9d9d7e571e6df462b77/fastkml-1.4.0-py3-none-any.whl", hash = "sha256:9df25e165df9aebd0dea48ad76f10defd3553d61f88e37c03156772eeb357342", size = 114407 },
 ]
 
 [[package]]
@@ -127,7 +141,7 @@ dependencies = [
 requires-dist = [
     { name = "asyncpg", specifier = "==0.29.0" },
     { name = "fastapi", specifier = "==0.115.0" },
-    { name = "fastkml", specifier = "==0.12" },
+    { name = "fastkml", specifier = ">=1.0" },
     { name = "httpx", specifier = "==0.27.0" },
     { name = "jinja2", specifier = "==3.1.4" },
     { name = "psycopg", extras = ["binary"], specifier = "==3.3.2" },
@@ -459,9 +473,15 @@ wheels = [
 
 [[package]]
 name = "pygeoif"
-version = "0.7"
+version = "1.6.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/f0/a7/fc5df91be602a66aaae21213e6eb9b9b8039c8074b6515c570b5110b9108/pygeoif-0.7.tar.gz", hash = "sha256:11aa0c071d38befa4af3bd123efa834abe0823a873f3744f0a070a44025afe04", size = 34773 }
+dependencies = [
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/02/2e/c6660ceea2fc28feefdfb0389bf53b5d0e0ba92aaba72e813901cb0552ed/pygeoif-1.6.0.tar.gz", hash = "sha256:eb0efa59c6573ea2cadce69a7ea9d2d10394b895ed47831c00d44752219c01be", size = 40915 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c3/7f/c803c39fa76fe055bc4154fb6e897185ad21946820a2227283e0a20eeb35/pygeoif-1.6.0-py3-none-any.whl", hash = "sha256:02f84807dadbaf1941c4bb2a9ef1ebac99b1b0404597d2602efdbb58910c69c9", size = 27976 },
+]
 
 [[package]]
 name = "python-dateutil"
