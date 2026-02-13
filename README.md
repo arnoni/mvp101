@@ -2,7 +2,7 @@
 
 **DillDrill** is a privacy-focused tool for detecting construction noise and real-estate points of interest (POIs). It allows users to check specific coordinates for nearby projects using a tiered access system.
 
-## Features (v1.1)
+## Features (v1.2)
 - **Direct Coordinate Input**: No address geocoding; fast and privacy-preserving.
 - **Privacy First**: Anonymous IDs are random UUIDs stored in signed cookies (HMAC); no account required.
 - **Privacy Logging**: Logs use coarse area codes only; no precise coordinates.
@@ -12,19 +12,18 @@
   - **Paid Tier**: 50 searches/day, 5 results per search.
 - **Cloudflare Turnstile**: Human verification required for Free tier; validated server-side.
 - **Language Persistence**: Stores `dd_lang` and uses it in anonymous fingerprinting; defaults to last choice.
-- **KMZ Export**: Download results for Google Earth.
+- **KMZ Export**: Download results for Google Earth (using `fastkml` 1.4+).
 - **Internationalization**: English, Spanish, Russian, Korean.
 - **Translation Cache**: Server translations are kept in a process LRU cache with optional warmup at import time.
 - **Dev Mode Visibility**: Landing page indicates when Redis fallback (in-memory quota) is active.
 - **Preflight Status**: `/api/status` endpoint powers instant gating (can_search, turnstile_required).
 - **SSR Hydration**: Initial status and tier are pre-rendered on the server.
 - **Accessibility**: "How to use" icon with `aria-label`; Message Board uses `role="status"`.
-- **Sentry Observability**: Integrated error reporting and performance monitoring via `sentry-sdk` with FastAPI/Starlette integrations.
+- **Sentry Observability**: Integrated error reporting and performance monitoring via `sentry-sdk` with FastAPI/Starlette and Structlog integrations.
 - **PostGIS-backed Search**: Uses Neon PostgreSQL with PostGIS and SQLAlchemy 2 async engine (NullPool + pre_ping).
 - **Strict DTOs**: Public responses use meters (`distance_m`) and typed URLs; extra fields are forbidden.
-- **Fail-Closed Security**: Quota enforcement fails closed if Redis is unavailable (no in-memory fallback in production).
-- **Hybrid Entitlement**: Redis acts as a hot cache for user tier/status, falling back to the PostgreSQL `subscriptions` table on miss.
-- **Idempotent Webhooks**: Billing events are deduplicated via `webhook_events` before processing.
+- **Resilient Policy Engine**: Quota evaluation gracefully handles Redis unavailability by failing open for UI hints while maintaining fail-closed security for search execution.
+- **Modern Deployment**: Fully optimized for Vercel with Python 3.12 and modern `vercel.json` configuration.
 
 ## Architecture
 The project follows a Domain-First architecture using FastAPI, Redis (Upstash), and PostGIS (Neon PostgreSQL) for POIs, with server-rendered Jinja2. Database access is standardized via SQLAlchemy 2 async engine with `NullPool` and `pool_pre_ping`. Quota enforcement is strict and backed by Redis.

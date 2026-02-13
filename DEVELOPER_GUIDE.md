@@ -1,12 +1,13 @@
 # Developer Introduction & Architecture Guide
 
-Welcome to the **DillDrill** codebase! This guide is designed to help new developers understand the project structure, the Domain-First architecture, and the specific requirements of Technical Design Document (TDD) v1.1.
+Welcome to the **DillDrill** codebase! This guide is designed to help new developers understand the project structure, the Domain-First architecture, and the specific requirements of Technical Design Document (TDD) v1.2.
 
 ## 1. Project Overview
 
 **DillDrill** is a "URL-First Radar" for detecting construction noise and real-estate points of interest (POIs).
 
-**Key Philosophy (TDD v1.1):**
+**Key Philosophy (TDD v1.2):**
+*   **Python 3.12+:** The project uses modern Python 3.12 features and is optimized for the Vercel Python 3.12 runtime.
 *   **Privacy-First:** We track generic "Anonymous IDs" rather than user accounts.
 *   **Domain-Driven:** Core logic resides in services, not in the API routes.
 *   **Lat/Lng Native:** Users (or the frontend) provide raw coordinates. We do *not* geocode server-side (Mapbox integration has been removed).
@@ -57,6 +58,7 @@ This is where the business logic lives.
     *   **Responsibility:** Decides *if* a request can proceed.
     *   **Logic:** Checks User Tier (Free vs. Paid) -> Checks Quota -> Checks for required Friction (Turnstile).
     *   **Output:** Returns a `PolicyDecision` (ALLOW, BLOCK, CHALLENGE_REQUIRED).
+    *   **Fault Tolerance:** Gracefully handles Redis unavailability. For non-mutating UI hints (landing page), it fails open (defaults to 0 usage). For actual search execution (`run_gate`), it fails closed to maintain quota integrity.
     *   **Key Concept:** It does *not* execute the search; it only guards the door.
 
 *   **`poi_service.py` (The Search):**
@@ -87,6 +89,7 @@ This is where the business logic lives.
 
 *   **`kmz_service.py`:**
     *   **Responsibility:** Generates Google Earth (`.kmz`) files dynamically from search results.
+    *   **Implementation:** Uses `fastkml>=1.4.0` for modern Python compatibility, avoiding legacy `pkg_resources` dependencies.
 
 *   **`i18n.py`:**
     *   **Responsibility:** Simple in-memory translation service for the server-rendered frontend (supports EN, ES, RU, KO).
