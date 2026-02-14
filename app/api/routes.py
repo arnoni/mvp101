@@ -5,7 +5,7 @@ from urllib.parse import quote, unquote
 from pydantic import BaseModel, Field
 
 from app.core.config import settings
-from app.models.dto import FindNearestRequest, FindNearestResponse, ErrorResponse, PublicPOIResultWithCoords, StatusResponse, UserStatus
+from app.models.dto import FindNearestRequest, FindNearestResponse, ErrorResponse, StatusResponse, UserStatus
 from app.services.area_bucketer import AreaBucketer
 from app.services.entitlement_service import EntitlementService, TierStatus
 from app.services.policy_engine import PolicyEngine, RequestContext, PolicyVerdict, PolicyDecision, run_gate

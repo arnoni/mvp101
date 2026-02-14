@@ -5,7 +5,7 @@ from sqlalchemy import text, bindparam
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.types import Text
 from sqlalchemy.ext.asyncio import AsyncEngine
-from app.models.dto import PublicPOIResult, PublicPOIResultWithCoords
+from app.models.dto import PublicPOIResult
 from app.utils.haversine import haversine
 from app.core.config import settings
 from pydantic import validate_call
@@ -18,7 +18,7 @@ class POIService:
         self.master_list = []
 
     @validate_call
-    async def find_nearest_pois(self, user_lat: float, user_lon: float, max_results: int = 5, include_coords: bool = False) -> Tuple[List[PublicPOIResult], List[str]]:
+    async def find_nearest_pois(self, user_lat: float, user_lon: float, max_results: int = 5) -> Tuple[List[PublicPOIResult], List[str]]:
         logs: List[str] = []
         if not self.engine or not settings.DATABASE_URL:
             logs.append("DATABASE_URL is not configured.")
@@ -79,30 +79,18 @@ class POIService:
         for dist_km, (name, lat, lon) in selected:
             google_maps_link = f"https://www.google.com/maps/dir/?api=1&origin={user_lat},{user_lon}&destination={lat},{lon}"
             distance_m = int(round(dist_km * 1000))
-            if include_coords:
-                results.append(
-                    PublicPOIResultWithCoords(
-                        name=name,
-                        distance_m=distance_m,
-                        google_maps_link=google_maps_link,
-                        image_url=None,
-                        lat=lat,
-                        lon=lon,
-                    )
+            results.append(
+                PublicPOIResult(
+                    name=name,
+                    distance_m=distance_m,
+                    google_maps_link=google_maps_link,
+                    image_url=None,
                 )
-            else:
-                results.append(
-                    PublicPOIResult(
-                        name=name,
-                        distance_m=distance_m,
-                        google_maps_link=google_maps_link,
-                        image_url=None,
-                    )
-                )
+            )
         return results, logs
 
     @validate_call
-    async def get_pois_by_names(self, names: List[str], include_coords: bool = True) -> List[PublicPOIResult]:
+    async def get_pois_by_names(self, names: List[str]) -> List[PublicPOIResult]:
         if not self.engine or not settings.DATABASE_URL or not names:
             return []
         sql = (
@@ -120,26 +108,14 @@ class POIService:
                 for row in rows:
                     name, lat, lon = row
                     gmaps = f"https://www.google.com/maps/dir/?api=1&destination={lat},{lon}"
-                    if include_coords:
-                        results.append(
-                            PublicPOIResultWithCoords(
-                                name=name,
-                                distance_m=0,
-                                google_maps_link=gmaps,
-                                image_url=None,
-                                lat=lat,
-                                lon=lon,
-                            )
+                    results.append(
+                        PublicPOIResult(
+                            name=name,
+                            distance_m=0,
+                            google_maps_link=gmaps,
+                            image_url=None,
                         )
-                    else:
-                        results.append(
-                            PublicPOIResult(
-                                name=name,
-                                distance_m=0,
-                                google_maps_link=gmaps,
-                                image_url=None,
-                            )
-                        )
+                    )
         except Exception as e:
             logger.error("postgis_names_query_failed", error=str(e))
             return []

@@ -51,7 +51,6 @@ async def lifespan(app: FastAPI):
         raise RuntimeError("ENABLE_REDIS=true requires REDIS_URL in production")
     
     # 1. Initialize POI Service
-    # 1. Initialize POI Service
     try:
         app.state.db_engine = None
         if settings.DATABASE_URL:
