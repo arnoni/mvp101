@@ -27,7 +27,6 @@
 - [x] Finalize CSRF protection for mutation endpoints.
 - [ ] Implement Entitlement Service DB fallback (subscriptions table). Redis cache includes `schema_version`, monotonic `verified_at` checks, and self-healing on corrupt JSON.
 - [ ] Implement Webhook processing pipeline (`webhook_events` -> `subscriptions` update).
-- [x] Ensure KMZ flow uses coordinate-bearing DTOs consistently (Fixed via `fastkml` 1.4.0 upgrade).
 - [ ] Document Windows dev setup for `asyncpg` (MSVC Build Tools) or recommend WSL/Linux.
 - [ ] Consider introducing a `paid_router` mounted with `dependencies=[require_paid]` for consistent application across paid-only endpoints.
 - [ ] Wire Ruff and import guard into CI/pre-commit (run `ruff .` and `python check_no_session_import.py`)

@@ -123,7 +123,7 @@ If you are modifying the code, ensure you adhere to these strict rules from the 
     *   If the Policy Engine returns `CHALLENGE_REQUIRED`, the client must present a valid `turnstile_token`.
 4.  **Privacy:** Never log precise coordinates associated with a user ID. Use `AreaBucketer` if you need to aggregate spatial data.
 5.  **Logging:** Use `structlog` for structured logging. Do not use standard `logging` directly for application logic.
-6.  **DTOs:** Public results are strict (extra forbidden). Use meters (`distance_m`), `HttpUrl` types for links. Use a separate DTO variant when coordinates are required (e.g., KMZ).
+6.  **DTOs:** Public results are strict (extra forbidden). Use meters (`distance_m`), `HttpUrl` types for links.
 
 ## 4.3 Quota Identity Rule
 *   Identity used for quota keys is governed strictly by entitlement:

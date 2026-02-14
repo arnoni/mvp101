@@ -28,10 +28,6 @@ class PublicPOIResult(BaseModel):
     google_maps_link: HttpUrl = Field(..., description="Google Maps directions link.")
     image_url: Optional[HttpUrl] = Field(None, description="Optional thumbnail URL.")
 
-class PublicPOIResultWithCoords(PublicPOIResult):
-    lat: float = Field(..., ge=-90, le=90, description="Latitude.")
-    lon: float = Field(..., ge=-180, le=180, description="Longitude.")
-
 class UserStatus(BaseModel):
     state: str = Field(..., description="quiet|active|limit")
     text: str = Field(..., description="Localized fallback text")

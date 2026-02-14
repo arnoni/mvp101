@@ -1,6 +1,6 @@
 self.addEventListener('install', (event) => {
     event.waitUntil(
-        caches.open('dilldrill-v1').then((cache) => {
+        caches.open('dilldrill-v1.2').then((cache) => {
             return cache.addAll([
                 '/',
                 '/static/graphics/DillDrill_banner_selected.svg',

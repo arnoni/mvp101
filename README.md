@@ -228,10 +228,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS ugc_reports_public_id_uq
 - Frontend uses enums for i18n; server text acts only as a fallback.
 - Status Strip is clickable and opens Support modal; Message Board shows narratives; Results Board remains visual.
 - Status refresh queries `/api/status` on load and window focus with debounce.
-- Results items (public): name, distance_m (meters), google_maps_link (HttpUrl), optional image_url (HttpUrl). Coordinates are available via a separate variant for KMZ generation.
-
-### Notes
-- KMZ quota is aligned to the daily key pattern (`daily_read:{YYYYMMDD}:{anon_id}`).
+- Results items (public): name, distance_m (meters), google_maps_link (HttpUrl), optional image_url (HttpUrl).
 - Dev Mode shows Redis fallback and Turnstile indicators.
 
 ### Developer Tooling
