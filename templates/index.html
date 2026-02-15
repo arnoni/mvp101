@@ -222,38 +222,92 @@
     </div>
 
     <script>
-        const form = document.getElementById('search-form');
-        const coordsInput = document.getElementById('coordinates');
-        const searchButton = document.getElementById('search-button');
-        const tokenInput = document.getElementById('turnstile-token');
-        const widgetContainer = document.getElementById('turnstile-widget');
-        const messageBoard = document.getElementById('message-board');
-        const resultsSection = document.getElementById('results-section');
-        const resultsList = document.getElementById('results-list');
-        const metaInfo = document.getElementById('meta-info');
-        const debugBoard = document.getElementById('debug-board');
-        const debugLogsContainer = document.getElementById('debug-logs');
-        const userStatusText = document.getElementById('user-status-text');
-        const paymentModal = document.getElementById('payment-modal');
-        const aboutModal = document.getElementById('about-modal');
+        // Error logging utility
+        function logError(context, error, data = {}) {
+            console.error(`[ERROR] ${context}:`, error, data);
+            if (window.Sentry) {
+                window.Sentry.captureException(error, { extra: { context, ...data } });
+            }
+        }
 
-        console.log("[INIT] userStatus element:", userStatusText);
+        function logInfo(context, message, data = {}) {
+            console.log(`[INFO] ${context}:`, message, data);
+        }
 
+        // Safe DOM element getter with validation
+        function getElement(id, required = true) {
+            try {
+                const element = document.getElementById(id);
+                if (!element && required) {
+                    logError('DOM', `Required element not found: ${id}`);
+                }
+                return element;
+            } catch (e) {
+                logError('DOM', `Failed to get element: ${id}`, { error: e });
+                return null;
+            }
+        }
+
+        // Initialize DOM elements with safety checks
+        let form, coordsInput, searchButton, tokenInput, widgetContainer;
+        let messageBoard, resultsSection, resultsList, metaInfo;
+        let debugBoard, debugLogsContainer, userStatusText;
+        let paymentModal, aboutModal;
+
+        try {
+            form = getElement('search-form');
+            coordsInput = getElement('coordinates');
+            searchButton = getElement('search-button');
+            tokenInput = getElement('turnstile-token');
+            widgetContainer = getElement('turnstile-widget');
+            messageBoard = getElement('message-board');
+            resultsSection = getElement('results-section');
+            resultsList = getElement('results-list');
+            metaInfo = getElement('meta-info');
+            debugBoard = getElement('debug-board', false);
+            debugLogsContainer = getElement('debug-logs', false);
+            userStatusText = getElement('user-status-text');
+            paymentModal = getElement('payment-modal');
+            aboutModal = getElement('about-modal');
+
+            logInfo('INIT', 'DOM elements initialized', {
+                hasForm: !!form,
+                hasModals: !!(paymentModal && aboutModal)
+            });
+        } catch (e) {
+            logError('INIT', 'Failed to initialize DOM elements', { error: e });
+        }
+
+        // Modal toggle functions with extensive error handling
         window.togglePaymentModal = function () {
-            console.log('[MODAL] togglePaymentModal called', paymentModal);
-            if (paymentModal) {
+            try {
+                logInfo('MODAL', 'togglePaymentModal called');
+                if (!paymentModal) {
+                    logError('MODAL', 'paymentModal element not found');
+                    return;
+                }
                 paymentModal.classList.toggle('hidden');
-            } else {
-                console.error('[MODAL] paymentModal element not found');
+                logInfo('MODAL', 'Payment modal toggled', {
+                    visible: !paymentModal.classList.contains('hidden')
+                });
+            } catch (e) {
+                logError('MODAL', 'Failed to toggle payment modal', { error: e });
             }
         }
 
         window.toggleAboutModal = function () {
-            console.log('[MODAL] toggleAboutModal called', aboutModal);
-            if (aboutModal) {
+            try {
+                logInfo('MODAL', 'toggleAboutModal called');
+                if (!aboutModal) {
+                    logError('MODAL', 'aboutModal element not found');
+                    return;
+                }
                 aboutModal.classList.toggle('hidden');
-            } else {
-                console.error('[MODAL] aboutModal element not found');
+                logInfo('MODAL', 'About modal toggled', {
+                    visible: !aboutModal.classList.contains('hidden')
+                });
+            } catch (e) {
+                logError('MODAL', 'Failed to toggle about modal', { error: e });
             }
         }
 
@@ -280,181 +334,313 @@
 
         async function refreshStatus() {
             try {
+                logInfo('STATUS', 'Refreshing status');
                 const resp = await fetch('/api/status', { method: 'GET' });
-                if (!resp.ok) return;
+                if (!resp.ok) {
+                    logError('STATUS', 'Failed to fetch status', { status: resp.status });
+                    return;
+                }
                 const data = await resp.json();
                 appState.can_search = !!data.can_search;
                 appState.turnstile_required = !!data.turnstile_required;
                 appState.checks_today = data.checks_today || 0;
-                if (data.user_status && data.user_status.text) {
+
+                if (data.user_status && data.user_status.text && userStatusText) {
                     userStatusText.textContent = data.user_status.text;
                 }
-                if (widgetContainer) widgetContainer.style.display = appState.turnstile_required ? 'block' : 'none';
-            } catch (_) { }
+
+                if (widgetContainer) {
+                    widgetContainer.style.display = appState.turnstile_required ? 'block' : 'none';
+                }
+
+                logInfo('STATUS', 'Status refreshed', appState);
+            } catch (e) {
+                logError('STATUS', 'Exception during status refresh', { error: e });
+            }
         }
-        window.addEventListener('focus', () => { refreshStatus(); });
+
+        window.addEventListener('focus', () => {
+            try {
+                refreshStatus();
+            } catch (e) {
+                logError('EVENT', 'Focus event handler failed', { error: e });
+            }
+        });
 
         function turnstileCallback(token) {
-            tokenInput.value = token;
-            if (widgetContainer) widgetContainer.style.display = 'none';
+            try {
+                logInfo('TURNSTILE', 'Callback received', { hasToken: !!token });
+                if (tokenInput) {
+                    tokenInput.value = token;
+                }
+                if (widgetContainer) {
+                    widgetContainer.style.display = 'none';
+                }
+            } catch (e) {
+                logError('TURNSTILE', 'Callback failed', { error: e });
+            }
         }
 
         function setLang(code) {
             try {
+                logInfo('I18N', 'Setting language', { code });
                 document.cookie = `dd_lang=${code}; path=/; max-age=${60 * 60 * 24 * 90}; samesite=lax`;
-            } catch (_) { }
+            } catch (e) {
+                logError('I18N', 'Failed to set language', { code, error: e });
+            }
         }
 
         function resetTurnstile() {
-            if (typeof turnstile !== 'undefined') {
-                turnstile.reset();
-                tokenInput.value = '';
-                // Show widget again for next verification
-                if (widgetContainer) widgetContainer.style.display = 'block';
+            try {
+                if (typeof turnstile !== 'undefined') {
+                    turnstile.reset();
+                    if (tokenInput) tokenInput.value = '';
+                    if (widgetContainer) widgetContainer.style.display = 'block';
+                    logInfo('TURNSTILE', 'Reset successful');
+                } else {
+                    logError('TURNSTILE', 'Turnstile not loaded');
+                }
+            } catch (e) {
+                logError('TURNSTILE', 'Reset failed', { error: e });
             }
         }
 
         function showMessage(primary, type = 'info', secondary = '') {
-            const disclaimer = `${STRINGS.disclaimer1} ${STRINGS.disclaimer2}`;
-            const icon = type === 'success' ? '✓' : (type === 'warning' ? '⚠' : (type === 'error' ? '◻' : '🔵'));
-            const color = type === 'success' ? 'bg-green-100 text-green-800' : (type === 'warning' ? 'bg-amber-100 text-amber-800' : (type === 'error' ? 'bg-red-100 text-red-800' : 'bg-blue-100 text-blue-800'));
-            messageBoard.className = `mt-4 p-3 text-sm rounded-lg ${color}`;
-            messageBoard.innerHTML = `<div class="flex items-start space-x-2"><span>${icon}</span><div><div>${primary}</div>${secondary ? `<div class="text-xs text-slate-600">${secondary}</div>` : ''}<div class="text-xs italic">${disclaimer}</div></div></div>`;
-            messageBoard.classList.remove('hidden');
+            try {
+                if (!messageBoard) {
+                    logError('UI', 'messageBoard element not found');
+                    return;
+                }
+                const disclaimer = `${STRINGS.disclaimer1} ${STRINGS.disclaimer2}`;
+                const icon = type === 'success' ? 'OK' : (type === 'warning' ? '!' : (type === 'error' ? 'X' : 'i'));
+                const color = type === 'success' ? 'bg-green-100 text-green-800' : (type === 'warning' ? 'bg-amber-100 text-amber-800' : (type === 'error' ? 'bg-red-100 text-red-800' : 'bg-blue-100 text-blue-800'));
+                messageBoard.className = `mt-4 p-3 text-sm rounded-lg ${color}`;
+                messageBoard.innerHTML = `\u003cdiv class=\"flex items-start space-x-2\"\u003e\u003cspan\u003e${icon}\u003c/span\u003e\u003cdiv\u003e\u003cdiv\u003e${primary}\u003c/div\u003e${secondary ? `\u003cdiv class=\"text-xs text-slate-600\"\u003e${secondary}\u003c/div\u003e` : ''}\u003cdiv class=\"text-xs italic\"\u003e${disclaimer}\u003c/div\u003e\u003c/div\u003e\u003c/div\u003e`;
+                messageBoard.classList.remove('hidden');
+                logInfo('UI', 'Message shown', { type, primary });
+            } catch (e) {
+                logError('UI', 'Failed to show message', { error: e, primary, type });
+            }
         }
-        function hideMessage() { messageBoard.classList.add('hidden'); }
+
+        function hideMessage() {
+            try {
+                if (messageBoard) {
+                    messageBoard.classList.add('hidden');
+                    logInfo('UI', 'Message hidden');
+                }
+            } catch (e) {
+                logError('UI', 'Failed to hide message', { error: e });
+            }
+        }
 
         function parseCoordinates(input) {
-            // Very simple parser: "lat, lon"
-            const parts = input.split(',').map(s => s.trim());
-            if (parts.length !== 2) return null;
-            const lat = parseFloat(parts[0]);
-            const lon = parseFloat(parts[1]);
-            if (isNaN(lat) || isNaN(lon)) return null;
-            return { lat, lon };
+            try {
+                if (!input || typeof input !== 'string') {
+                    logError('PARSE', 'Invalid input', { input });
+                    return null;
+                }
+                const parts = input.split(',').map(s => s.trim());
+                if (parts.length !== 2) {
+                    logInfo('PARSE', 'Invalid coordinate format', { input });
+                    return null;
+                }
+                const lat = parseFloat(parts[0]);
+                const lon = parseFloat(parts[1]);
+                if (isNaN(lat) || isNaN(lon)) {
+                    logInfo('PARSE', 'Invalid numbers in coordinates', { input, lat, lon });
+                    return null;
+                }
+                logInfo('PARSE', 'Coordinates parsed', { lat, lon });
+                return { lat, lon };
+            } catch (e) {
+                logError('PARSE', 'Exception parsing coordinates', { error: e, input });
+                return null;
+            }
         }
 
         function renderResults(data) {
-            resultsList.innerHTML = '';
-            const emptyState = document.getElementById('results-empty');
-            if (emptyState) emptyState.classList.add('hidden');
-
-            if (data.report_lines && data.report_lines.length > 0) {
-                data.report_lines.forEach(line => {
-                    // Simple opaque text display
-                    const card = `
-                        <div class="p-4 bg-white border border-slate-200 rounded-lg shadow-sm flex items-start space-x-3">
-                            <span class="text-blue-500 font-bold mt-0.5">›</span>
-                            <div class="font-mono text-sm text-slate-700 leading-relaxed">${line}</div>
-                        </div>
-                    `;
-                    resultsList.insertAdjacentHTML('beforeend', card);
-                });
-            }
-
-            resultsSection.classList.remove('hidden');
-
-            // Populate Debug Board (Item 4)
-            if (data.debug_logs && data.debug_logs.length > 0) {
-                if (debugBoard) {
-                    debugBoard.classList.remove('hidden');
-                    debugLogsContainer.innerHTML = data.debug_logs.map(log => `<div>> ${log}</div>`).join('');
-                    debugLogsContainer.scrollTop = debugLogsContainer.scrollHeight;
+            try {
+                if (!resultsList) {
+                    logError('RENDER', 'resultsList element not found');
+                    return;
                 }
-            } else {
-                if (debugBoard) debugBoard.classList.add('hidden');
+
+                resultsList.innerHTML = '';
+                const emptyState = document.getElementById('results-empty');
+                if (emptyState) emptyState.classList.add('hidden');
+
+                if (data.report_lines && data.report_lines.length > 0) {
+                    data.report_lines.forEach((line, index) => {
+                        try {
+                            const card = `
+                                \u003cdiv class=\"p-4 bg-white border border-slate-200 rounded-lg shadow-sm flex items-start space-x-3\"\u003e
+                                    \u003cspan class=\"text-blue-500 font-bold mt-0.5\"\u003e›\u003c/span\u003e
+                                    \u003cdiv class=\"font-mono text-sm text-slate-700 leading-relaxed\"\u003e${line}\u003c/div\u003e
+                                \u003c/div\u003e
+                            `;
+                            resultsList.insertAdjacentHTML('beforeend', card);
+                        } catch (e) {
+                            logError('RENDER', 'Failed to render individual result', { error: e, index, line });
+                        }
+                    });
+                    logInfo('RENDER', 'Results rendered', { count: data.report_lines.length });
+                }
+
+                if (resultsSection) resultsSection.classList.remove('hidden');
+
+                // Debug board handling
+                if (data.debug_logs && data.debug_logs.length > 0) {
+                    if (debugBoard && debugLogsContainer) {
+                        debugBoard.classList.remove('hidden');
+                        debugLogsContainer.innerHTML = data.debug_logs.map(log => `\u003cdiv\u003e\u003e ${log}\u003c/div\u003e`).join('');
+                        debugLogsContainer.scrollTop = debugLogsContainer.scrollHeight;
+                    }
+                } else {
+                    if (debugBoard) debugBoard.classList.add('hidden');
+                }
+            } catch (e) {
+                logError('RENDER', 'Exception rendering results', { error: e, data });
             }
         }
 
-        form.addEventListener('submit', async e => {
-            e.preventDefault();
-            hideMessage();
-            searchButton.disabled = true;
-            searchButton.textContent = STRINGS.searching;
+        if (form) {
+            form.addEventListener('submit', async e => {
+                try {
+                    e.preventDefault();
+                    logInfo('FORM', 'Submit started');
 
-            const inputVal = coordsInput.value;
-            const turnstile_token = tokenInput.value;
+                    hideMessage();
 
-            // ... (validation logic same as before) ...
+                    if (!searchButton || !coordsInput || !tokenInput) {
+                        logError('FORM', 'Required form elements missing', {
+                            hasButton: !!searchButton,
+                            hasInput: !!coordsInput,
+                            hasTokenInput: !!tokenInput
+                        });
+                        showMessage('Form initialization error. Please refresh the page.', 'error');
+                        return;
+                    }
 
-            const coords = parseCoordinates(inputVal);
-            if (!coords) {
-                showMessage("Use decimal degrees (lat, lon)", 'error');
-                searchButton.disabled = false;
-                searchButton.textContent = STRINGS.btn_default;
-                return;
-            }
+                    searchButton.disabled = true;
+                    searchButton.textContent = STRINGS.searching;
 
-            let success = false;
-            try {
-                const response = await fetch('/api/find-nearest', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        lat: coords.lat,
-                        lon: coords.lon,
-                        turnstile_token
-                    })
-                });
+                    const inputVal = coordsInput.value;
+                    const turnstile_token = tokenInput.value;
 
-                const reqId = response.headers.get('X-Request-ID');
-                const data = await response.json();
+                    logInfo('FORM', 'Form data collected', {
+                        hasInput: !!inputVal,
+                        hasToken: !!turnstile_token
+                    });
 
-                if (response.ok) {
-                    success = true;
-                    // coordsInput.value = ''; // Don't clear input so user can adjust
-                    coordsInput.blur();
+                    const coords = parseCoordinates(inputVal);
+                    if (!coords) {
+                        showMessage("Use decimal degrees (lat, lon)", 'error');
+                        searchButton.disabled = false;
+                        searchButton.textContent = STRINGS.btn_default;
+                        return;
+                    }
 
-                    if (!data.report_lines || data.report_lines.length === 0) {
-                        if (data.results_state === "empty") {
-                            showMessage(STRINGS.zero_results, 'info');
-                        } else if (data.results_state === "quota_limit" || data.results_state === "limit") {
-                            togglePaymentModal();
-                            userStatusText.textContent = data.user_status?.text || "Limit reached";
+                    let success = false;
+                    try {
+                        logInfo('API', 'Sending search request', { coords });
+
+                        const response = await fetch('/api/find-nearest', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                lat: coords.lat,
+                                lon: coords.lon,
+                                turnstile_token
+                            })
+                        });
+
+                        const reqId = response.headers.get('X-Request-ID') || 'unknown';
+                        logInfo('API', 'Response received', {
+                            status: response.status,
+                            ok: response.ok,
+                            reqId
+                        });
+
+                        const data = await response.json();
+
+                        if (response.ok) {
+                            success = true;
+                            if (coordsInput) coordsInput.blur();
+
+                            if (!data.report_lines || data.report_lines.length === 0) {
+                                if (data.results_state === "empty") {
+                                    showMessage(STRINGS.zero_results, 'info');
+                                } else if (data.results_state === "quota_limit" || data.results_state === "limit") {
+                                    togglePaymentModal();
+                                    if (userStatusText) userStatusText.textContent = data.user_status?.text || "Limit reached";
+                                } else {
+                                    showMessage(STRINGS.zero_results, 'info');
+                                }
+                                logInfo('API', 'Empty results', { results_state: data.results_state });
+                            } else {
+                                renderResults(data);
+                                showMessage(`${STRINGS.success}`, 'success');
+                                logInfo('API', 'Results rendered', { count: data.report_lines.length });
+                            }
+
+                            if (data.user_status && userStatusText) {
+                                userStatusText.textContent = data.user_status.text;
+                            }
+                            appState.can_search = !!data.can_search;
+
+                            if (widgetContainer) widgetContainer.style.display = 'none';
                         } else {
-                            showMessage(STRINGS.zero_results, 'info');
+                            let errMsg = 'Unknown error';
+                            if (data.detail && data.detail.detail) {
+                                errMsg = data.detail.detail;
+                            } else if (data.detail && typeof data.detail === 'string') {
+                                errMsg = data.detail;
+                            }
+
+                            if (reqId) errMsg += ` (Req ID: ${reqId})`;
+
+                            logError('API', 'Request failed', {
+                                status: response.status,
+                                error: data.detail?.error,
+                                message: errMsg,
+                                reqId
+                            });
+
+                            if (data.detail && (data.detail.error === "QUOTA_EXCEEDED" || data.detail.error === "ABUSE_LIMIT" || response.status === 402)) {
+                                togglePaymentModal();
+                                if (userStatusText) userStatusText.textContent = "Limit reached";
+                            } else {
+                                showMessage(`${STRINGS.error}: ${errMsg}`, 'error');
+                            }
+
+                            if (data.detail && data.detail.error === "CHALLENGE_REQUIRED") {
+                                showMessage("Please verify you are human.", 'warning');
+                                resetTurnstile();
+                            }
                         }
-                    } else {
-                        renderResults(data);
-                        showMessage(`${STRINGS.success}`, 'success');
+                    } catch (err) {
+                        logError('API', 'Fetch exception', { error: err, message: err.message });
+                        showMessage(`${STRINGS.error}: Network error.`, 'error');
+                    } finally {
+                        if (searchButton) {
+                            searchButton.disabled = false;
+                            searchButton.textContent = STRINGS.btn_default;
+                        }
+                        logInfo('FORM', 'Submit completed', { success });
                     }
-
-                    if (data.user_status) {
-                        userStatusText.textContent = data.user_status.text;
-                    }
-                    appState.can_search = !!data.can_search;
-
-                    if (widgetContainer) widgetContainer.style.display = 'none';
-                } else {
-                    let errMsg = 'Unknown error';
-                    if (data.detail && data.detail.detail) {
-                        errMsg = data.detail.detail;
-                    } else if (data.detail && typeof data.detail === 'string') {
-                        errMsg = data.detail;
-                    }
-
-                    if (reqId) errMsg += ` (Req ID: ${reqId})`;
-
-                    if (data.detail && (data.detail.error === "QUOTA_EXCEEDED" || data.detail.error === "ABUSE_LIMIT" || response.status === 402)) {
-                        togglePaymentModal();
-                        userStatusText.textContent = "Limit reached";
-                    } else {
-                        showMessage(`${STRINGS.error}: ${errMsg}`, 'error');
-                    }
-
-                    if (data.detail && data.detail.error === "CHALLENGE_REQUIRED") {
-                        showMessage("Please verify you are human.", 'warning');
-                        resetTurnstile();
+                } catch (e) {
+                    logError('FORM', 'Form submit handler failed', { error: e });
+                    showMessage('An unexpected error occurred. Please try again.', 'error');
+                    if (searchButton) {
+                        searchButton.disabled = false;
+                        searchButton.textContent = STRINGS.btn_default;
                     }
                 }
-            } catch (err) {
-                console.error('Fetch error:', err);
-                showMessage(`${STRINGS.error}: Network error.`, 'error');
-            } finally {
-                searchButton.disabled = false;
-                searchButton.textContent = STRINGS.btn_default;
-            }
-        });
+            });
+        } else {
+            logError('FORM', 'Form element not found - submit handler not registered');
+        }
         refreshStatus();
     </script>
 
