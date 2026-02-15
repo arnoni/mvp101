@@ -238,11 +238,21 @@
         console.log("[INIT] userStatus element:", userStatusText);
 
         window.togglePaymentModal = function () {
-            paymentModal.classList.toggle('hidden');
+            console.log('[MODAL] togglePaymentModal called', paymentModal);
+            if (paymentModal) {
+                paymentModal.classList.toggle('hidden');
+            } else {
+                console.error('[MODAL] paymentModal element not found');
+            }
         }
 
         window.toggleAboutModal = function () {
-            aboutModal.classList.toggle('hidden');
+            console.log('[MODAL] toggleAboutModal called', aboutModal);
+            if (aboutModal) {
+                aboutModal.classList.toggle('hidden');
+            } else {
+                console.error('[MODAL] aboutModal element not found');
+            }
         }
 
         // I18n strings for JS
