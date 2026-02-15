@@ -75,7 +75,8 @@
     <div class="max-w-md w-full space-y-6 bg-white p-8 rounded-2xl shadow-xl border border-slate-100 relative">
         <div class="absolute top-4 left-4 flex flex-col items-start text-xs space-y-1">
             <button id="user-status-text" class="text-slate-700 font-medium hover:underline text-left"
-                onclick="togglePaymentModal()">{{ initial_user_status.text }}</button>
+                onclick="event.preventDefault(); togglePaymentModal(); return false;">{{ initial_user_status.text
+                }}</button>
         </div>
 
         <!-- Language Selector -->
@@ -110,7 +111,7 @@
             <div class="flex justify-between items-center">
                 <label for="coordinates" class="block text-sm font-medium text-slate-700">{{ t.input_label }}</label>
                 <!-- Item 3: Tutorial Link -->
-                <button type="button" onclick="toggleAboutModal()"
+                <button type="button" onclick="event.preventDefault(); toggleAboutModal(); return false;"
                     class="text-xs text-blue-500 hover:text-blue-700 rounded p-1" aria-label="{{ t.how_to_use }}"
                     title="{{ t.how_to_use }}">
                     <span aria-hidden="true" class="font-bold">?</span>
@@ -171,7 +172,8 @@
             <div>v{{ settings.VERSION }}</div>
             <!-- Item 5: Legal & Copyright -->
             <div class="flex justify-center space-x-2">
-                <a href="#" onclick="toggleAboutModal()" class="hover:text-slate-600 hover:underline">{{ t.about }}</a>
+                <a href="javascript:void(0)" onclick="event.preventDefault(); toggleAboutModal(); return false;"
+                    class="hover:text-slate-600 hover:underline">{{ t.about }}</a>
                 <span>&bull;</span>
                 <span id="copyright">{{ t.rights }}
                     <script>document.write(new Date().getFullYear())</script>
