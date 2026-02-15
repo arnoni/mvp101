@@ -20,7 +20,8 @@
 - Support modal improvements and contribution telemetry
 
 ## Follow-ups
-- [x] Update frontend to consume `distance_m` (meters) instead of `distance_km`.
+- [x] MVP102: Full Privacy Refactor (Bucket Engine, Precompute, Opaque Reports).
+- [x] Update frontend to consume Opaque Reports (removed `distance_km` entirely).
 - [x] Implement signed admin bypass header for QA/dev superusers (via `X-Admin-Auth` and config token)
 - [x] Implement Sentry observability (error reporting + performance monitoring)
 - [x] Implement server-side session hydration (`SessionMiddleware` hydrates `user_id` and `csrf` from Redis).

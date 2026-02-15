@@ -19,25 +19,43 @@ class MasterList(BaseModel):
     """Root model for MasterList.json."""
     points: List[POI]
 
+# --- Precompute Models ---
+
+class PrecomputeCandidate(BaseModel):
+    """Raw candidate from the DB precompute JSON."""
+    lat: float
+    lon: float
+    category: str
+    name_hash: Optional[str] = None # For dedupe, not display
+    metadata: dict = {}
+
 # --- Public Data Transfer Objects (DTOs) ---
 
-class PublicPOIResult(BaseModel):
+class ReportLine(BaseModel):
+    """Opaque display line for the user. No precise coords."""
     model_config = ConfigDict(extra="forbid")
-    name: str = Field(..., description="POI display name.")
-    distance_m: int = Field(..., ge=0, description="Distance from user in meters.")
-    google_maps_link: HttpUrl = Field(..., description="Google Maps directions link.")
-    image_url: Optional[HttpUrl] = Field(None, description="Optional thumbnail URL.")
+    text: str = Field(..., description="The rendered report line (e.g. 'Coffee Shop (~250m)')")
+    category: str = Field("unknown", description="Icon category")
 
 class UserStatus(BaseModel):
     state: str = Field(..., description="quiet|active|limit")
     text: str = Field(..., description="Localized fallback text")
 
 class FindNearestResponse(BaseModel):
-    """Public DTO for the /api/find-nearest response."""
+    """Public DTO for the /api/find-nearest response. SAFE/OPAQUE."""
     # Implements TSD Section 4.2: Public Response DTO
-    results: List[PublicPOIResult] = Field(..., description="Top 5 nearest POI results.")
-    user_lat: float = Field(..., description="Geocoded latitude of the user's address.")
-    user_lon: float = Field(..., description="Geocoded longitude of the user's address.")
+    report_lines: List[ReportLine] = Field(default_factory=list, description="Opaque result lines.")
+    
+    # We DO NOT return user_lat/lon anymore to avoid mirroring precise input if possible, 
+    # but for UI map centering we might need it.
+    # Plan says "Opaque report lines only".
+    # If we return user_lat/lon, it's just what they sent us.
+    # But let's remove it to be strict, or keep it if UI needs it.
+    # UI "Update UI Distance and Map" (historical) wanted it.
+    # Let's keep it for now but remove POI coords.
+    user_lat: float = Field(..., description="Geocoded latitude.")
+    user_lon: float = Field(..., description="Geocoded longitude.")
+    
     quota_remaining: int = Field(..., description="Remaining daily quota.")
     share_url: Optional[str] = Field(None, description="Shareable URL for this search.")
     debug_logs: Optional[List[str]] = Field(None, description="Debug logs for dev mode.")
@@ -76,3 +94,4 @@ class StatusResponse(BaseModel):
     turnstile_required: bool
     checks_today: int
     tier: Optional[str] = None
+

@@ -12,6 +12,11 @@ from app.services.policy_engine import PolicyEngine, RequestContext, PolicyVerdi
 from app.services.poi_service import POIService
 from app.services.quota_repository import QuotaRepository
 from app.utils.security import verify_turnstile, get_client_ip, protect_mutation
+from app.services.bucket_engine import BucketEngine
+from app.services.precompute_repo import PrecomputeRepository
+from app.services.anomaly_service import AnomalyService
+from app.services.demand_service import DemandService
+from app.services.report_renderer import ReportRenderer
 from app.services.i18n import get_translations
 from app.core.config import is_inside_da_nang_bbox
 
@@ -24,11 +29,19 @@ def get_req_id(request: Request) -> Optional[str]:
 
 # --- Dependencies ---
 
+# --- Dependencies ---
+
 def get_quota_repo(request: Request) -> QuotaRepository:
     return request.app.state.quota_repo
 
-def get_poi_service(request: Request) -> POIService:
-    return request.app.state.poi_service
+def get_precompute_repo(request: Request) -> PrecomputeRepository:
+    return request.app.state.precompute_repo
+
+def get_anomaly_service(request: Request) -> AnomalyService:
+    return request.app.state.anomaly_service
+
+def get_demand_service(request: Request) -> DemandService:
+    return request.app.state.demand_service
 
 def get_policy_engine(quota_repo: QuotaRepository = Depends(get_quota_repo)) -> PolicyEngine:
     return PolicyEngine(quota_repo)
@@ -130,23 +143,45 @@ async def find_nearest(
     response: Response,
     data: FindNearestRequest,
     policy_engine: PolicyEngine = Depends(get_policy_engine),
-    poi_service: POIService = Depends(get_poi_service),
     quota_repo: QuotaRepository = Depends(get_quota_repo),
+    precompute_repo: PrecomputeRepository = Depends(get_precompute_repo),
+    anomaly_service: AnomalyService = Depends(get_anomaly_service),
+    demand_service: DemandService = Depends(get_demand_service),
 ):
     # CSRF protection for quota-consuming POST
     await protect_mutation(request)
-    # 1. Build Context
+    
     try:
         anon_id = getattr(request.state, "anon_id", "unknown_anon")
         user_id = getattr(request.state, "user_id", None)
         client_ip = get_client_ip(request)
-
-        # Entitlement Check
         tier = getattr(request.state, "tier", TierStatus.FREE)
         entitlement_stale = getattr(request.state, "entitlement_stale", False)
         
-        # Area Code
+        # 1. Anomaly Check
+        # Identify based on user_id if present, else anon_id
+        is_abusive = await anomaly_service.check_is_abusive(
+            "user" if user_id else "anon", 
+            user_id if user_id else anon_id
+        )
+        if is_abusive:
+            logger.warning("abuse_detected", ip=client_ip, id=user_id or anon_id)
+            # Fail silently or block? PolicyEngine handles GATE, Anomaly handles velocity.
+            # We can force BLOCK via PolicyEngine or return error. 
+            # Returning error "try again later" is safer.
+            raise HTTPException(
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                detail=ErrorResponse(error="ABUSE_LIMIT", detail="Too many variations. Please wait.").model_dump()
+            )
+
+        # 2. Bucket Engine
+        from app.services.bucket_engine import BucketEngine
+        cell_id = BucketEngine.get_cell_id(data.lat, data.lon)
+        # Using cell_id as "area_code" logic for policy if we wanted per-cell quotas?
+        # For now, stick to "area_code" from AreaBucketer for simple "global/danang" check if needed.
         area_code = AreaBucketer.get_area_code(data.lat, data.lon)
+
+        # 3. Policy Gate
         gate_result = await run_gate(
             request=request,
             data_turnstile_token=data.turnstile_token,
@@ -159,62 +194,75 @@ async def find_nearest(
             area_code=area_code,
         )
         decision = gate_result.decision
+        
+        # 4. Anomaly Record (Record this attempt AFTER gate passes or challenges?)
+        # Record attempt anyway
+        await anomaly_service.record_action("user" if user_id else "anon", user_id if user_id else anon_id, cell_id)
+        
+        # 5. Demand Record (Record interest in this cell)
+        await demand_service.record_query(cell_id)
 
-        # 4. Fetch Data (30m greedy, PostGIS-backed)
-        try:
-            results, logs = await poi_service.find_nearest_pois(data.lat, data.lon, max_results=decision.max_results)
-        except Exception as e:
-            logger.critical("poi_service_crashed", error=str(e), exc_info=True)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=ErrorResponse(
-                    error="POI_SERVICE_ERROR",
-                    detail="Internal Search Service request failed.",
-                    error_id=get_req_id(request)
-                ).model_dump()
-            )
-
+        # 6. Fetch Precomputed Data
+        # Only fetch if allowed
+        candidates = []
+        logs = []
+        if decision.verdict == PolicyVerdict.ALLOW or gate_result.admin_bypass:
+            candidates = await precompute_repo.get_candidates(cell_id)
+            if settings.ENV == "development":
+                logs.append(f"Cell {cell_id} candidates: {len(candidates)}")
+        
+        # 7. Render Opaque Report
+        from app.services.report_renderer import ReportRenderer
+        report_lines = ReportRenderer.render(candidates, data.lat, data.lon, limit=decision.max_results)
+        
+        # 8. Construct Response
         remaining_after = gate_result.remaining_after
-
-        # 6. Construct Response
-        limit = PolicyEngine.FREE_TIER_DAILY_LIMIT
-        if tier == TierStatus.PAID:
-            limit = PolicyEngine.PAID_TIER_DAILY_LIMIT
+        limit = PolicyEngine.FREE_TIER_DAILY_LIMIT if tier == TierStatus.FREE else PolicyEngine.PAID_TIER_DAILY_LIMIT
         checks_today = max(0, limit - remaining_after)
+        
         lang = request.cookies.get("dd_lang") or "en"
         t = get_translations(lang)
-        if remaining_after <= 0:
+        # Determine status text
+        can_search = (decision.verdict != PolicyVerdict.BLOCK or gate_result.admin_bypass)
+        if not can_search:
             status_text = t.get("status_limit", "Daily limit reached")
             state = "limit"
         elif checks_today == 0:
             status_text = t.get("status_quiet", "Quiet check available")
             state = "quiet"
-        elif checks_today == 1:
-            status_text = t.get("status_active_one", "You’ve checked 1 place today")
-            state = "active"
+         # Correct "active" text logic
         else:
-            status_text = t.get("status_active_many", "You’ve checked {n} places today").replace("{n}", str(checks_today))
-            state = "active"
-        turnstile_required = False
-        results_state = "found" if len(results) > 0 else "empty"
+             status_text = t.get("status_active_many", "You’ve checked {n} places today").replace("{n}", str(checks_today))
+             state = "active"
+
         tier_str = "pro" if tier == TierStatus.PAID else "free"
+        results_state = "found" if len(report_lines) > 0 else "empty"
+        if not can_search: results_state = "never"
+
         resp = FindNearestResponse(
-            results=results,
+            report_lines=report_lines,
             user_lat=data.lat,
             user_lon=data.lon,
             quota_remaining=remaining_after,
             share_url=f"/share?lat={data.lat}&lon={data.lon}",
             debug_logs=logs if settings.ENV == "development" else None,
             user_status=UserStatus(state=state, text=status_text),
-            can_search=(decision.verdict != PolicyVerdict.BLOCK or gate_result.admin_bypass),
-            turnstile_required=turnstile_required,
+            can_search=can_search,
+            turnstile_required=False, # We don't ask for TS in response generally, client logic handles based on 402/Challenge? 
+            # PolicyEngine returns CHALLENGE_REQUIRED. 
+            # If Result was CHALLENGE_REQUIRED, run_gate would have thrown exception if token missing.
+            # If token was present and valid, run_gate returned ALLOW.
+            # So here turnstile_required is False unless next one needs it?
+            # Actually frontend uses this flag to show widget.
+            # If we just consumed quota, maybe we are good.
+            # But let's assume False for now.
             checks_today=checks_today,
             tier=tier_str,
             results_state=results_state,
             errors=None
         )
-        logger.info("search_request_processed", anon_id=anon_id, area_code=area_code, results_count=len(results))
         
+        logger.info("search_request_processed", anon_id=anon_id, cell_id=cell_id, results_count=len(report_lines))
         return resp
 
     except HTTPException:
@@ -230,6 +278,7 @@ async def find_nearest(
                 error_id=err_id
             ).model_dump()
         )
+
 
 
 @router.post("/ugc/report-submit")

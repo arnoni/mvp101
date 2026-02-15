@@ -95,7 +95,9 @@ Middleware order changes require test updates and explicit approval.
 # Key Services (`app/services/`)
 
 * **PolicyEngine** (`policy_engine.py`) — gate logic: returns ALLOW/BLOCK/CHALLENGE_REQUIRED. Checks tier + quota + Turnstile requirement. Does not execute searches.
-* **POIService** (`poi_service.py`) — PostGIS spatial search with "Greedy 30m spacing" algorithm (ST_DWithin → order by distance → skip candidates < 30m from selected POIs).
+* **BucketEngine** (`bucket_engine.py`) — Aggregates user location to 500m grid cells.
+* **PrecomputeRepository** (`precompute_repo.py`) — Fetches opaque, pre-calculated candidates from Postgres JSONB. Replaces live PostGIS search.
+* **POIService** (`poi_service.py`) — **DEPRECATED**. Legacy PostGIS search; retained for admin tooling only.
 * **QuotaRepository** (`quota_repository.py`) — Redis quota tracking with atomic Lua script. Fail-closed in production.
 * **EntitlementService** (`entitlement_service.py`) — tier resolution from Redis cache with monotonic staleness checks. Self-heals corrupt JSON. Falls back to FREE on miss.
 * **i18n** (`i18n.py`) — EN, ES, RU, KO translations with LRU process cache + optional warmup.
@@ -113,8 +115,8 @@ No direct service instantiation inside route handlers.
 # API Endpoints (`app/api/routes.py`)
 
 * `GET /api/status` — preflight gating without consuming quota
-* `POST /api/find-nearest` — main search (lat, lon, optional turnstile_token)
-* `GET /api/download-kmz` — KMZ export (consumes 1 quota unit)
+* `POST /api/find-nearest` — main search (lat, lon, optional turnstile_token) -> Returns OPAQUE report lines.
+* `GET /api/download-kmz` — **REMOVED** (Legacy)
 * `POST /api/ugc/report-submit` — UGC noise reports (Turnstile mandatory, no admin bypass)
 
 ---

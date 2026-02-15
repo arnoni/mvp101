@@ -2,27 +2,26 @@
 
 **DillDrill** is a privacy-focused tool for detecting construction noise and real-estate points of interest (POIs). It allows users to check specific coordinates for nearby projects using a tiered access system.
 
-## Features (v1.2)
+## Features (v1.3 - MVP102 Privacy)
 - **Direct Coordinate Input**: No address geocoding; fast and privacy-preserving.
-- **Privacy First**: Anonymous IDs are random UUIDs stored in signed cookies (HMAC); no account required.
-- **Privacy Logging**: Logs use coarse area codes only; no precise coordinates.
-- **Smart Filtering**: "Greedy 30m" algorithm ensures result diversity.
+- **Privacy First**: Anonymous IDs are random UUIDs stored in signed cookies (HMAC).
+- **500m Anonymity Buckets**: User location is aggregated into 500m grid cells (`BucketEngine`) before any data lookup.
+- **Opaque Reporting**: Results are precomputed text lines (e.g., "Construction (~300m)") with no precise coordinates or maps links.
 - **Tiered Access**:
-  - **Free Tier**: 2 searches/day, 1 result per search.
-  - **Paid Tier**: 50 searches/day, 5 results per search.
+  - **Free Tier**: 2 searches/day.
+  - **Paid Tier**: 50 searches/day.
 - **Cloudflare Turnstile**: Human verification required for Free tier; validated server-side.
-- **Language Persistence**: Stores `dd_lang` and uses it in anonymous fingerprinting; defaults to last choice.
+- **Language Persistence**: Stores `dd_lang` and uses it in anonymous fingerprinting.
 - **Internationalization**: English, Spanish, Russian, Korean.
-- **Translation Cache**: Server translations are kept in a process LRU cache with optional warmup at import time.
-- **Dev Mode Visibility**: Landing page indicates when Redis fallback (in-memory quota) is active.
-- **Preflight Status**: `/api/status` endpoint powers instant gating (can_search, turnstile_required).
+- **Translation Cache**: Server translations are kept in a process LRU cache.
+- **Dev Mode Visibility**: Landing page indicates when Redis fallback is active.
+- **Preflight Status**: `/api/status` endpoint powers instant gating.
 - **SSR Hydration**: Initial status and tier are pre-rendered on the server.
-- **Accessibility**: "How to use" icon with `aria-label`; Message Board uses `role="status"`.
-- **Sentry Observability**: Integrated error reporting and performance monitoring via `sentry-sdk` with FastAPI/Starlette and Structlog integrations.
-- **PostGIS-backed Search**: Uses Neon PostgreSQL with PostGIS and SQLAlchemy 2 async engine (NullPool + pre_ping).
-- **Strict DTOs**: Public responses use meters (`distance_m`) and typed URLs; extra fields are forbidden.
-- **Resilient Policy Engine**: Quota evaluation gracefully handles Redis unavailability by failing open for UI hints while maintaining fail-closed security for search execution.
-- **Modern Deployment**: Fully optimized for Vercel with Python 3.12 and modern `vercel.json` configuration.
+- **Sentry Observability**: Integrated error reporting and performance monitoring.
+- **PostGIS-backed Precomputation**: Uses `cell_poi_precompute` table for fast, private lookups.
+- **Strict DTOs**: Public responses return only `report_lines`; no raw POI data.
+- **Resilient Policy Engine**: Fail-closed security for search execution.
+- **Modern Deployment**: Optimized for Vercel Python 3.12.
 
 ## Architecture
 The project follows a Domain-First architecture using FastAPI, Redis (Upstash), and PostGIS (Neon PostgreSQL) for POIs, with server-rendered Jinja2. Database access is standardized via SQLAlchemy 2 async engine with `NullPool` and `pool_pre_ping`. Quota enforcement is strict and backed by Redis.

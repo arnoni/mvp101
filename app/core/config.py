@@ -56,6 +56,49 @@ class Settings(BaseSettings):
     I18N_LRU_MAX: int = Field(8, description="Max cached languages in process memory", ge=1, le=64)
     I18N_WARMUP: bool = Field(True, description="Warm up translation cache at import time")
 
+    # --- MVP102 New Settings ---
+    
+    # Identity & Session
+    SESSION_COOKIE_NAME: str = "dd_session"
+    SESSION_TTL_SECONDS: int = 604800  # 7 days
+    ANON_COOKIE_NAME: str = "dd_anon"
+    
+    # Entitlement Cache (unified 10 minutes)
+    ENTITLEMENT_CACHE_TTL_SECONDS: int = 600
+    ENTITLEMENT_STALE_SECONDS: int = 300  # 5 min age threshold
+    
+    # Magic Link Security
+    MAGICLINK_TOKEN_BYTES: int = 32
+    MAGICLINK_EXPIRY_MINUTES: int = 30
+    RESEND_API_KEY: Optional[str] = Field(None, description="Resend API Key for magic links")
+    RESEND_FROM_EMAIL: str = "DillDrill <no-reply@dilldrill.com>"
+    
+    # Quota (rolling windows, single-digit caps)
+    QUOTA_FREE_ROLLING60_SOFT: int = 1
+    QUOTA_FREE_ROLLING60_HARD: int = 2
+    QUOTA_FREE_ROLLING24H_LIMIT: int = 2
+    
+    QUOTA_PAID_ROLLING60_SOFT: int = 2
+    QUOTA_PAID_ROLLING60_HARD: int = 4
+    QUOTA_PAID_ROLLING24H_LIMIT: int = 7
+    
+    # Precompute
+    PRECOMPUTE_MIN_DEMAND: int = 5
+    PRECOMPUTE_TOP_CELLS_LIMIT: int = 1000
+    PRECOMPUTE_CELL_SIZES: List[int] = [55, 100, 200, 400]
+    
+    # Anomaly Detection
+    ABUSE_SPIKE_MEDIUM: float = 3.0
+    ABUSE_SPIKE_HIGH: float = 6.0
+    ABUSE_REP_THRESHOLD_LOW: int = 4
+    ABUSE_VELOCITY_TTL_SECONDS: int = 600
+    ABUSE_SWEEP_TTL_SECONDS: int = 1800
+    
+    # Band thresholds (fractions of cell_size_m)
+    BAND_IMMEDIATE_FRAC: float = 0.15
+    BAND_NEARBY_FRAC: float = 0.35
+    BAND_WITHIN_CELL_FRAC: float = 0.75
+
     # Pydantic configuration
     model_config = SettingsConfigDict(
         env_file=".env",

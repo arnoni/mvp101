@@ -20,7 +20,11 @@ from app.middleware.logging import LoggingMiddleware
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy import text
 from sqlalchemy.pool import NullPool
+from sqlalchemy.pool import NullPool
 from redis.asyncio import Redis
+from app.services.precompute_repo import PrecomputeRepository
+from app.services.anomaly_service import AnomalyService
+from app.services.demand_service import DemandService
 
 # Configure logging (Structlog)
 configure_logging()
@@ -31,6 +35,11 @@ def build_async_engine() -> AsyncEngine:
     if not url:
         raise RuntimeError("DATABASE_URL is not set")
     async_url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    # asyncpg incompatibility fix
+    if "?sslmode=" in async_url or "&sslmode=" in async_url:
+        async_url = async_url.replace("?sslmode=require", "").replace("&sslmode=require", "")
+        async_url = async_url.replace("?channel_binding=require", "").replace("&channel_binding=require", "")
+
     if "neon.tech" in url and "-pooler.neon.tech" not in url:
         logger.warning("database_url_not_using_pooler")
     return create_async_engine(
@@ -87,6 +96,17 @@ async def lifespan(app: FastAPI):
     elif settings.ENABLE_REDIS:
         logger.error("ENABLE_REDIS set but REDIS_URL missing")
 
+    # 3. Initialize MVP102 Services
+    try:
+        app.state.precompute_repo = PrecomputeRepository(app.state.db_engine)
+        # Anomaly and Demand depend on Redis, but can handle None (no-op)
+        app.state.anomaly_service = AnomalyService(app.state.redis)
+        app.state.demand_service = DemandService(app.state.redis)
+        logger.info("MVP102 Services initialized (Precompute, Anomaly, Demand).")
+    except Exception as e:
+        logger.critical(f"Failed to init MVP102 services: {e}")
+
+
     yield
     
     # Application shutdown
@@ -121,14 +141,15 @@ app = FastAPI(
 )
 
 # --- Middleware and Exception Handlers ---
-from app.core.middleware import AnonIdMiddleware
-app.add_middleware(LoggingMiddleware) # Add structured logging middleware first (outermost or close to it)
-app.add_middleware(AnonIdMiddleware)
-from app.core.middleware import EntitlementMiddleware, SessionMiddleware
-# Middleware executes in reverse order; inner runs first.
-# SessionMiddleware will run before EntitlementMiddleware.
+# --- Middleware and Exception Handlers ---
+from app.middleware.identity import IdentityMiddleware
+from app.core.middleware import EntitlementMiddleware
+# SessionMiddleware and AnonIdMiddleware are replaced by IdentityMiddleware
+from app.middleware.logging import LoggingMiddleware
+
+app.add_middleware(LoggingMiddleware) 
+app.add_middleware(IdentityMiddleware)
 app.add_middleware(EntitlementMiddleware)
-app.add_middleware(SessionMiddleware)
 
 # --- Static Files and Templates ---
 # Implements TSD Section 7.1: /static/ and /templates/
@@ -140,7 +161,12 @@ templates = Jinja2Templates(directory=templates_dir)
 
 # --- API Routes ---
 from app.api.routes import router as api_router
+from app.api.auth import router as auth_router
+from app.api.webhooks import router as webhooks_router
+
 app.include_router(api_router, prefix="/api")
+app.include_router(auth_router, prefix="/api/auth")
+app.include_router(webhooks_router, prefix="/api/webhooks")
 
 #
 

@@ -61,15 +61,15 @@ class PolicyEngine:
     @staticmethod
     @validate_call
     def get_quota_key(user_id: Optional[str], anon_id: str, tier: TierStatus, entitlement_stale: bool) -> str:
-        from datetime import datetime
-        day = datetime.utcnow().strftime("%Y%m%d")
+        from app.core.keys import KeyBuilder
         
         # STRICT RULE: If tier is PAID and entitlement is not stale -> user_id
         if tier == TierStatus.PAID and not entitlement_stale and user_id:
-             return f"quota:user:{user_id}:{day}"
+             return KeyBuilder.quota_rolling24h("paid", user_id)
         
         # Fallback to anon_id
-        return f"quota:anon:{anon_id}:{day}"
+        return KeyBuilder.quota_rolling24h("anon", anon_id)
+
 
     @validate_call
     async def evaluate(self, context: RequestContext) -> PolicyDecision:

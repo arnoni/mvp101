@@ -19,20 +19,22 @@ The application follows a **Service-Layer Pattern** built on FastAPI.
 
 ```mermaid
 graph TD
-    Client[Client / Frontend] -->|HTTP Request| Middleware[AnonIdMiddleware]
+    Client[Client / Frontend] -->|HTTP Request| Middleware[IdentityMiddleware]
     Middleware -->|Standardized Request| Route[API Routes]
     
     Route -->|Context| PolicyEngine[Policy Engine]
     
     subgraph "Domain Core"
         PolicyEngine -->|Check| QuotaRepo[Quota Repository (Redis)]
-        PolicyEngine -->|Check| Entitlement[Entitlement Service]
+        PolicyEngine -->|Check| AnomalyService[Anomaly Service]
         
-        Route -->|If Allowed| POIService[POI Service]
-        POIService -->|Read| PostGIS[Neon PostgreSQL]
+        Route -->|If Allowed| BucketEngine[Bucket Engine]
+        BucketEngine -->|Cell ID| PrecomputeRepo[Precompute Repository]
+        PrecomputeRepo -->|Read| DB[PostgreSQL (Precomputed)]
     end
     
-    POIService -->|Results| Route
+    PrecomputeRepo -->|Candidates| ReportRenderer[Report Renderer]
+    ReportRenderer -->|Opaque Lines| Route
     Route -->|Response| Client
 ```
 
@@ -61,14 +63,20 @@ This is where the business logic lives.
     *   **Fault Tolerance:** Gracefully handles Redis unavailability. For non-mutating UI hints (landing page), it fails open (defaults to 0 usage). For actual search execution (`run_gate`), it fails closed to maintain quota integrity.
     *   **Key Concept:** It does *not* execute the search; it only guards the door.
 
-*   **`poi_service.py` (The Search):**
-    *   **Responsibility:** Finds relevant data.
-    *   **Algorithm (Greedy spacing):**
-        1.  Query PostGIS for POIs within `SEARCH_RADIUS_KM` using `ST_DWithin`.
-        2.  Order by `ST_Distance` ascending.
-        3.  Apply spacing via `MIN_SPACING_M` client-side (Greedy) to ensure diversity.
-    *   **Data Source:** Neon PostgreSQL with PostGIS (`pois` table).
-    *   **Implementation notes:** SQLAlchemy 2 async engine; typed Postgres array bind with `ARRAY(Text)` for `WHERE name = ANY(:names)`.
+*   **`bucket_engine.py`:**
+    *   **Responsibility:** Aggregates precise user coordinates into a discrete 500m Grid Cell ID.
+    *   **Privacy:** Ensures the system never looks up data based on exact location.
+    
+*   **`precompute_repo.py`:**
+    *   **Responsibility:** Fetches pre-calculated POI candidates for a given Cell ID from the `cell_poi_precompute` table.
+    *   **Data Source:** JSONB column in Postgres, populated by batch jobs.
+
+*   **`report_renderer.py`:**
+    *   **Responsibility:** Converts raw candidates into opaque strings (e.g., "Construction Site (~350m)").
+    *   **Privacy:** Strips all names, exact coordinates, and map links.
+
+*   **`poi_service.py` (Deprecated):**
+    *   Legacy service for direct PostGIS lookups. Retained for admin tooling only; not used in public search.
 
 *   **`quota_repository.py` (The State):**
     *   **Responsibility:** specific usage tracking.
@@ -94,7 +102,7 @@ This is where the business logic lives.
 ### 3.3 API (`app/api/`)
 *   **`routes.py`**:
     *   **`/api/status`**: Preflight gating endpoint. Computes `user_status`, `can_search`, `turnstile_required`, `checks_today`, and `tier` without consuming quota. Respects admin bypass via `X-Admin-Auth` when `settings.ADMIN_BYPASS_TOKEN` is set. See [routes.py](file:///c:/Users/arnon/Documents/dev/projects/github/mine/trae_ide/mvp101/app/api/routes.py#L44-L108).
-    *   **`/api/find-nearest`**: The main search endpoint. It accepts Lat/Lng, invokes the Policy Engine, and if allowed, calls the POI Service. Turnstile is required for Free tier requests when the token is missing.
+    *   **`/api/find-nearest`**: The main search endpoint. It accepts Lat/Lng, invokes the Policy Engine, and if allowed, calls the Bucket Engine -> Precompute Repo -> Report Renderer pipeline. Returns `report_lines` (list of strings).
     *   **Admin Bypass**: If `settings.ADMIN_BYPASS_TOKEN` is set, requests with header `X-Admin-Auth` equal to that token bypass quotas and Turnstile (does not overwrite quota keys). See [find_nearest](file:///c:/Users/arnon/Documents/dev/projects/github/mine/trae_ide/mvp101/app/api/routes.py#L137-L156).
     *   **Paid Dependencies**: Use `require_login` for session presence and `require_paid` for paid-only routes. `require_paid` enforces 403 (logged in but FREE), and 503 with `ENTITLEMENT_UNVERIFIED` when entitlement is stale or cannot be verified.
     *   **`/api/ugc/report-submit`**: UGC submit (Plan v2). Turnstile mandatory for all; admin bypass disabled. Skips CSRF by design. Consumes quota via `run_gate` before persistence. Validates bbox, optional severity 1–5, evidence_urls count ≤ 5 and each ≤ 500 chars. Dedup via Redis `ugc:dedup:{sha256(anon_id|geo_cell|content_hash|YYYYMMDD)}`; geo_cell quantized on a 0.0005° grid (~50–55 m). Inserts into `ugc_reports` with `public_id`, identity snapshot, content, `geom = ST_SetSRID(ST_MakePoint(lon, lat), 4326)::geography`, `status='pending'`, `content_hash`, `geo_cell`. Evidence URLs stored in Redis `ugc:evidence:{public_id}` for 7 days. Returns `{ ok, duplicate, report_id }`.

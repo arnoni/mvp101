@@ -3,39 +3,57 @@ import time
 from enum import Enum
 from typing import Optional, Any
 from redis.asyncio import Redis
-from pydantic import validate_call, ConfigDict
+from pydantic import validate_call, ConfigDict, BaseModel
+from app.core.keys import KeyBuilder
 
 class TierStatus(str, Enum):
     FREE = "FREE"
     PAID = "PAID"
 
-class EntitlementResult:
-    def __init__(self, tier: TierStatus, is_stale: bool = False, raw_data: dict = None):
-        self.tier = tier
-        self.is_stale = is_stale
-        self.raw_data = raw_data or {}
+class SubscriptionStatus(str, Enum):
+    ACTIVE = "active"
+    TRIALING = "trialing"
+    PAST_DUE = "past_due"
+    CANCELED = "canceled"
+    UNPAID = "unpaid"
+    INCOMPLETE = "incomplete"
+    INCOMPLETE_EXPIRED = "incomplete_expired"
+    PAUSED = "paused"
+    UNKNOWN = "unknown"
+
+class EntitlementResult(BaseModel):
+    tier: TierStatus
+    status: SubscriptionStatus
+    is_stale: bool = False
+    expires_at: Optional[int] = None
+    raw_data: dict = {}
 
 class EntitlementService:
     """
-    Separates session handling from subscription logic.
+    Authorization Logic.
+    Mapping:
+      - active, trialing -> PAID
+      - everything else -> FREE
     """
-    
+
+    @staticmethod
+    def map_status_to_tier(status_val: str) -> TierStatus:
+        s = status_val.lower()
+        if s in [SubscriptionStatus.ACTIVE.value, SubscriptionStatus.TRIALING.value]:
+            return TierStatus.PAID
+        return TierStatus.FREE
+
     @staticmethod
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
-    async def get_tier(user_id: Optional[str], redis_cli: Optional[Redis], ttl_seconds: int = 300) -> EntitlementResult:
-        """
-        Determines the tier for a given user ID.
-        Checks Redis cache first.
-        If verified_at is older than TTL, marks as stale.
-        """
+    async def get_tier(user_id: Optional[str], redis_cli: Optional[Redis], ttl_seconds: int = 600) -> EntitlementResult:
         if not user_id:
-            return EntitlementResult(TierStatus.FREE)
+            return EntitlementResult(tier=TierStatus.FREE, status=SubscriptionStatus.UNKNOWN)
             
         if not redis_cli:
-            # If Redis is down, we can't verify. Treat as stale FREE.
-            return EntitlementResult(TierStatus.FREE, is_stale=True)
+            # Fail closed-ish (Free tier) if Redis down
+            return EntitlementResult(tier=TierStatus.FREE, status=SubscriptionStatus.UNKNOWN, is_stale=True)
             
-        key = f"entitlement:user:{user_id}"
+        key = KeyBuilder.entitlement_status(user_id)
         
         try:
             data = await redis_cli.get(key)
@@ -43,64 +61,58 @@ class EntitlementService:
                 try:
                     payload = json.loads(data)
                 except json.JSONDecodeError:
-                    # Corrupt cache -> self heal
                     await redis_cli.delete(key)
-                    return EntitlementResult(TierStatus.FREE, is_stale=True)
+                    return EntitlementResult(tier=TierStatus.FREE, status=SubscriptionStatus.UNKNOWN, is_stale=True)
                 
-                tier_val = payload.get("tier", "FREE")
-                try:
-                    tier = TierStatus(tier_val)
-                except ValueError:
-                    tier = TierStatus.FREE
+                # Parse
+                sub_status_str = payload.get("subscription_status", "unknown")
+                verified_at = payload.get("verified_at", 0)
                 
-                verified_at = payload.get("verified_at")
+                # Map
+                tier = EntitlementService.map_status_to_tier(sub_status_str)
                 
-                # Monotonic & Existence Checks
+                # Check Stale
                 now = int(time.time())
                 is_stale = False
-                
-                if verified_at is None:
+                if (now - verified_at) > ttl_seconds:
                     is_stale = True
-                elif verified_at > (now + 60): # Future timestamp (clock skew > 1 min)
+                if verified_at > (now + 60): # Future clock skew
                     is_stale = True
-                elif (now - verified_at) > ttl_seconds:
-                    is_stale = True
-                
-                return EntitlementResult(tier, is_stale=is_stale, raw_data=payload)
+                    
+                return EntitlementResult(
+                    tier=tier, 
+                    status=SubscriptionStatus(sub_status_str) if sub_status_str in SubscriptionStatus._value2member_map_ else SubscriptionStatus.UNKNOWN,
+                    is_stale=is_stale,
+                    raw_data=payload
+                )
         except Exception:
             pass
             
-        # Cache Miss -> Fallback to Postgres (TODO)
-        return EntitlementResult(TierStatus.FREE, is_stale=True)
+        # Cache Miss
+        return EntitlementResult(tier=TierStatus.FREE, status=SubscriptionStatus.UNKNOWN, is_stale=True)
 
     @staticmethod
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def cache_entitlement(
         user_id: str, 
-        tier: TierStatus, 
+        status: str,
         redis_cli: Redis, 
-        ttl_seconds: int = 300,
+        ttl_seconds: int = 600,
         provider: str = "stripe",
-        subscription_status: str = "active",
         plan: str = "default",
         period_end: Optional[int] = None
     ):
-        """
-        Stores the entitlement in Redis with verified_at timestamp and extended metadata.
-        """
         if not user_id or not redis_cli:
             return
             
-        key = f"entitlement:user:{user_id}"
+        key = KeyBuilder.entitlement_status(user_id)
         payload = {
-            "schema_version": 1,
-            "tier": tier.value,
+            "version": 2,
+            "subscription_status": status,
             "verified_at": int(time.time()),
             "provider": provider,
-            "subscription_status": subscription_status,
             "plan": plan,
             "period_end": period_end
         }
-        # Set Redis TTL slightly longer than verification TTL to allow for grace logic if needed,
-        # but for now we keep them sync or user provided.
         await redis_cli.set(key, json.dumps(payload), ex=ttl_seconds)
+
