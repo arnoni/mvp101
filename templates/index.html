@@ -237,11 +237,11 @@
 
         console.log("[INIT] userStatus element:", userStatusText);
 
-        function togglePaymentModal() {
+        window.togglePaymentModal = function () {
             paymentModal.classList.toggle('hidden');
         }
 
-        function toggleAboutModal() {
+        window.toggleAboutModal = function () {
             aboutModal.classList.toggle('hidden');
         }
 
