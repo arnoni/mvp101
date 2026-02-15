@@ -327,8 +327,8 @@
 
         const appState = {
             can_search: {{ 'true' if initial_can_search else 'false' }},
-        turnstile_required: { { 'true' if initial_turnstile_required else 'false' } },
-        checks_today: { { initial_checks_today } },
+        turnstile_required: {{ 'true' if initial_turnstile_required else 'false' }},
+        checks_today: {{ initial_checks_today }},
         tier: "{{ initial_tier }}"
         };
 
