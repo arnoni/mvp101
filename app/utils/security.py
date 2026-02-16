@@ -22,11 +22,6 @@ async def protect_mutation(request: Request):
     ct = request.headers.get("content-type", "")
     if "application/json" not in ct:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid content-type")
-    # B. Enforce Origin/Referer
-    origin = request.headers.get("origin") or request.headers.get("referer") or ""
-    app_origin = settings.APP_ORIGIN or ""
-    if not app_origin or not origin.startswith(app_origin):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="origin not allowed")
     # C. Enforce CSRF token
     csrf_hdr = request.headers.get("x-csrf-token")
     csrf_state = getattr(request.state, "csrf", None)
