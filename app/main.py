@@ -144,9 +144,9 @@ from app.middleware.identity import IdentityMiddleware
 from app.core.middleware import EntitlementMiddleware
 # SessionMiddleware and AnonIdMiddleware are replaced by IdentityMiddleware
 
-app.add_middleware(LoggingMiddleware) 
-app.add_middleware(IdentityMiddleware)
 app.add_middleware(EntitlementMiddleware)
+app.add_middleware(IdentityMiddleware)
+app.add_middleware(LoggingMiddleware)
 
 # --- Static Files and Templates ---
 # Implements TSD Section 7.1: /static/ and /templates/
