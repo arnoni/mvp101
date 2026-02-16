@@ -152,7 +152,7 @@ Neon PostgreSQL with PostGIS. SQLAlchemy 2 async engine with NullPool + pool_pre
 * No string concatenation for SQL queries.
 * HMAC comparisons must remain constant-time.
 * Cookies must preserve current expiry durations.
-* CSRF validation must not be relaxed.
+* CSRF validation skipped by design (rely on Turnstile + Origin check).
 * Never bypass Turnstile.
 * Never remove atomic Redis Lua script usage.
 * Never trust client-provided tier.

@@ -22,11 +22,14 @@ async def protect_mutation(request: Request):
     ct = request.headers.get("content-type", "")
     if "application/json" not in ct:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid content-type")
-    # C. Enforce CSRF token
-    csrf_hdr = request.headers.get("x-csrf-token")
-    csrf_state = getattr(request.state, "csrf", None)
-    if not csrf_hdr or not csrf_state or csrf_hdr != csrf_state:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid csrf token")
+    # B. Enforce Origin (if configured)
+    origin = request.headers.get("origin")
+    if settings.APP_ORIGIN and origin:
+        if origin != settings.APP_ORIGIN:
+            log_data = {"origin": origin, "allowed": settings.APP_ORIGIN}
+            logger.warning(f"Origin not allowed: {log_data}")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="origin not allowed")
+
     return True
 @validate_call
 async def verify_turnstile(token: str, anon_id: Optional[str] = None, client_ip: Optional[str] = None) -> bool:

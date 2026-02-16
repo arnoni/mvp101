@@ -78,7 +78,6 @@ class IdentityMiddleware(BaseHTTPMiddleware):
         sentry_sdk.set_user({"id": anon_id, "ip_address": "{{auto}}"})
         sentry_sdk.set_tag("identity_kind", "anon")
 
-        
         response = await call_next(request)
         
         # 3. Set Anon Cookie if needed

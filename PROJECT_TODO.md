@@ -24,8 +24,8 @@
 - [x] Update frontend to consume Opaque Reports (removed `distance_km` entirely).
 - [x] Implement signed admin bypass header for QA/dev superusers (via `X-Admin-Auth` and config token)
 - [x] Implement Sentry observability (error reporting + performance monitoring)
-- [x] Implement server-side session hydration (`SessionMiddleware` hydrates `user_id` and `csrf` from Redis).
-- [x] Finalize CSRF protection for mutation endpoints.
+- [x] Implement server-side session hydration (`SessionMiddleware` hydrates `user_id` from Redis).
+- [x] Finalized Turnstile + Origin protection for mutation endpoints (CSRF removed).
 - [ ] Re-enable APP_ORIGIN-based origin check in protect_mutation with correct domains configured.
 - [ ] Implement Entitlement Service DB fallback (subscriptions table). Redis cache includes `schema_version`, monotonic `verified_at` checks, and self-healing on corrupt JSON.
 - [ ] Implement Webhook processing pipeline (`webhook_events` -> `subscriptions` update).

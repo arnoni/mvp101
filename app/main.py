@@ -8,7 +8,6 @@ from fastapi.templating import Jinja2Templates
 from contextlib import asynccontextmanager
 import logging
 import os
-import httpx
 import uuid
 
 # Local imports
@@ -19,7 +18,6 @@ from app.logging import configure_logging
 from app.middleware.logging import LoggingMiddleware
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy import text
-from sqlalchemy.pool import NullPool
 from sqlalchemy.pool import NullPool
 from redis.asyncio import Redis
 from app.services.precompute_repo import PrecomputeRepository
@@ -145,7 +143,6 @@ app = FastAPI(
 from app.middleware.identity import IdentityMiddleware
 from app.core.middleware import EntitlementMiddleware
 # SessionMiddleware and AnonIdMiddleware are replaced by IdentityMiddleware
-from app.middleware.logging import LoggingMiddleware
 
 app.add_middleware(LoggingMiddleware) 
 app.add_middleware(IdentityMiddleware)
