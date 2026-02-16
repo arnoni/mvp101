@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     MAGICLINK_TOKEN_BYTES: int = 32
     MAGICLINK_EXPIRY_MINUTES: int = 30
     RESEND_API_KEY: Optional[str] = Field(None, description="Resend API Key for magic links")
-    RESEND_FROM_EMAIL: str = "DillDrill <no-reply@dilldrill.com>"
+    RESEND_FROM_EMAIL: str = "DillDrill <dilldrillteam@gmail.com>"
     
     # Quota (rolling windows, single-digit caps)
     QUOTA_FREE_ROLLING60_SOFT: int = 1
