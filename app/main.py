@@ -191,6 +191,17 @@ async def offline():
     with open(os.path.join(static_dir, "offline.html"), "r", encoding="utf-8") as f:
         return HTMLResponse(content=f.read())
 
+@app.get("/favicon.ico", include_in_schema=False)
+@app.get("/favicon.png", include_in_schema=False)
+async def favicon():
+    # To stop 404 spam in logs. In production, place a real favicon.png in /static
+    target = os.path.join(static_dir, "favicon.png")
+    if os.path.exists(target):
+        from fastapi.responses import FileResponse
+        return FileResponse(target)
+    from fastapi.responses import Response
+    return Response(status_code=204)
+
 # --- Root Endpoint (Landing Page) ---
 # Implements TSD FR-001: Landing Page & Address Input
 @app.get("/", response_class=HTMLResponse)
