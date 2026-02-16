@@ -10,12 +10,17 @@ from app.core.config import settings
 from app.models.dto import ErrorResponse
 from typing import Optional
 from pydantic import validate_call
+logger = logging.getLogger(__name__)
+
 try:
     from app.services.redis_client import redis_client
-except Exception:
+    if redis_client and redis_client.client:
+        logger.info("Security utils: Redis client found and ready.")
+    else:
+        logger.warning("Security utils: Redis client correctly initialized as None (Disabled).")
+except Exception as e:
+    logger.error(f"Security utils: Failed to import redis_client: {e}")
     redis_client = None
-
-logger = logging.getLogger(__name__)
 
 async def protect_mutation(request: Request):
     # A. Enforce JSON only
@@ -71,14 +76,17 @@ async def verify_turnstile(token: str, anon_id: Optional[str] = None, client_ip:
             result = response.json()
             
             if result.get("success"):
+                logger.debug(f"Turnstile verified successfully for key: {cache_key}")
                 if cache_key and redis_client:
                     try:
                         await redis_client.setex(cache_key, 600, "1")
-                    except Exception:
-                        pass
+                        logger.debug(f"Turnstile success cached for key: {cache_key}")
+                    except Exception as e:
+                        logger.error(f"Failed to cache Turnstile success for {cache_key}: {e}")
                 return True
             else:
-                logger.warning(f"Turnstile verification failed: {result.get('error-codes')}")
+                error_codes = result.get('error-codes', [])
+                logger.warning(f"Turnstile verification failed for {cache_key}. Errors: {error_codes}")
                 return False
     except httpx.TimeoutException:
         logger.error("Turnstile verification timed out.")

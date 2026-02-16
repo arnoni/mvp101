@@ -12,8 +12,10 @@ class RedisClientWrapper:
         
         if url and token:
             self.client = Redis(url=url, token=token)
+            logger.info("Upstash Redis (REST) client initialized.")
         else:
             self.client = None
+            logger.warning("Upstash Redis credentials missing. Redis client disabled.")
 
     async def get(self, key: str):
         if not self.client: return None
