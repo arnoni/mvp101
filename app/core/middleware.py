@@ -8,6 +8,7 @@ import json
 from typing import Optional
 from app.core.config import settings
 from app.services.entitlement_service import TierStatus, EntitlementService
+from app.services.redis_client import redis_client
 
 # --- Helper Functions (No changes needed) ---
 def sign_value(val: str) -> str:
@@ -85,17 +86,16 @@ class AnonIdMiddleware(BaseHTTPMiddleware):
 
 class SessionMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        redis_cli = getattr(request.app.state, "redis", None)
         sid = request.cookies.get("dd_session")
         
         request.state.session_id = None
         request.state.user_id = None
         request.state.csrf = None
         
-        if redis_cli and sid:
+        if redis_client and sid:
             try:
                 session_key = f"session:{sid}"
-                data = await redis_cli.get(session_key)
+                data = await redis_client.get(session_key)
                 if data:
                     payload = json.loads(data)
                     user_id = payload.get("user_id")
@@ -128,11 +128,10 @@ class EntitlementMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         # 1. Determine Tier
         user_id = getattr(request.state, "user_id", None)
-        redis_cli = getattr(request.app.state, "redis", None)
         
         try:
             # Check entitlement cache
-            entitlement_result = await EntitlementService.get_tier(user_id, redis_cli, ttl_seconds=300)
+            entitlement_result = await EntitlementService.get_tier(user_id, redis_client.client, ttl_seconds=300)
             
             request.state.tier = entitlement_result.tier
             request.state.entitlement_stale = entitlement_result.is_stale

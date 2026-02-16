@@ -19,7 +19,7 @@ from app.middleware.logging import LoggingMiddleware
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 from sqlalchemy import text
 from sqlalchemy.pool import NullPool
-from redis.asyncio import Redis
+from upstash_redis.asyncio import Redis
 from app.services.precompute_repo import PrecomputeRepository
 from app.services.anomaly_service import AnomalyService
 from app.services.demand_service import DemandService
@@ -73,26 +73,32 @@ async def lifespan(app: FastAPI):
              async def get_pois_by_names(self, names): return []
         app.state.poi_service = EmptyPOIService()
 
-    # 2. Initialize Redis & Quota Repository (async client; fail closed if required but missing)
+    # 2. Initialize Redis & Quota Repository (REST client; stable in serverless)
     from app.services.quota_repository import QuotaRepository
     app.state.redis = None
     # Always ensure quota_repo exists to avoid AttributeErrors in PolicyEngine
     app.state.quota_repo = QuotaRepository(None) 
     
-    if settings.ENABLE_REDIS and settings.REDIS_URL:
+    # We prefer the REST client in Serverless (Vercel)
+    rest_url = settings.UPSTASH_REDIS_REST_URL
+    rest_token = settings.UPSTASH_REDIS_REST_TOKEN
+
+    if settings.ENABLE_REDIS and rest_url and rest_token:
         try:
-            app.state.redis = Redis.from_url(settings.REDIS_URL, decode_responses=True)
+            app.state.redis = Redis(url=rest_url, token=rest_token)
+            # Simple ping to verify connection
             pong = await app.state.redis.ping()
-            if not pong:
-                raise RuntimeError("Redis ping failed")
+            if pong != "PONG":
+                 # Upstash might return True or "PONG" depending on client
+                 if not pong: raise RuntimeError("Redis ping failed")
+                 
             app.state.quota_repo = QuotaRepository(app.state.redis)
-            logger.info("Redis connected and QuotaRepository ready")
+            logger.info("Upstash Redis (REST) connected and QuotaRepository ready")
         except Exception as e:
             logger.error(f"Redis initialization failed: {e}")
             app.state.redis = None
-            # Keep the QuotaRepository(None) instance
     elif settings.ENABLE_REDIS:
-        logger.error("ENABLE_REDIS set but REDIS_URL missing")
+        logger.error("ENABLE_REDIS set but UPSTASH_REDIS_REST_URL/TOKEN missing")
 
     # 3. Initialize MVP102 Services
     try:

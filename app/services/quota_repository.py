@@ -1,15 +1,16 @@
 import logging
-from typing import Optional
+from typing import Optional, List, Any
 
 import structlog
 
 logger = structlog.get_logger(__name__)
 
-from redis.asyncio import Redis
+from upstash_redis.asyncio import Redis
 
 class QuotaRepository:
     """
     Redis-backed quota repository with fail-closed behavior (no in-memory fallback).
+    Uses Upstash REST client for better serverless compatibility.
     """
     def __init__(self, redis_client: Optional[Redis] = None):
         self.redis_client: Optional[Redis] = redis_client
@@ -70,7 +71,11 @@ class QuotaRepository:
         return {1, limit - count}
         """
         try:
-            result = await self.redis_client.eval(script, 1, key, daily_limit, ttl)
+            # upstash_redis eval: eval(script, keys, args)
+            result = await self.redis_client.eval(script, [key], [daily_limit, ttl])
+            if not result or not isinstance(result, list):
+                logger.error("quota_lua_invalid_result", result=result, key=key)
+                raise RuntimeError("redis_unavailable")
             allowed = bool(result[0] == 1)
             remaining = int(result[1])
             return allowed, remaining

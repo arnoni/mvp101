@@ -137,7 +137,7 @@ class PolicyEngine:
         
         # New Rule: Only challenge if token is missing AND not recently verified
         if not context.turnstile_token and context.paid_tier == TierStatus.FREE:
-            already_ok = is_turnstile_verified(anon_id=context.anon_id, client_ip=context.client_ip)
+            already_ok = await is_turnstile_verified(anon_id=context.anon_id, client_ip=context.client_ip)
             if not already_ok:
                 return PolicyDecision(
                     verdict=PolicyVerdict.CHALLENGE_REQUIRED,

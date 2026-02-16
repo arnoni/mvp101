@@ -60,3 +60,7 @@ class KeyBuilder:
     @staticmethod
     def magic_rate_limit_ip(ip_hash: str) -> str:
         return f"dd:quota:magic:ip:{ip_hash}:rolling60"
+
+    @staticmethod
+    def reputation(ip: str) -> str:
+        return f"dd:security:reputation:ip:{ip}"

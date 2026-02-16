@@ -51,7 +51,7 @@ async def verify_turnstile(token: str, anon_id: Optional[str] = None, client_ip:
     
     if cache_key and redis_client:
         try:
-            cached = redis_client.get(cache_key)
+            cached = await redis_client.get(cache_key)
             if cached:
                 return True
         except Exception:
@@ -73,7 +73,7 @@ async def verify_turnstile(token: str, anon_id: Optional[str] = None, client_ip:
             if result.get("success"):
                 if cache_key and redis_client:
                     try:
-                        redis_client.setex(cache_key, 600, "1")
+                        await redis_client.setex(cache_key, 600, "1")
                     except Exception:
                         pass
                 return True
@@ -97,7 +97,7 @@ async def verify_turnstile(token: str, anon_id: Optional[str] = None, client_ip:
         logger.error(f"Unexpected error during Turnstile verification: {e}")
         return False
 
-def is_turnstile_verified(anon_id: Optional[str] = None, client_ip: Optional[str] = None) -> bool:
+async def is_turnstile_verified(anon_id: Optional[str] = None, client_ip: Optional[str] = None) -> bool:
     """Checks if the user has already successfully verified Turnstile recently."""
     if not redis_client:
         return False
@@ -110,9 +110,14 @@ def is_turnstile_verified(anon_id: Optional[str] = None, client_ip: Optional[str
         
     if cache_key:
         try:
-            return bool(redis_client.get(cache_key))
-        except Exception:
-            pass
+            val = await redis_client.get(cache_key)
+            if val:
+                logger.info(f"Turnstile challenge skipped (cached) for key: {cache_key}")
+                return True
+            else:
+                logger.debug(f"Turnstile challenge required (no cache) for key: {cache_key}")
+        except Exception as e:
+            logger.error(f"Error checking turnstile cache: {e}")
     return False
 
 def get_client_ip(request: Request) -> str:

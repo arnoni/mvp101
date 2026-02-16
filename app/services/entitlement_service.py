@@ -2,7 +2,7 @@ import json
 import time
 from enum import Enum
 from typing import Optional, Any
-from redis.asyncio import Redis
+from upstash_redis.asyncio import Redis
 from pydantic import validate_call, ConfigDict, BaseModel
 from app.core.keys import KeyBuilder
 

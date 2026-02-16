@@ -21,13 +21,13 @@ class IdentityMiddleware(BaseHTTPMiddleware):
     """
     
     async def dispatch(self, request: Request, call_next):
-        redis = getattr(request.app.state, "redis", None)
+        from app.services.redis_client import redis_client
         
         # 1. Try to resolve Session (Paid)
         session_cookie = request.cookies.get(settings.SESSION_COOKIE_NAME)
-        if session_cookie and redis:
+        if session_cookie and redis_client:
             session_key = KeyBuilder.session(session_cookie)
-            raw_session = await redis.get(session_key)
+            raw_session = await redis_client.get(session_key)
             if raw_session:
                 try:
                     data = json.loads(raw_session)

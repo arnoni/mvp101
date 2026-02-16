@@ -1,4 +1,4 @@
-from redis.asyncio import Redis
+from upstash_redis.asyncio import Redis
 from app.core.config import settings
 from app.core.keys import KeyBuilder
 from datetime import datetime, timedelta
@@ -21,12 +21,9 @@ class DemandService:
         today = datetime.utcnow().strftime("%Y%m%d")
         key = KeyBuilder.demand_daily(cell_id, today)
         
-        # Incr and set retention (e.g., 30 days)
-        # We don't need a pipeline for this simple op usually, but safer
-        pipeline = self.redis.pipeline()
-        pipeline.incr(key)
-        pipeline.expire(key, 60 * 60 * 24 * 30) # 30 days
-        await pipeline.execute()
+        # Use direct calls
+        await self.redis.incr(key)
+        await self.redis.expire(key, 60 * 60 * 24 * 30) # 30 days
         
     async def get_demand_rolling(self, cell_id: str, days: int = 14) -> int:
         """
@@ -42,6 +39,6 @@ class DemandService:
             keys.append(KeyBuilder.demand_daily(cell_id, d))
             
         # Optimization: Use MGET
-        values = await self.redis.mget(keys)
+        values = await self.redis.mget(*keys)
         total = sum(int(v) for v in values if v)
         return total

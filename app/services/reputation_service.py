@@ -1,12 +1,10 @@
-from redis.asyncio import Redis
+from upstash_redis.asyncio import Redis
 from app.core.config import settings
 from app.core.keys import KeyBuilder
 
 class ReputationService:
     """
     Tracks IP reputation score.
-    High score = Good? Or High score = Bad?
-    Let's use:
     0 = Neutral
     >0 = Suspicious/Bad
     <0 = Trusted
@@ -30,10 +28,6 @@ class ReputationService:
             return
             
         key = KeyBuilder.reputation(ip)
-        # Use incrby
-        # pipeline to set expire if new?
-        # Just incr and expire
-        async with self.redis.pipeline() as pipe:
-            pipe.incrby(key, score_delta)
-            pipe.expire(key, 60 * 60 * 24 * 7) # 7 days retention
-            await pipe.execute()
+        # Just incrby and expire directly (REST compatible)
+        await self.redis.incrby(key, score_delta)
+        await self.redis.expire(key, 60 * 60 * 24 * 7) # 7 days retention
