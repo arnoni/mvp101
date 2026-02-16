@@ -54,8 +54,11 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing POI Service (PostGIS-backed)...")
     
     # Startup contract: Redis required in production when ENABLE_REDIS true
-    if settings.ENV == "production" and settings.ENABLE_REDIS and not settings.REDIS_URL:
-        raise RuntimeError("ENABLE_REDIS=true requires REDIS_URL in production")
+    # We now strictly use the REST client for stability on Vercel.
+    rest_url = settings.UPSTASH_REDIS_REST_URL
+    rest_token = settings.UPSTASH_REDIS_REST_TOKEN
+    if settings.ENV == "production" and settings.ENABLE_REDIS and not (rest_url and rest_token):
+        raise RuntimeError("ENABLE_REDIS=true requires UPSTASH_REDIS_REST_URL and TOKEN in production")
     
     # 1. Initialize POI Service
     try:

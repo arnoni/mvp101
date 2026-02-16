@@ -1,3 +1,4 @@
+from typing import Optional
 from upstash_redis.asyncio import Redis
 from app.core.config import settings
 from app.core.keys import KeyBuilder
@@ -10,7 +11,7 @@ class ReputationService:
     <0 = Trusted
     """
     
-    def __init__(self, redis: Redis):
+    def __init__(self, redis: Optional[Redis]):
         self.redis = redis
         
     async def get_score(self, ip: str) -> int:
@@ -29,5 +30,5 @@ class ReputationService:
             
         key = KeyBuilder.reputation(ip)
         # Just incrby and expire directly (REST compatible)
-        await self.redis.incrby(key, score_delta)
-        await self.redis.expire(key, 60 * 60 * 24 * 7) # 7 days retention
+        _ = await self.redis.incrby(key, score_delta)
+        _ = await self.redis.expire(key, 60 * 60 * 24 * 7) # 7 days retention
