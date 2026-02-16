@@ -11,8 +11,11 @@ def init_sentry(dsn: str | None, env: str, release: str | None) -> None:
     via the integrations argument. 
     """ 
     if not dsn: 
+        print("Sentry DSN not found, skipping initialization.")
         return 
 
+    print(f"Initializing Sentry with environment: {env}")
+    logging.info(f"Initializing Sentry with environment: {env}")
     sentry_logging = LoggingIntegration(
         level=logging.INFO,        # Capture info and above as breadcrumbs
         event_level=logging.ERROR  # Send errors as events
