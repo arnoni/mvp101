@@ -97,6 +97,24 @@ async def verify_turnstile(token: str, anon_id: Optional[str] = None, client_ip:
         logger.error(f"Unexpected error during Turnstile verification: {e}")
         return False
 
+def is_turnstile_verified(anon_id: Optional[str] = None, client_ip: Optional[str] = None) -> bool:
+    """Checks if the user has already successfully verified Turnstile recently."""
+    if not redis_client:
+        return False
+        
+    cache_key = None
+    if anon_id:
+        cache_key = f"turnstile_ok:{anon_id}"
+    elif client_ip:
+        cache_key = f"turnstile_ok_ip:{client_ip}"
+        
+    if cache_key:
+        try:
+            return bool(redis_client.get(cache_key))
+        except Exception:
+            pass
+    return False
+
 def get_client_ip(request: Request) -> str:
     """
     Extracts the client's IP address from the request.

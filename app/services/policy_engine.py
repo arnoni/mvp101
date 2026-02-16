@@ -3,7 +3,7 @@ from typing import Optional, Protocol
 from dataclasses import dataclass
 from fastapi import Request, HTTPException, status
 from app.core.config import settings
-from app.utils.security import verify_turnstile, get_client_ip
+from app.utils.security import verify_turnstile, get_client_ip, is_turnstile_verified
 from app.models.dto import ErrorResponse
 from app.services.quota_repository import QuotaRepository
 from pydantic import BaseModel, validate_call, ConfigDict
@@ -135,14 +135,16 @@ class PolicyEngine:
         # If the ROUTE has already verified it, maybe it passes a flag `turnstile_verified=True`?
         # The TDD input contract says `turnstile_token (optional str)`.
         
-        # Let's assume if it's MISSING, we return CHALLENGE_REQUIRED.
+        # New Rule: Only challenge if token is missing AND not recently verified
         if not context.turnstile_token and context.paid_tier == TierStatus.FREE:
-             return PolicyDecision(
-                verdict=PolicyVerdict.CHALLENGE_REQUIRED,
-                quota_remaining=quota_remaining,
-                max_results=max_results,
-                friction_type=FrictionType.TURNSTILE
-            )
+            already_ok = is_turnstile_verified(anon_id=context.anon_id, client_ip=context.client_ip)
+            if not already_ok:
+                return PolicyDecision(
+                    verdict=PolicyVerdict.CHALLENGE_REQUIRED,
+                    quota_remaining=quota_remaining,
+                    max_results=max_results,
+                    friction_type=FrictionType.TURNSTILE
+                )
             
         # If we are here, we are good to go (assuming token is valid, which Route checks).
         return PolicyDecision(
