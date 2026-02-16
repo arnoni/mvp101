@@ -1,5 +1,6 @@
 # app/services/redis_client.py
-from upstash_redis.asyncio import Redis
+from typing import Any
+from upstash_redis.asyncio import Redis as UpstashRedis
 from app.core.config import settings
 import logging
 
@@ -11,17 +12,17 @@ class RedisClientWrapper:
         token = settings.UPSTASH_REDIS_REST_TOKEN
         
         if url and token:
-            self.client = Redis(url=url, token=token)
+            self.client: UpstashRedis | None = UpstashRedis(url=url, token=token)
             logger.info("Upstash Redis (REST) client initialized.")
         else:
             self.client = None
             logger.warning("Upstash Redis credentials missing. Redis client disabled.")
 
-    async def get(self, key: str):
+    async def get(self, key: str) -> str | None:
         if not self.client: return None
         try:
             val = await self.client.get(key)
-            return val
+            return str(val) if val is not None else None
         except Exception as e:
             logger.error(f"Redis Client GET Error: {e} for key: {key}")
             return None
@@ -30,7 +31,7 @@ class RedisClientWrapper:
         if not self.client: return 0
         try:
             val = await self.client.incr(key)
-            return int(val) if val is not None else 0
+            return int(val)
         except Exception as e:
             logger.error(f"Redis Client INCR Error: {e} for key: {key}")
             return 0
@@ -43,10 +44,10 @@ class RedisClientWrapper:
             logger.error(f"Redis Client SETEX Error: {e} for key: {key}")
             return None
 
-    async def eval(self, script: str, numkeys: int, *keys_and_args):
+    async def eval(self, script: str, keys: list[str] | None = None, args: list[Any] | None = None):
         if not self.client: return None
         try:
-            return await self.client.eval(script, numkeys, *keys_and_args)
+            return await self.client.eval(script, keys, args)
         except Exception as e:
             logger.error(f"Redis Client EVAL Error: {e}")
             return None

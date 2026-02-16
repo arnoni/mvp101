@@ -8,7 +8,6 @@ import httpx
 import logging
 from app.core.config import settings
 from app.models.dto import ErrorResponse
-from typing import Optional
 from pydantic import validate_call
 logger = logging.getLogger(__name__)
 
@@ -38,16 +37,11 @@ async def protect_mutation(request: Request):
 
     return True
 @validate_call
-async def verify_turnstile(token: str, anon_id: Optional[str] = None, client_ip: Optional[str] = None) -> bool:
+async def verify_turnstile(token: str, anon_id: str | None = None, client_ip: str | None = None) -> bool:
     """
     Verifies the Cloudflare Turnstile token against the Cloudflare API.
     Implements TSD Section 6: Turnstile verification.
     """
-    # Dev mode bypass removed as per user request.
-    # if settings.ENV == "development" and token == "mock_turnstile_token_for_testing":
-    #     logger.warning("Using mock Turnstile token for development.")
-    #     return True
-    
     cache_key = None
     if anon_id:
         cache_key = f"turnstile_ok:{anon_id}"
@@ -68,7 +62,7 @@ async def verify_turnstile(token: str, anon_id: Optional[str] = None, client_ip:
         "response": token
     }
     
-    # Implements TSD Section 6: 5s timeout
+    logger.info(f"Initiating Turnstile verification check for: {cache_key}")
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             response = await client.post(url, data=data)
@@ -76,21 +70,21 @@ async def verify_turnstile(token: str, anon_id: Optional[str] = None, client_ip:
             result = response.json()
             
             if result.get("success"):
-                logger.debug(f"Turnstile verified successfully for key: {cache_key}")
+                logger.info(f"Turnstile EXACT verification SUCCESS for: {cache_key}")
                 if cache_key and redis_client:
                     try:
-                        await redis_client.setex(cache_key, 600, "1")
-                        logger.debug(f"Turnstile success cached for key: {cache_key}")
+                        _ = await redis_client.setex(cache_key, 600, "1")
+                        logger.info(f"Turnstile success cached (10m) for: {cache_key}")
                     except Exception as e:
                         logger.error(f"Failed to cache Turnstile success for {cache_key}: {e}")
                 return True
             else:
                 error_codes = result.get('error-codes', [])
-                logger.warning(f"Turnstile verification failed for {cache_key}. Errors: {error_codes}")
+                logger.warning(f"Turnstile verification FAILED for {cache_key}. Cloudflare Errors: {error_codes}")
                 return False
     except httpx.TimeoutException:
+        # ... (error handling)
         logger.error("Turnstile verification timed out.")
-        # TSD Section 6: 5s timeout -> abort
         raise HTTPException(
             status_code=status.HTTP_408_REQUEST_TIMEOUT,
             detail=ErrorResponse(
@@ -105,7 +99,7 @@ async def verify_turnstile(token: str, anon_id: Optional[str] = None, client_ip:
         logger.error(f"Unexpected error during Turnstile verification: {e}")
         return False
 
-async def is_turnstile_verified(anon_id: Optional[str] = None, client_ip: Optional[str] = None) -> bool:
+async def is_turnstile_verified(anon_id: str | None = None, client_ip: str | None = None) -> bool:
     """Checks if the user has already successfully verified Turnstile recently."""
     if not redis_client:
         return False
