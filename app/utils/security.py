@@ -25,8 +25,9 @@ async def protect_mutation(request: Request):
     # B. Enforce Origin (if configured)
     origin = request.headers.get("origin")
     if settings.APP_ORIGIN and origin:
-        if origin != settings.APP_ORIGIN:
-            log_data = {"origin": origin, "allowed": settings.APP_ORIGIN}
+        allowed_origins = [o.strip().rstrip("/") for o in settings.APP_ORIGIN.split(",")]
+        if origin.rstrip("/") not in allowed_origins:
+            log_data = {"origin": origin, "allowed": allowed_origins}
             logger.warning(f"Origin not allowed: {log_data}")
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="origin not allowed")
 
