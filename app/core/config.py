@@ -18,6 +18,8 @@ class Settings(BaseSettings):
     CLOUDFLARE_TURNSTILE_SECRET: Optional[str] = Field(None, description="Cloudflare Turnstile Secret Key")
     CLOUDFLARE_TURNSTILE_SITE_KEY: Optional[str] = Field(None, description="Cloudflare Turnstile Site Key (Public)")
     REDIS_URL: Optional[str] = Field(None, description="Redis URL for quota/session enforcement")
+    UPSTASH_REDIS_REST_URL: Optional[str] = Field(None, description="Upstash Redis REST URL")
+    UPSTASH_REDIS_REST_TOKEN: Optional[str] = Field(None, description="Upstash Redis REST Token")
     ENV: str = Field("development", description="Application environment (e.g., production, development)")
     SENTRY_DSN: Optional[str] = Field(None, description="Sentry DSN for error reporting")
     RELEASE: Optional[str] = Field(None, description="Application release version for Sentry")
