@@ -112,7 +112,7 @@ button { font-family: inherit; }
 #demandBand { stroke: #49d17d; }
 .needle {
   pointer-events: none;
-  transform-box: fill-box;
+  transform-box: view-box;
   transform-origin: 160px 180px;
   transition: transform 0.8s cubic-bezier(0.34, 1.56, 0.64, 1);
 }
