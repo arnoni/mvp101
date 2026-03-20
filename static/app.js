@@ -97,10 +97,10 @@ document.addEventListener("DOMContentLoaded", () => {
       els.conBtn.textContent = "Verify";
     } else {
       els.mainBtn.textContent = "Check Construction";
-      els.conBtn.textContent = "Check";
+      els.conBtn.textContent = "GO";
     }
 
-    els.demBtn.textContent = state.access.demandAllowed ? "Check" : "Unlock";
+    els.demBtn.textContent = state.access.demandAllowed ? "GO" : "Unlock";
   }
 
   // 3. SVG ANIMATION MATH
@@ -108,7 +108,7 @@ document.addEventListener("DOMContentLoaded", () => {
     if (score === null) {
       bandEl.style.strokeDashoffset = 377;
       needleEl.style.transform = `rotate(-82deg)`;
-      valEl.textContent = "--";
+      if (valEl) valEl.textContent = "--";
       return;
     }
     const clamped = Math.max(0, Math.min(100, score));
@@ -117,7 +117,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     bandEl.style.strokeDashoffset = offset;
     needleEl.style.transform = `rotate(${angle}deg)`;
-    valEl.textContent = clamped;
+    if (valEl) valEl.textContent = clamped;
   }
 
   // 4. API CALLS WITH ABORT CONTROLLER

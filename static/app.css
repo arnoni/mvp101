@@ -103,39 +103,40 @@ button { font-family: inherit; }
 .footer-btn { width: 100%; font-size: 13px; color: var(--muted); }
 
 /* SVG GAUGES */
-.gauge-wrap { position: relative; max-width: 300px; margin: 0 auto; }
-.gauge-wrap.smaller { max-width: 260px; }
+.gauge-wrap { position: relative; max-width: 320px; margin: 0 auto; padding-bottom: 20px; }
+.gauge-wrap.smaller { max-width: 280px; }
 .gauge-svg { width: 100%; height: auto; display: block; overflow: visible; }
-.gauge-track { fill: none; stroke: rgba(255,255,255,0.08); stroke-width: 20; stroke-linecap: round; }
-.gauge-ticks { fill: none; stroke: rgba(255,255,255,0.25); stroke-width: 5; stroke-dasharray: 2 18; stroke-linecap: round; }
-.gauge-band { fill: none; stroke-width: 18; stroke-linecap: round; transition: stroke-dashoffset 0.8s cubic-bezier(0.34, 1.56, 0.64, 1); }
+.gauge-track { fill: none; stroke: #0d284a; stroke-width: 26; stroke-linecap: round; }
+.gauge-ticks { fill: none; stroke: rgba(255,255,255,0.7); stroke-width: 2.5; stroke-dasharray: 2 45.125; stroke-linecap: round; }
+.gauge-band { fill: none; stroke-width: 22; stroke-linecap: round; transition: stroke-dashoffset 0.8s cubic-bezier(0.34, 1.56, 0.64, 1); }
 #demandBand { stroke: #49d17d; }
 .needle { transform-box: view-box; transform-origin: 160px 180px; transition: transform 0.8s cubic-bezier(0.34, 1.56, 0.64, 1); }
-.needle-poly { fill: #d1d5db; stroke: #9ca3af; stroke-width: 1; stroke-linejoin: round; }
-.needle-hub-outer { fill: #1f2937; stroke: #4b5563; stroke-width: 2; }
-.needle-hub-inner { fill: #9ca3af; }
-.gauge-label { fill: var(--muted); font-size: 14px; font-weight: 700; }
+.needle-poly { fill: #a1a9b4; stroke: #8e959f; stroke-width: 1; stroke-linejoin: round; }
+.needle-counterweight { fill: #1c2633; stroke: #151d26; stroke-width: 1; stroke-linejoin: round; }
+.needle-stripe { fill: #ff4d00; }
+.needle-hub-inner { fill: #1c2633; }
+.gauge-label { font-size: 16px; font-weight: 600; letter-spacing: 0.5px; }
 
-.gauge-value {
-  position: absolute; left: 50%; bottom: 38%; transform: translateX(-50%);
-  font-size: 48px; font-weight: 800; text-shadow: 0 2px 10px rgba(0,0,0,0.25);
-}
 .gauge-btn {
-  position: absolute; left: 50%; bottom: 4%; transform: translateX(-50%);
-  width: 88px; height: 88px; border-radius: 50%; border: none;
-  background: radial-gradient(circle at top, #ff7b00, #ff1a00);
-  color: white; font-size: 18px; font-weight: 800; cursor: pointer;
-  box-shadow: 0 0 18px rgba(255, 60, 0, 0.75), inset 0 2px 4px rgba(255, 255, 255, 0.4);
-  transition: 0.2s;
-  text-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  position: absolute; left: 50%; bottom: -5%; transform: translateX(-50%);
+  width: 96px; height: 96px; border-radius: 50%; border: none;
+  background: radial-gradient(circle at top, #ff5722, #d82b00);
+  color: white; font-size: 26px; font-weight: 800; cursor: pointer;
+  box-shadow: 0 0 24px rgba(255, 60, 0, 0.85), inset 0 2px 4px rgba(255, 255, 255, 0.5);
+  transition: transform 0.2s, box-shadow 0.2s, filter 0.2s;
+  text-shadow: 0 2px 4px rgba(0,0,0,0.4);
 }
-.gauge-btn.small { width: 76px; height: 76px; font-size: 16px; bottom: 8%; }
-.gauge-btn.unlock-styled { background: radial-gradient(circle at top, #7d80f8, #4338ca); box-shadow: 0 0 18px rgba(99, 102, 241, 0.75), inset 0 2px 4px rgba(255, 255, 255, 0.4); text-shadow: 0 1px 3px rgba(0,0,0,0.3); }
+.gauge-btn:hover:not(:disabled) { transform: translateX(-50%) scale(1.05); box-shadow: 0 0 32px rgba(255, 60, 0, 1), inset 0 2px 6px rgba(255, 255, 255, 0.6); }
+.gauge-btn:active:not(:disabled) { transform: translateX(-50%) scale(0.95); }
+.gauge-btn.small { width: 84px; height: 84px; font-size: 22px; bottom: -2%; }
+.gauge-btn.unlock-styled { background: radial-gradient(circle at top, #7d80f8, #4338ca); box-shadow: 0 0 24px rgba(99, 102, 241, 0.85), inset 0 2px 4px rgba(255, 255, 255, 0.5); text-shadow: 0 2px 4px rgba(0,0,0,0.4); }
+.gauge-btn.unlock-styled:hover:not(:disabled) { box-shadow: 0 0 32px rgba(99, 102, 241, 1), inset 0 2px 6px rgba(255, 255, 255, 0.6); }
 
 .message-board {
-  margin-top: 14px; min-height: 52px; border-radius: 16px;
-  background: rgba(11, 38, 71, 0.85); border: 1px solid var(--line);
-  display: flex; align-items: center; justify-content: center; font-weight: 600; text-align: center;
+  margin-top: 24px; min-height: 52px; border-radius: 8px;
+  background: rgba(8, 26, 51, 0.95); border: 1px solid var(--line);
+  display: flex; align-items: center; justify-content: center; font-weight: 500; font-size: 15px; text-align: center;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.3);
 }
 
 /* TURNSTILE */
