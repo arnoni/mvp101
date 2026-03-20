@@ -185,6 +185,7 @@ document.addEventListener("DOMContentLoaded", () => {
       });
       const data = await res.json();
 
+      console.log("SERVER KEY:", data.coord_key, "| CLIENT KEY:", state.coords.key);
       if (normalizeKey(data.coord_key) !== normalizeKey(state.coords.key)) return; // Stale
 
       if (data.verification_required) {
@@ -219,7 +220,7 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
-    if (state.construction.status !== "ready" || state.construction.coordKey !== state.coords.key) {
+    if (state.construction.status !== "ready" || normalizeKey(state.construction.coordKey) !== normalizeKey(state.coords.key)) {
       els.demMsg.textContent = "Run construction check first";
       return;
     }
@@ -240,6 +241,7 @@ document.addEventListener("DOMContentLoaded", () => {
       });
       const data = await res.json();
 
+      console.log("SERVER KEY:", data.coord_key, "| CLIENT KEY:", state.coords.key);
       if (normalizeKey(data.coord_key) !== normalizeKey(state.coords.key)) return; // Stale
 
       state.demand = { status: "ready", score: data.score, coordKey: data.coord_key };
