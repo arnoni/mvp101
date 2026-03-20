@@ -19,13 +19,11 @@ document.addEventListener("DOMContentLoaded", () => {
     mainBtn: document.getElementById("mainActionBtn"),
     
     conBtn: document.getElementById("constructionGoBtn"),
-    conVal: document.getElementById("constructionValue"),
     conMsg: document.getElementById("constructionMessage"),
     conBand: document.getElementById("constructionBand"),
     conNeedle: document.getElementById("constructionNeedle"),
     
     demBtn: document.getElementById("demandGoBtn"),
-    demVal: document.getElementById("demandValue"),
     demMsg: document.getElementById("demandMessage"),
     demBand: document.getElementById("demandBand"),
     demNeedle: document.getElementById("demandNeedle"),
@@ -65,8 +63,8 @@ document.addEventListener("DOMContentLoaded", () => {
         state.demand = { status: "idle", coordKey: null, score: null };
         state.verification = { required: false, passed: false, token: null }; 
         
-        animateGauge(els.conBand, els.conNeedle, els.conVal, null);
-        animateGauge(els.demBand, els.demNeedle, els.demVal, null);
+        animateGauge(els.conBand, els.conNeedle, null);
+        animateGauge(els.demBand, els.demNeedle, null);
         els.conMsg.textContent = "Coordinates changed";
         els.demMsg.textContent = state.access.demandAllowed ? "Ready to check" : "Paid pass required";
         els.turnstileSlot.classList.add("hidden");
@@ -104,20 +102,25 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // 3. SVG ANIMATION MATH
-  function animateGauge(bandEl, needleEl, valEl, score) {
+  function animateGauge(bandEl, needleEl, score) {
+    const ARC_LENGTH = 377;
+    const MIN_ANGLE = -82;
+    const MAX_SWEEP = 164;
+    const PIVOT_X = 160;
+    const PIVOT_Y = 180;
+
     if (score === null) {
-      bandEl.style.strokeDashoffset = 377;
-      needleEl.style.transform = `rotate(-82deg)`;
-      if (valEl) valEl.textContent = "--";
+      bandEl.style.strokeDashoffset = ARC_LENGTH;
+      needleEl.setAttribute("transform", `rotate(${MIN_ANGLE} ${PIVOT_X} ${PIVOT_Y})`);
       return;
     }
+
     const clamped = Math.max(0, Math.min(100, score));
-    const offset = 377 - (377 * (clamped / 100)); // 377 is total arc length
-    const angle = -82 + (clamped / 100) * 164; // -82 to +82 degrees
+    const offset = ARC_LENGTH - (ARC_LENGTH * (clamped / 100));
+    const angle = MIN_ANGLE + (clamped / 100) * MAX_SWEEP;
 
     bandEl.style.strokeDashoffset = offset;
-    needleEl.style.transform = `rotate(${angle}deg)`;
-    if (valEl) valEl.textContent = clamped;
+    needleEl.setAttribute("transform", `rotate(${angle} ${PIVOT_X} ${PIVOT_Y})`);
   }
 
   // 4. API CALLS WITH ABORT CONTROLLER
@@ -158,7 +161,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       state.construction = { status: "ready", score: data.score, coordKey: data.coord_key };
-      animateGauge(els.conBand, els.conNeedle, els.conVal, data.score);
+      animateGauge(els.conBand, els.conNeedle, data.score);
       els.conMsg.textContent = data.message || "Analysis complete";
 
     } catch (e) {
@@ -203,7 +206,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (data.coord_key !== state.coords.key) return; // Stale
 
       state.demand = { status: "ready", score: data.score, coordKey: data.coord_key };
-      animateGauge(els.demBand, els.demNeedle, els.demVal, data.score);
+      animateGauge(els.demBand, els.demNeedle, data.score);
       els.demMsg.textContent = data.message || "Demand analyzed";
 
     } catch (e) {
