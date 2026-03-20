@@ -11,6 +11,8 @@ document.addEventListener("DOMContentLoaded", () => {
     debounce: null
   };
 
+  const normalizeKey = k => k ? k.split(',').map(n => parseFloat(n).toFixed(4)).join(',') : null;
+
   // DOM Elements
   const els = {
     lat: document.getElementById("latInput"),
@@ -52,7 +54,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const lng = parseFloat(els.lng.value);
       
       let valid = !isNaN(lat) && !isNaN(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
-      const newKey = valid ? `${lat.toFixed(6)},${lng.toFixed(6)}` : null;
+      const newKey = valid ? `${lat.toFixed(4)},${lng.toFixed(4)}` : null;
 
       // Hard Reset: If coordinates change, invalidate ALL previous data to prevent ghost states
       if (state.coords.key && state.coords.key !== newKey) {
@@ -106,12 +108,10 @@ document.addEventListener("DOMContentLoaded", () => {
     const ARC_LENGTH = 377;
     const MIN_ANGLE = -82;
     const MAX_SWEEP = 164;
-    const PIVOT_X = 160;
-    const PIVOT_Y = 180;
 
     if (score === null) {
       bandEl.style.strokeDashoffset = ARC_LENGTH;
-      needleEl.setAttribute("transform", `rotate(${MIN_ANGLE} ${PIVOT_X} ${PIVOT_Y})`);
+      needleEl.style.transform = `rotate(${MIN_ANGLE}deg)`;
       return;
     }
 
@@ -120,7 +120,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const angle = MIN_ANGLE + (clamped / 100) * MAX_SWEEP;
 
     bandEl.style.strokeDashoffset = offset;
-    needleEl.setAttribute("transform", `rotate(${angle} ${PIVOT_X} ${PIVOT_Y})`);
+    needleEl.style.transform = `rotate(${angle}deg)`;
   }
 
   // 4. API CALLS WITH ABORT CONTROLLER
@@ -149,7 +149,7 @@ document.addEventListener("DOMContentLoaded", () => {
       });
       const data = await res.json();
 
-      if (data.coord_key !== state.coords.key) return; // Stale
+      if (normalizeKey(data.coord_key) !== normalizeKey(state.coords.key)) return; // Stale
 
       if (data.verification_required) {
         state.verification.required = true;
@@ -161,6 +161,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       state.construction = { status: "ready", score: data.score, coordKey: data.coord_key };
+      console.log("Triggering animateGauge with score:", data.score);
       animateGauge(els.conBand, els.conNeedle, data.score);
       els.conMsg.textContent = data.message || "Analysis complete";
 
@@ -203,9 +204,10 @@ document.addEventListener("DOMContentLoaded", () => {
       });
       const data = await res.json();
 
-      if (data.coord_key !== state.coords.key) return; // Stale
+      if (normalizeKey(data.coord_key) !== normalizeKey(state.coords.key)) return; // Stale
 
       state.demand = { status: "ready", score: data.score, coordKey: data.coord_key };
+      console.log("Triggering animateGauge with score:", data.score);
       animateGauge(els.demBand, els.demNeedle, data.score);
       els.demMsg.textContent = data.message || "Demand analyzed";
 
@@ -241,6 +243,9 @@ document.addEventListener("DOMContentLoaded", () => {
   document.getElementById("coordForm").addEventListener("submit", (e) => { e.preventDefault(); fetchConstruction(); });
   els.conBtn.addEventListener("click", fetchConstruction);
   els.demBtn.addEventListener("click", fetchDemand);
+  
+  animateGauge(els.conBand, els.conNeedle, null);
+  animateGauge(els.demBand, els.demNeedle, null);
 });
 
 
