@@ -108,19 +108,55 @@ document.addEventListener("DOMContentLoaded", () => {
     const ARC_LENGTH = 377;
     const MIN_ANGLE = -82;
     const MAX_SWEEP = 164;
+    const PIVOT_X = 160;
+    const PIVOT_Y = 180;
+    const DURATION = 800;
 
-    if (score === null) {
-      bandEl.style.strokeDashoffset = ARC_LENGTH;
-      needleEl.style.transform = `rotate(${MIN_ANGLE}deg)`;
-      return;
+    const clampedScore = score === null ? 0 : Math.max(0, Math.min(100, score));
+    const targetAngle = score === null
+      ? MIN_ANGLE
+      : MIN_ANGLE + (clampedScore / 100) * MAX_SWEEP;
+    const targetOffset = score === null
+      ? ARC_LENGTH
+      : ARC_LENGTH - (ARC_LENGTH * (clampedScore / 100));
+
+    // Read current positions
+    const currentTransform = needleEl.getAttribute("transform") || `rotate(${MIN_ANGLE} ${PIVOT_X} ${PIVOT_Y})`;
+    const match = currentTransform.match(/rotate\(([-\d.]+)/);
+    const startAngle = match ? parseFloat(match[1]) : MIN_ANGLE;
+    const currentDash = bandEl.style.strokeDashoffset;
+    const startOffset = currentDash ? parseFloat(currentDash) : ARC_LENGTH;
+
+    if (needleEl._rafId) cancelAnimationFrame(needleEl._rafId);
+    if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      const startTime = performance.now();
+      function easeOutBack(t) {
+        const c1 = 1.70158, c3 = c1 + 1;
+        return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
+      }
+
+      function tick(now) {
+        const timeElapsed = now - startTime;
+        let t = timeElapsed / DURATION;
+        if (t > 1) t = 1;
+
+        const eased = easeOutBack(t);
+        const nextAngle = startAngle + (targetAngle - startAngle) * eased;
+        const nextOffset = startOffset + (targetOffset - startOffset) * eased;
+
+        needleEl.setAttribute("transform", `rotate(${nextAngle} ${PIVOT_X} ${PIVOT_Y})`);
+        bandEl.style.strokeDashoffset = nextOffset;
+
+        if (t < 1) {
+          needleEl._rafId = requestAnimationFrame(tick);
+        }
+      }
+      needleEl._rafId = requestAnimationFrame(tick);
+    } else {
+      // Reduced motion fallback
+      needleEl.setAttribute("transform", `rotate(${targetAngle} ${PIVOT_X} ${PIVOT_Y})`);
+      bandEl.style.strokeDashoffset = targetOffset;
     }
-
-    const clamped = Math.max(0, Math.min(100, score));
-    const offset = ARC_LENGTH - (ARC_LENGTH * (clamped / 100));
-    const angle = MIN_ANGLE + (clamped / 100) * MAX_SWEEP;
-
-    bandEl.style.strokeDashoffset = offset;
-    needleEl.style.transform = `rotate(${angle}deg)`;
   }
 
   // 4. API CALLS WITH ABORT CONTROLLER
