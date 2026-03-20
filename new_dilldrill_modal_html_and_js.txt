@@ -1,0 +1,1617 @@
+## Unified Superior Modal System
+
+### HTML Structure
+
+```html
+<!-- ==========================================
+     MODAL SYSTEM - Unified Implementation
+     ========================================== -->
+
+<!-- 1. USER ACCESS / ACCOUNT STATUS MODAL -->
+<dialog class="modal-layer" id="userModalLayer" aria-labelledby="userModalTitle">
+  <div class="modal">
+    <div class="modal-head">
+      <h2 class="modal-title" id="userModalTitle">Your Access</h2>
+      <button class="modal-close" type="button" data-close="userModalLayer" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-stack">
+        <div class="option-card status-card">
+          <div class="status-badge" id="userTierBadge" data-tier="{{ tier|default('free') }}">
+            {{ tier|capitalize if tier else 'Free' }} Tier
+          </div>
+          <div class="option-meta" id="userStatusText">
+            {% if demand_allowed %}
+              Demand is unlocked and your pass is active.
+            {% else %}
+              Construction is available. Demand requires a paid pass.
+            {% endif %}
+          </div>
+        </div>
+
+        {% if not demand_allowed %}
+        <div class="option-card warning-card">
+          <div class="option-title">⚠️ Limitations</div>
+          <ul class="limitation-list">
+            <li>Demand checks are locked</li>
+            <li>Subject to rate limiting</li>
+            <li>Turnstile verification required</li>
+          </ul>
+        </div>
+
+        <div class="option-card tips-card">
+          <div class="option-title">💡 Recommendations</div>
+          <ul class="tips-list">
+            <li>Use valid coordinates</li>
+            <li>Run construction first</li>
+            <li>Then demand for same location</li>
+          </ul>
+        </div>
+
+        <button class="modal-primary" type="button" id="userUpgradeBtn">Unlock Full Access</button>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</dialog>
+
+<!-- 2. SUBMIT A REPORT MODAL -->
+<dialog class="modal-layer" id="reportModalLayer" aria-labelledby="reportModalTitle">
+  <div class="modal">
+    <div class="modal-head">
+      <h2 class="modal-title" id="reportModalTitle">Submit Report</h2>
+      <button class="modal-close" type="button" data-close="reportModalLayer" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body">
+      <!-- Form State -->
+      <div class="modal-stack" id="reportFormState">
+        <div class="option-card location-card">
+          <div class="option-title">📍 Location</div>
+          <div class="option-meta" id="reportCoordsDisplay">Coordinates not set</div>
+        </div>
+
+        <div class="field-group">
+          <label class="field-label">Report Type</label>
+          <div class="chip-grid" id="reportTypeGrid" role="radiogroup" aria-label="Report type">
+            <button type="button" class="chip active" data-report-type="active_construction" role="radio" aria-checked="true">
+              Active Construction
+            </button>
+            <button type="button" class="chip" data-report-type="noise_heard" role="radio" aria-checked="false">
+              Noise Heard
+            </button>
+            <button type="button" class="chip" data-report-type="new_site_spotted" role="radio" aria-checked="false">
+              New Site Spotted
+            </button>
+            <button type="button" class="chip" data-report-type="unsure_but_suspicious" role="radio" aria-checked="false">
+              Suspicious / Unsure
+            </button>
+          </div>
+        </div>
+
+        <label class="field">
+          <span class="field-label">Additional Notes <span class="optional">(optional)</span></span>
+          <textarea class="modal-textarea" id="reportNote" rows="3" maxlength="180" 
+                    placeholder="Describe what you observed..."></textarea>
+          <span class="char-count" id="reportCharCount">0/180</span>
+        </label>
+
+        <div class="inline-error" id="reportError" role="alert" aria-live="polite"></div>
+
+        <div class="button-group">
+          <button class="modal-primary" type="button" id="reportSubmitBtn">
+            <span class="btn-text">Submit Report</span>
+            <span class="btn-spinner hidden">⟳</span>
+          </button>
+          <button class="modal-secondary" type="button" data-close="reportModalLayer">Cancel</button>
+        </div>
+      </div>
+
+      <!-- Success State -->
+      <div class="modal-stack hidden" id="reportSuccessState">
+        <div class="success-animation">
+          <div class="success-icon">✓</div>
+        </div>
+        <div class="option-card text-center">
+          <div class="option-title">Report Received!</div>
+          <div class="option-meta">Thank you for helping keep the community map accurate.</div>
+        </div>
+        <button class="modal-secondary" type="button" data-close="reportModalLayer">Done</button>
+      </div>
+    </div>
+  </div>
+</dialog>
+
+<!-- 3. SHARE THE APP MODAL -->
+<dialog class="modal-layer" id="shareModalLayer" aria-labelledby="shareModalTitle">
+  <div class="modal">
+    <div class="modal-head">
+      <h2 class="modal-title" id="shareModalTitle">Share DillDrill</h2>
+      <button class="modal-close" type="button" data-close="shareModalLayer" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-stack">
+        <label class="field">
+          <span class="field-label">Share Message</span>
+          <textarea class="modal-textarea" id="shareText" rows="2">Check construction activity near any location with DillDrill.</textarea>
+        </label>
+
+        <div class="field">
+          <span class="field-label">Link</span>
+          <div class="copy-field">
+            <div class="readbox" id="shareUrlBox">{{ share_url|default('https://dilldrill.com') }}</div>
+            <button class="icon-btn" type="button" id="copyLinkBtn" aria-label="Copy link">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="share-grid">
+          <button class="modal-primary share-native" type="button" id="nativeShareBtn">
+            <span>📤 Share Now</span>
+          </button>
+          <button class="modal-secondary" type="button" id="copyAllBtn">Copy Text + Link</button>
+        </div>
+
+        <div class="inline-error" id="shareError" role="alert" aria-live="polite"></div>
+      </div>
+    </div>
+  </div>
+</dialog>
+
+<!-- 4. PURCHASE SUPPORT / SUBSCRIPTION MODAL -->
+<dialog class="modal-layer" id="supportModalLayer" aria-labelledby="supportModalTitle">
+  <div class="modal">
+    <div class="modal-head">
+      <h2 class="modal-title" id="supportModalTitle">Unlock Full Access</h2>
+      <button class="modal-close" type="button" data-close="supportModalLayer" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body">
+      <!-- Step 1: Email & Plan Selection -->
+      <div class="modal-stack purchase-step" id="purchaseStep1">
+        <div class="option-card info-card">
+          <div class="option-title">🔐 No Account Needed</div>
+          <div class="option-meta">
+            Enter your email, complete payment, then use the secure access link we send you.
+          </div>
+        </div>
+
+        <label class="field">
+          <span class="field-label">Email Address</span>
+          <input type="email" id="purchaseEmail" class="modal-input" 
+                 inputmode="email" autocomplete="email" 
+                 placeholder="you@example.com">
+          <div class="inline-error" id="purchaseEmailError" role="alert"></div>
+        </label>
+
+        <div class="field-group">
+          <label class="field-label">Select Pass</label>
+          <div class="plan-cards" id="planGrid" role="radiogroup" aria-label="Pass duration">
+            <button type="button" class="plan-card active" data-plan="1_day" role="radio" aria-checked="true">
+              <div class="plan-name">1 Day Pass</div>
+              <div class="plan-price">$4.99</div>
+              <div class="plan-desc">Full access for 24 hours</div>
+            </button>
+            <button type="button" class="plan-card" data-plan="3_day" role="radio" aria-checked="false">
+              <div class="plan-name">3 Day Pass</div>
+              <div class="plan-price">$9.99</div>
+              <div class="plan-desc">Full access for 72 hours</div>
+            </button>
+          </div>
+        </div>
+
+        <div class="button-group">
+          <button class="modal-primary" type="button" id="proceedToPaymentBtn">
+            <span class="btn-text">Continue to Payment</span>
+            <span class="btn-spinner hidden">⟳</span>
+          </button>
+        </div>
+
+        <div class="secondary-actions">
+          <button class="text-btn" type="button" id="alreadyPaidBtn">I Already Paid</button>
+          <button class="text-btn" type="button" id="resendLinkBtn">Resend Access Link</button>
+        </div>
+
+        <p class="privacy-note">We use your email only for receipt delivery and secure pass activation.</p>
+      </div>
+
+      <!-- Step 2: Processing -->
+      <div class="modal-stack purchase-step hidden" id="purchaseStep2">
+        <div class="processing-state">
+          <div class="spinner-large">⟳</div>
+          <div class="option-title">Preparing Checkout...</div>
+          <div class="option-meta">You'll be redirected to our secure payment provider.</div>
+        </div>
+        <button class="modal-secondary" type="button" id="cancelPaymentBtn">Cancel</button>
+        <div class="inline-error" id="purchaseRedirectError" role="alert"></div>
+      </div>
+
+      <!-- Step 3: Resend Confirmation -->
+      <div class="modal-stack purchase-step hidden" id="purchaseStep3">
+        <div class="option-card text-center">
+          <div class="option-title">📧 Check Your Email</div>
+          <div class="option-meta" id="resendMessage">
+            We've sent a secure access link to your email. Click it to activate your pass.
+          </div>
+        </div>
+        <button class="modal-secondary" type="button" data-close="supportModalLayer">Got It</button>
+      </div>
+    </div>
+  </div>
+</dialog>
+
+<!-- 5. ABOUT / LEARN MORE MODAL -->
+<dialog class="modal-layer" id="aboutModalLayer" aria-labelledby="aboutModalTitle">
+  <div class="modal">
+    <div class="modal-head">
+      <h2 class="modal-title" id="aboutModalTitle">About DillDrill</h2>
+      <button class="modal-close" type="button" data-close="aboutModalLayer" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-stack about-content">
+        <section class="about-section">
+          <div class="section-icon">🏗️</div>
+          <div class="option-title">What It Does</div>
+          <div class="option-meta">
+            DillDrill helps estimate construction activity and demand signals around any location before you commit to a lease or purchase.
+          </div>
+        </section>
+
+        <section class="about-section">
+          <div class="section-icon">⚙️</div>
+          <div class="option-title">How To Use</div>
+          <ol class="steps-list">
+            <li>Enter valid coordinates</li>
+            <li>Run construction check first</li>
+            <li>Then run demand for same location</li>
+            <li>Review the combined risk score</li>
+          </ol>
+        </section>
+
+        <section class="about-section warning-section">
+          <div class="section-icon">⚠️</div>
+          <div class="option-title">Important Notes</div>
+          <div class="option-meta">
+            Results may be partial, delayed, inferred, or unavailable depending on data coverage and access tier. Always verify independently.
+          </div>
+        </section>
+
+        <section class="about-section">
+          <div class="section-icon">❓</div>
+          <div class="option-title">Support & Legal</div>
+          <div class="option-meta">
+            <a href="{{ faq_url|default('#') }}" class="modal-link" target="_blank" rel="noopener">Open FAQ</a>
+            <span class="separator">•</span>
+            <a href="mailto:help@dilldrill.com" class="modal-link">help@dilldrill.com</a>
+          </div>
+        </section>
+
+        <footer class="about-footer">
+          <p class="copyright">© DillDrill 2025. All rights reserved.</p>
+          <p class="version">v1.0.0</p>
+        </footer>
+      </div>
+    </div>
+  </div>
+</dialog>
+
+<!-- 6. LANGUAGE SELECTION MODAL (Bottom Sheet Style) -->
+<dialog class="modal-layer bottom-sheet" id="langModalLayer" aria-labelledby="langModalTitle">
+  <div class="modal">
+    <div class="modal-handle" aria-hidden="true"></div>
+    <div class="modal-head">
+      <h2 class="modal-title" id="langModalTitle">Select Language</h2>
+      <button class="modal-close" type="button" data-close="langModalLayer" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-stack">
+        <div class="lang-list" id="langList" role="listbox" aria-label="Available languages">
+          <button type="button" class="lang-item active" data-lang="en" role="option" aria-selected="true">
+            <span class="lang-flag">🇺🇸</span>
+            <span class="lang-name">English</span>
+            <span class="lang-native">English</span>
+            <span class="checkmark">✓</span>
+          </button>
+          <button type="button" class="lang-item" data-lang="es" role="option" aria-selected="false">
+            <span class="lang-flag">🇪🇸</span>
+            <span class="lang-name">Spanish</span>
+            <span class="lang-native">Español</span>
+            <span class="checkmark">✓</span>
+          </button>
+          <button type="button" class="lang-item" data-lang="fr" role="option" aria-selected="false">
+            <span class="lang-flag">🇫🇷</span>
+            <span class="lang-name">French</span>
+            <span class="lang-native">Français</span>
+            <span class="checkmark">✓</span>
+          </button>
+          <button type="button" class="lang-item" data-lang="de" role="option" aria-selected="false">
+            <span class="lang-flag">🇩🇪</span>
+            <span class="lang-name">German</span>
+            <span class="lang-native">Deutsch</span>
+            <span class="checkmark">✓</span>
+          </button>
+          <button type="button" class="lang-item" data-lang="ru" role="option" aria-selected="false">
+            <span class="lang-flag">🇷🇺</span>
+            <span class="lang-name">Russian</span>
+            <span class="lang-native">Русский</span>
+            <span class="checkmark">✓</span>
+          </button>
+          <button type="button" class="lang-item" data-lang="ko" role="option" aria-selected="false">
+            <span class="lang-flag">🇰🇷</span>
+            <span class="lang-name">Korean</span>
+            <span class="lang-native">한국어</span>
+            <span class="checkmark">✓</span>
+          </button>
+          <button type="button" class="lang-item" data-lang="zh" role="option" aria-selected="false">
+            <span class="lang-flag">🇨🇳</span>
+            <span class="lang-name">Chinese</span>
+            <span class="lang-native">中文</span>
+            <span class="checkmark">✓</span>
+          </button>
+          <button type="button" class="lang-item" data-lang="ja" role="option" aria-selected="false">
+            <span class="lang-flag">🇯🇵</span>
+            <span class="lang-name">Japanese</span>
+            <span class="lang-native">日本語</span>
+            <span class="checkmark">✓</span>
+          </button>
+        </div>
+
+        <div class="inline-error" id="langError" role="alert" aria-live="polite"></div>
+
+        <button class="modal-primary" type="button" id="saveLanguageBtn">
+          <span class="btn-text">Save Language</span>
+          <span class="btn-spinner hidden">⟳</span>
+        </button>
+      </div>
+    </div>
+  </div>
+</dialog>
+```
+
+### JavaScript - Unified Modal Controller
+
+```javascript
+/**
+ * ==========================================
+ * UNIFIED MODAL SYSTEM
+ * Merged implementation with best practices
+ * ==========================================
+ */
+
+const ModalSystem = (function() {
+  'use strict';
+
+  // ==========================================
+  // STATE MANAGEMENT
+  // ==========================================
+  const state = {
+    access: {
+      tier: document.getElementById('app')?.dataset.tier || 'free',
+      demandAllowed: document.getElementById('app')?.dataset.demandAllowed === 'true'
+    },
+    coords: {
+      lat: null,
+      lng: null,
+      valid: false,
+      key: null
+    },
+    report: {
+      type: 'active_construction',
+      note: ''
+    },
+    unlock: {
+      plan: '1_day',
+      email: ''
+    },
+    language: {
+      current: document.documentElement.lang || 'en',
+      selected: document.documentElement.lang || 'en'
+    },
+    modals: {
+      active: null,
+      history: []
+    }
+  };
+
+  // ==========================================
+  // UTILITY FUNCTIONS
+  // ==========================================
+  
+  const utils = {
+    /**
+     * Validate email format
+     */
+    isValidEmail(email) {
+      return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+    },
+
+    /**
+     * Debounce function calls
+     */
+    debounce(fn, delay = 300) {
+      let timeout;
+      return (...args) => {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => fn(...args), delay);
+      };
+    },
+
+    /**
+     * Format coordinates for display
+     */
+    formatCoords(lat, lng) {
+      return `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+    },
+
+    /**
+     * Show temporary feedback on button
+     */
+    showButtonFeedback(btn, text, duration = 2000) {
+      const originalText = btn.querySelector('.btn-text')?.textContent || btn.textContent;
+      const textSpan = btn.querySelector('.btn-text') || btn;
+      textSpan.textContent = text;
+      setTimeout(() => {
+        textSpan.textContent = originalText;
+      }, duration);
+    },
+
+    /**
+     * Toggle loading state on button
+     */
+    setButtonLoading(btn, isLoading) {
+      const text = btn.querySelector('.btn-text');
+      const spinner = btn.querySelector('.btn-spinner');
+      btn.disabled = isLoading;
+      if (text) text.classList.toggle('hidden', isLoading);
+      if (spinner) spinner.classList.toggle('hidden', !isLoading);
+    },
+
+    /**
+     * API POST helper with error handling
+     */
+    async apiPost(url, body) {
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(body)
+      });
+      
+      const data = await response.json().catch(() => ({}));
+      
+      if (!response.ok) {
+        throw new Error(data.detail || data.message || 'Request failed');
+      }
+      
+      return data;
+    }
+  };
+
+  // ==========================================
+  // CORE MODAL FUNCTIONALITY
+  // ==========================================
+  
+  const core = {
+    /**
+     * Initialize modal system
+     */
+    init() {
+      this.bindGlobalEvents();
+      this.upgradeToNativeDialogs();
+    },
+
+    /**
+     * Upgrade div-based modals to native <dialog> elements for better accessibility
+     * Falls back to class-based approach for older browsers
+     */
+    upgradeToNativeDialogs() {
+      document.querySelectorAll('.modal-layer').forEach(modal => {
+        // If browser supports <dialog>, ensure proper method usage
+        if (typeof HTMLDialogElement !== 'undefined') {
+          modal.addEventListener('click', (e) => {
+            if (e.target === modal && modal.classList.contains('native')) {
+              this.close(modal.id);
+            }
+          });
+        }
+      });
+    },
+
+    /**
+     * Open a modal by ID
+     */
+    open(modalId, options = {}) {
+      const modal = document.getElementById(modalId);
+      if (!modal) {
+        console.warn(`Modal #${modalId} not found`);
+        return;
+      }
+
+      // Close currently active modal if exists (unless stacking is enabled)
+      if (state.modals.active && !options.stack) {
+        this.close(state.modals.active, { silent: true });
+      }
+
+      // Show modal using native dialog API or fallback
+      if (modal.showModal && !modal.classList.contains('bottom-sheet')) {
+        modal.showModal();
+      } else {
+        modal.classList.add('open');
+      }
+      
+      modal.setAttribute('aria-hidden', 'false');
+      document.body.style.overflow = 'hidden';
+      
+      // Track active modal
+      state.modals.active = modalId;
+      if (!options.silent) {
+        state.modals.history.push(modalId);
+      }
+
+      // Focus management
+      this.trapFocus(modal);
+      
+      // Trigger open callback if exists
+      const event = new CustomEvent('modal:open', { detail: { modalId, options } });
+      modal.dispatchEvent(event);
+
+      return modal;
+    },
+
+    /**
+     * Close a modal by ID
+     */
+    close(modalId, options = {}) {
+      const modal = document.getElementById(modalId || state.modals.active);
+      if (!modal) return;
+
+      // Use native close or fallback
+      if (modal.close && !modal.classList.contains('bottom-sheet')) {
+        modal.close();
+      } else {
+        modal.classList.remove('open');
+      }
+      
+      modal.setAttribute('aria-hidden', 'true');
+      document.body.style.overflow = '';
+
+      // Update state
+      if (state.modals.active === modal.id) {
+        state.modals.active = null;
+      }
+      
+      if (!options.silent) {
+        state.modals.history = state.modals.history.filter(id => id !== modal.id);
+      }
+
+      // Return focus to trigger element if stored
+      if (modal.triggerElement) {
+        modal.triggerElement.focus();
+        delete modal.triggerElement;
+      }
+
+      // Trigger close callback
+      const event = new CustomEvent('modal:close', { detail: { modalId: modal.id, options } });
+      modal.dispatchEvent(event);
+
+      return modal;
+    },
+
+    /**
+     * Close all open modals
+     */
+    closeAll() {
+      document.querySelectorAll('.modal-layer.open, dialog[open]').forEach(modal => {
+        this.close(modal.id, { silent: true });
+      });
+      state.modals.history = [];
+    },
+
+    /**
+     * Trap focus within modal for accessibility
+     */
+    trapFocus(modal) {
+      const focusableElements = modal.querySelectorAll(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      );
+      
+      if (focusableElements.length === 0) return;
+      
+      const firstFocusable = focusableElements[0];
+      const lastFocusable = focusableElements[focusableElements.length - 1];
+
+      // Focus first element after animation
+      setTimeout(() => {
+        const primaryAction = modal.querySelector('.modal-primary');
+        (primaryAction || firstFocusable).focus();
+      }, 100);
+
+      // Handle tab cycling
+      modal.addEventListener('keydown', (e) => {
+        if (e.key !== 'Tab') return;
+
+        if (e.shiftKey && document.activeElement === firstFocusable) {
+          e.preventDefault();
+          lastFocusable.focus();
+        } else if (!e.shiftKey && document.activeElement === lastFocusable) {
+          e.preventDefault();
+          firstFocusable.focus();
+        }
+      });
+    },
+
+    /**
+     * Bind global modal events
+     */
+    bindGlobalEvents() {
+      // Close buttons
+      document.querySelectorAll('[data-close]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const modalId = btn.dataset.close;
+          this.close(modalId);
+        });
+      });
+
+      // Click outside to close (for non-dialog modals)
+      document.querySelectorAll('.modal-layer').forEach(layer => {
+        layer.addEventListener('click', (e) => {
+          if (e.target === layer && !layer.classList.contains('bottom-sheet')) {
+            this.close(layer.id);
+          }
+        });
+      });
+
+      // Escape key to close
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && state.modals.active) {
+          this.close(state.modals.active);
+        }
+      });
+
+      // Store trigger element for focus return
+      document.querySelectorAll('[data-open-modal]').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+          const modalId = btn.dataset.openModal;
+          const modal = document.getElementById(modalId);
+          if (modal) {
+            modal.triggerElement = btn;
+          }
+        });
+      });
+    }
+  };
+
+  // ==========================================
+  // MODAL-SPECIFIC LOGIC
+  // ==========================================
+  
+  const modals = {
+    /**
+     * 1. User Access Modal
+     */
+    user: {
+      init() {
+        const btn = document.getElementById('userMenuBtn');
+        const upgradeBtn = document.getElementById('userUpgradeBtn');
+        
+        btn?.addEventListener('click', () => {
+          core.open('userModalLayer');
+        });
+
+        upgradeBtn?.addEventListener('click', () => {
+          core.close('userModalLayer');
+          core.open('supportModalLayer');
+        });
+      },
+
+      updateStatus(tier, demandAllowed) {
+        state.access.tier = tier;
+        state.access.demandAllowed = demandAllowed;
+        
+        const badge = document.getElementById('userTierBadge');
+        const statusText = document.getElementById('userStatusText');
+        
+        if (badge) {
+          badge.textContent = `${tier.charAt(0).toUpperCase() + tier.slice(1)} Tier`;
+          badge.dataset.tier = tier;
+        }
+        
+        if (statusText) {
+          statusText.textContent = demandAllowed 
+            ? 'Demand is unlocked and your pass is active.'
+            : 'Construction is available. Demand requires a paid pass.';
+        }
+      }
+    },
+
+    /**
+     * 2. Report Modal
+     */
+    report: {
+      init() {
+        const btn = document.getElementById('reportBtn');
+        const submitBtn = document.getElementById('reportSubmitBtn');
+        const typeGrid = document.getElementById('reportTypeGrid');
+        const noteField = document.getElementById('reportNote');
+        const charCount = document.getElementById('reportCharCount');
+
+        // Open handler
+        btn?.addEventListener('click', () => {
+          if (!state.coords.valid) {
+            this.showError('Enter valid coordinates first.');
+            // Optional: highlight coord inputs
+            return;
+          }
+          
+          this.syncCoords();
+          this.reset();
+          core.open('reportModalLayer');
+        });
+
+        // Report type selection
+        typeGrid?.querySelectorAll('[data-report-type]').forEach(chip => {
+          chip.addEventListener('click', () => {
+            typeGrid.querySelectorAll('[data-report-type]').forEach(el => {
+              el.classList.remove('active');
+              el.setAttribute('aria-checked', 'false');
+            });
+            chip.classList.add('active');
+            chip.setAttribute('aria-checked', 'true');
+            state.report.type = chip.dataset.reportType;
+          });
+        });
+
+        // Character count
+        noteField?.addEventListener('input', (e) => {
+          const len = e.target.value.length;
+          charCount.textContent = `${len}/180`;
+          state.report.note = e.target.value;
+        });
+
+        // Submit handler
+        submitBtn?.addEventListener('click', async () => {
+          await this.submit();
+        });
+      },
+
+      syncCoords() {
+        const display = document.getElementById('reportCoordsDisplay');
+        if (display && state.coords.valid) {
+          display.textContent = utils.formatCoords(state.coords.lat, state.coords.lng);
+        }
+      },
+
+      async submit() {
+        const btn = document.getElementById('reportSubmitBtn');
+        const errorEl = document.getElementById('reportError');
+        
+        errorEl.textContent = '';
+        utils.setButtonLoading(btn, true);
+
+        try {
+          await utils.apiPost('/api/reports', {
+            lat: state.coords.lat,
+            lng: state.coords.lng,
+            report_type: state.report.type,
+            note: state.report.note
+          });
+
+          // Show success state
+          document.getElementById('reportFormState').classList.add('hidden');
+          document.getElementById('reportSuccessState').classList.remove('hidden');
+          
+          // Reset after delay
+          setTimeout(() => {
+            core.close('reportModalLayer');
+          }, 3000);
+
+        } catch (err) {
+          errorEl.textContent = err.message || 'Failed to submit report. Please try again.';
+        } finally {
+          utils.setButtonLoading(btn, false);
+        }
+      },
+
+      reset() {
+        document.getElementById('reportFormState')?.classList.remove('hidden');
+        document.getElementById('reportSuccessState')?.classList.add('hidden');
+        document.getElementById('reportNote').value = '';
+        document.getElementById('reportCharCount').textContent = '0/180';
+        document.getElementById('reportError').textContent = '';
+        
+        // Reset to first option
+        const firstType = document.querySelector('[data-report-type="active_construction"]');
+        if (firstType) {
+          firstType.click();
+        }
+      },
+
+      showError(msg) {
+        // Could show a toast or alert
+        console.error(msg);
+      }
+    },
+
+    /**
+     * 3. Share Modal
+     */
+    share: {
+      init() {
+        const btn = document.getElementById('shareBtn');
+        const nativeBtn = document.getElementById('nativeShareBtn');
+        const copyLinkBtn = document.getElementById('copyLinkBtn');
+        const copyAllBtn = document.getElementById('copyAllBtn');
+
+        btn?.addEventListener('click', () => {
+          document.getElementById('shareError').textContent = '';
+          core.open('shareModalLayer');
+        });
+
+        nativeBtn?.addEventListener('click', () => this.shareNative());
+        copyLinkBtn?.addEventListener('click', () => this.copyLink());
+        copyAllBtn?.addEventListener('click', () => this.copyAll());
+      },
+
+      getShareData() {
+        return {
+          title: 'DillDrill Construction Check',
+          text: document.getElementById('shareText').value,
+          url: document.getElementById('shareUrlBox').textContent.trim()
+        };
+      },
+
+      async shareNative() {
+        const data = this.getShareData();
+        
+        if (navigator.share) {
+          try {
+            await navigator.share(data);
+            core.close('shareModalLayer');
+            this.showFeedback('Thanks for sharing!');
+          } catch (err) {
+            if (err.name !== 'AbortError') {
+              console.error('Share failed:', err);
+            }
+          }
+        } else {
+          // Fallback to copy all
+          await this.copyAll();
+        }
+      },
+
+      async copyLink() {
+        const { url } = this.getShareData();
+        await this.copyToClipboard(url, 'Link copied!');
+      },
+
+      async copyAll() {
+        const { text, url } = this.getShareData();
+        await this.copyToClipboard(`${text} ${url}`, 'Copied to clipboard!');
+      },
+
+      async copyToClipboard(content, successMsg) {
+        const errorEl = document.getElementById('shareError');
+        
+        try {
+          await navigator.clipboard.writeText(content);
+          core.close('shareModalLayer');
+          this.showFeedback(successMsg);
+        } catch (err) {
+          errorEl.textContent = 'Could not copy. Please copy manually.';
+        }
+      },
+
+      showFeedback(msg) {
+        // Dispatch custom event for toast notification
+        window.dispatchEvent(new CustomEvent('app:notify', { 
+          detail: { message: msg, type: 'success' } 
+        }));
+      }
+    },
+
+    /**
+     * 4. Support/Purchase Modal
+     */
+    support: {
+      init() {
+        const btn = document.getElementById('supportBtn');
+        const proceedBtn = document.getElementById('proceedToPaymentBtn');
+        const cancelBtn = document.getElementById('cancelPaymentBtn');
+        const alreadyPaidBtn = document.getElementById('alreadyPaidBtn');
+        const resendBtn = document.getElementById('resendLinkBtn');
+        const planGrid = document.getElementById('planGrid');
+
+        btn?.addEventListener('click', () => {
+          this.reset();
+          core.open('supportModalLayer');
+        });
+
+        // Plan selection
+        planGrid?.querySelectorAll('[data-plan]').forEach(card => {
+          card.addEventListener('click', () => {
+            planGrid.querySelectorAll('[data-plan]').forEach(el => {
+              el.classList.remove('active');
+              el.setAttribute('aria-checked', 'false');
+            });
+            card.classList.add('active');
+            card.setAttribute('aria-checked', 'true');
+            state.unlock.plan = card.dataset.plan;
+          });
+        });
+
+        proceedBtn?.addEventListener('click', () => this.proceedToPayment());
+        cancelBtn?.addEventListener('click', () => this.reset());
+        alreadyPaidBtn?.addEventListener('click', () => this.showResendInfo());
+        resendBtn?.addEventListener('click', () => this.resendLink());
+      },
+
+      async proceedToPayment() {
+        const emailInput = document.getElementById('purchaseEmail');
+        const errorEl = document.getElementById('purchaseEmailError');
+        const email = emailInput.value.trim();
+
+        // Validate
+        if (!utils.isValidEmail(email)) {
+          errorEl.textContent = 'Please enter a valid email address.';
+          emailInput.focus();
+          return;
+        }
+
+        errorEl.textContent = '';
+        state.unlock.email = email;
+
+        // Show processing state
+        this.showStep(2);
+
+        try {
+          const data = await utils.apiPost('/billing/unlock_intent', {
+            email,
+            plan: state.unlock.plan
+          });
+
+          // Redirect to checkout
+          window.location.href = data.checkout_url;
+
+        } catch (err) {
+          this.showStep(1);
+          errorEl.textContent = err.message || 'Could not start checkout. Please try again.';
+        }
+      },
+
+      async resendLink() {
+        const emailInput = document.getElementById('purchaseEmail');
+        const errorEl = document.getElementById('purchaseEmailError');
+        const btn = document.getElementById('resendLinkBtn');
+        const email = emailInput.value.trim();
+
+        if (!utils.isValidEmail(email)) {
+          errorEl.textContent = 'Enter the email used for payment.';
+          return;
+        }
+
+        utils.setButtonLoading(btn, true);
+        errorEl.textContent = '';
+
+        try {
+          await utils.apiPost('/billing/resend_magic_link', { email });
+          this.showStep(3);
+          document.getElementById('resendMessage').textContent = 
+            `We've sent a new access link to ${email}. Check your inbox and spam folder.`;
+        } catch (err) {
+          errorEl.textContent = err.message || 'Could not resend link. Please try again.';
+        } finally {
+          utils.setButtonLoading(btn, false);
+        }
+      },
+
+      showResendInfo() {
+        const emailInput = document.getElementById('purchaseEmail');
+        const errorEl = document.getElementById('purchaseEmailError');
+        
+        if (!utils.isValidEmail(emailInput.value.trim())) {
+          errorEl.textContent = 'Enter your email above, then click "Resend Access Link".';
+        } else {
+          errorEl.textContent = 'Click "Resend Access Link" below to get a new link.';
+        }
+      },
+
+      showStep(stepNumber) {
+        document.querySelectorAll('#supportModalLayer .purchase-step').forEach((el, idx) => {
+          el.classList.toggle('hidden', idx + 1 !== stepNumber);
+        });
+      },
+
+      reset() {
+        this.showStep(1);
+        document.getElementById('purchaseEmail').value = '';
+        document.getElementById('purchaseEmailError').textContent = '';
+        document.getElementById('purchaseRedirectError').textContent = '';
+      }
+    },
+
+    /**
+     * 5. About Modal
+     */
+    about: {
+      init() {
+        const btn = document.getElementById('aboutBtn');
+        btn?.addEventListener('click', () => {
+          core.open('aboutModalLayer');
+        });
+      }
+    },
+
+    /**
+     * 6. Language Selection Modal (Bottom Sheet)
+     */
+    language: {
+      init() {
+        const btn = document.getElementById('langOpenBtn');
+        const saveBtn = document.getElementById('saveLanguageBtn');
+        const list = document.getElementById('langList');
+
+        btn?.addEventListener('click', () => {
+          state.language.selected = state.language.current;
+          this.syncUI();
+          core.open('langModalLayer');
+        });
+
+        // Language selection
+        list?.querySelectorAll('.lang-item').forEach(item => {
+          item.addEventListener('click', () => {
+            list.querySelectorAll('.lang-item').forEach(el => {
+              el.classList.remove('active');
+              el.setAttribute('aria-selected', 'false');
+            });
+            item.classList.add('active');
+            item.setAttribute('aria-selected', 'true');
+            state.language.selected = item.dataset.lang;
+          });
+        });
+
+        // Save handler
+        saveBtn?.addEventListener('click', () => this.save());
+
+        // Swipe to dismiss for bottom sheet
+        this.initSwipeToDismiss();
+      },
+
+      syncUI() {
+        const list = document.getElementById('langList');
+        list?.querySelectorAll('.lang-item').forEach(item => {
+          const isActive = item.dataset.lang === state.language.current;
+          item.classList.toggle('active', isActive);
+          item.setAttribute('aria-selected', isActive);
+        });
+      },
+
+      async save() {
+        const btn = document.getElementById('saveLanguageBtn');
+        const errorEl = document.getElementById('langError');
+
+        if (state.language.selected === state.language.current) {
+          core.close('langModalLayer');
+          return;
+        }
+
+        utils.setButtonLoading(btn, true);
+        errorEl.textContent = '';
+
+        try {
+          await utils.apiPost('/api/language', { lang: state.language.selected });
+          
+          // Update cookie and reload
+          document.cookie = `dd_lang=${state.language.selected}; path=/; max-age=31536000; SameSite=Lax`;
+          window.location.reload();
+
+        } catch (err) {
+          errorEl.textContent = err.message || 'Could not save language preference.';
+          utils.setButtonLoading(btn, false);
+        }
+      },
+
+      initSwipeToDismiss() {
+        const modal = document.getElementById('langModalLayer');
+        if (!modal) return;
+
+        let startY = 0;
+        let currentY = 0;
+        let isDragging = false;
+
+        const handle = modal.querySelector('.modal-handle') || modal.querySelector('.modal');
+
+        handle?.addEventListener('touchstart', (e) => {
+          startY = e.touches[0].clientY;
+          isDragging = true;
+          modal.style.transition = 'none';
+        }, { passive: true });
+
+        document.addEventListener('touchmove', (e) => {
+          if (!isDragging) return;
+          currentY = e.touches[0].clientY;
+          const delta = currentY - startY;
+          
+          if (delta > 0) {
+            modal.style.transform = `translateY(${delta}px)`;
+          }
+        }, { passive: true });
+
+        document.addEventListener('touchend', () => {
+          if (!isDragging) return;
+          isDragging = false;
+          modal.style.transition = '';
+          
+          const delta = currentY - startY;
+          if (delta > 100) {
+            core.close('langModalLayer');
+            modal.style.transform = '';
+          } else {
+            modal.style.transform = '';
+          }
+        });
+      }
+    }
+  };
+
+  // ==========================================
+  // PUBLIC API
+  // ==========================================
+  
+  return {
+    init() {
+      core.init();
+      Object.values(modals).forEach(m => m.init());
+    },
+    
+    // Expose specific methods for external use
+    open: core.open.bind(core),
+    close: core.close.bind(core),
+    closeAll: core.closeAll.bind(core),
+    
+    // State setters
+    setCoords(lat, lng) {
+      state.coords.lat = lat;
+      state.coords.lng = lng;
+      state.coords.valid = true;
+      state.coords.key = `${lat.toFixed(4)},${lng.toFixed(4)}`;
+    },
+    
+    clearCoords() {
+      state.coords.lat = null;
+      state.coords.lng = null;
+      state.coords.valid = false;
+      state.coords.key = null;
+    },
+    
+    updateAccess(tier, demandAllowed) {
+      modals.user.updateStatus(tier, demandAllowed);
+    }
+  };
+})();
+
+// ==========================================
+// INITIALIZATION
+// ==========================================
+
+// Auto-initialize when DOM is ready
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', () => ModalSystem.init());
+} else {
+  ModalSystem.init();
+}
+
+// Expose globally for debugging and external access
+window.ModalSystem = ModalSystem;
+```
+
+### Enhanced CSS (Additions)
+
+```css
+/* ==========================================
+   MODAL SYSTEM ENHANCEMENTS
+   ========================================== */
+
+/* Native dialog polyfill improvements */
+.modal-layer {
+  padding: 0;
+  border: none;
+  background: transparent;
+  max-width: 100%;
+  max-height: 100%;
+  width: 100%;
+  height: 100%;
+}
+
+.modal-layer::backdrop {
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(4px);
+}
+
+.modal-layer[open] {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Bottom Sheet Style (Mobile-optimized) */
+.modal-layer.bottom-sheet {
+  align-items: flex-end;
+  justify-content: center;
+}
+
+.modal-layer.bottom-sheet .modal {
+  width: 100%;
+  max-width: 600px;
+  border-radius: 20px 20px 0 0;
+  max-height: 85vh;
+  animation: slideUp 0.3s ease-out;
+}
+
+.modal-handle {
+  width: 40px;
+  height: 4px;
+  background: var(--border-color, #ddd);
+  border-radius: 2px;
+  margin: 12px auto;
+  cursor: grab;
+}
+
+/* Status Badges */
+.status-badge {
+  display: inline-block;
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.status-badge[data-tier="free"] {
+  background: #fee;
+  color: #c33;
+}
+
+.status-badge[data-tier="paid"] {
+  background: #efe;
+  color: #3c3;
+}
+
+/* Plan Cards (Visual selection) */
+.plan-cards {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.plan-card {
+  padding: 16px;
+  border: 2px solid var(--border-color, #e0e0e0);
+  border-radius: 12px;
+  background: transparent;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: left;
+}
+
+.plan-card.active {
+  border-color: var(--primary-color, #007bff);
+  background: var(--primary-light, rgba(0,123,255,0.05));
+}
+
+.plan-name {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.plan-price {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--primary-color, #007bff);
+}
+
+.plan-desc {
+  font-size: 12px;
+  color: var(--text-muted, #666);
+  margin-top: 4px;
+}
+
+/* Language List Items */
+.lang-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.lang-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: transparent;
+  cursor: pointer;
+  transition: all 0.2s;
+  width: 100%;
+  text-align: left;
+}
+
+.lang-item:hover {
+  background: var(--hover-bg, rgba(0,0,0,0.05));
+}
+
+.lang-item.active {
+  border-color: var(--primary-color, #007bff);
+  background: var(--primary-light, rgba(0,123,255,0.05));
+}
+
+.lang-flag {
+  font-size: 20px;
+}
+
+.lang-name {
+  flex: 1;
+  font-weight: 500;
+}
+
+.lang-native {
+  color: var(--text-muted, #666);
+  font-size: 14px;
+}
+
+.lang-item .checkmark {
+  opacity: 0;
+  color: var(--primary-color, #007bff);
+  font-weight: 700;
+}
+
+.lang-item.active .checkmark {
+  opacity: 1;
+}
+
+/* Success Animation */
+.success-animation {
+  text-align: center;
+  padding: 20px;
+}
+
+.success-icon {
+  width: 80px;
+  height: 80px;
+  margin: 0 auto 16px;
+  background: var(--success-color, #28a745);
+  color: white;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 40px;
+  animation: scaleIn 0.3s ease-out;
+}
+
+@keyframes scaleIn {
+  from { transform: scale(0); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+@keyframes slideUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+/* Utility Classes */
+.hidden { display: none !important; }
+.text-center { text-align: center; }
+.sr-only { /* Screen reader only */ }
+
+/* Button States */
+.btn-spinner {
+  display: inline-block;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Copy Field with Button */
+.copy-field {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.copy-field .readbox {
+  flex: 1;
+}
+
+.icon-btn {
+  padding: 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: white;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.icon-btn:hover {
+  background: var(--hover-bg);
+}
+
+/* Secondary Actions */
+.secondary-actions {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.text-btn {
+  background: none;
+  border: none;
+  color: var(--primary-color, #007bff);
+  font-size: 14px;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.text-btn:hover {
+  opacity: 0.8;
+}
+
+.privacy-note {
+  text-align: center;
+  font-size: 12px;
+  color: var(--text-muted, #666);
+  margin-top: 16px;
+}
+
+/* About Modal Specifics */
+.about-content {
+  gap: 20px;
+}
+
+.about-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.section-icon {
+  font-size: 32px;
+  margin-bottom: 4px;
+}
+
+.steps-list {
+  padding-left: 20px;
+  margin: 0;
+}
+
+.steps-list li {
+  margin-bottom: 8px;
+  color: var(--text-secondary);
+}
+
+.warning-section {
+  padding: 16px;
+  background: #fffbeb;
+  border-radius: 12px;
+  border: 1px solid #f59e0b;
+}
+
+.about-footer {
+  margin-top: 24px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border-color);
+  text-align: center;
+}
+
+.copyright {
+  font-size: 14px;
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.version {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin: 4px 0 0;
+}
+
+/* Processing State */
+.processing-state {
+  text-align: center;
+  padding: 40px 20px;
+}
+
+.spinner-large {
+  font-size: 48px;
+  animation: spin 1s linear infinite;
+  margin-bottom: 16px;
+  display: inline-block;
+}
+
+/* Limitation/Tips Lists */
+.limitation-list,
+.tips-list {
+  margin: 0;
+  padding-left: 20px;
+}
+
+.limitation-list li,
+.tips-list li {
+  margin-bottom: 6px;
+  color: var(--text-secondary);
+}
+
+/* Animations */
+.modal-layer {
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 0.2s, visibility 0.2s;
+}
+
+.modal-layer.open,
+.modal-layer[open] {
+  opacity: 1;
+  visibility: visible;
+}
+
+.modal {
+  transform: scale(0.95) translateY(10px);
+  transition: transform 0.2s ease-out;
+}
+
+.modal-layer.open .modal,
+.modal-layer[open] .modal {
+  transform: scale(1) translateY(0);
+}
+
+/* Responsive */
+@media (max-width: 480px) {
+  .modal {
+    margin: 0;
+    border-radius: 0;
+    min-height: 100vh;
+  }
+  
+  .modal-layer.bottom-sheet .modal {
+    border-radius: 20px 20px 0 0;
+    min-height: auto;
+  }
+  
+  .plan-cards {
+    grid-template-columns: 1fr;
+  }
+}
+```
+
+## Key Improvements Made
+
+| Feature | Implementation 1 | Implementation 2 | **Unified Version** |
+|---------|------------------|------------------|---------------------|
+| **HTML Element** | `<div>` | `<div>` | **`<dialog>`** with fallback |
+| **Focus Management** | Basic | Better | **Full trap + restoration** |
+| **State Handling** | Scattered | Partial | **Centralized state object** |
+| **Accessibility** | ARIA labels | Improved ARIA | **Full ARIA + roles + live regions** |
+| **Mobile UX** | Basic | Basic | **Bottom sheet + swipe gestures** |
+| **Error Handling** | Inline | Inline | **Structured + user feedback** |
+| **Loading States** | Text change | Basic | **Spinner + disabled states** |
+| **Plan Selection** | Chips | Chips | **Visual cards with pricing** |
+| **Language Modal** | List | Chips | **Full bottom sheet pattern** |
+| **Success States** | Message | Container swap | **Animated success screen** |
+| **Code Structure** | Flat | Namespaced | **Modular IIFE pattern** |
+
+The unified version uses the native `<dialog>` element for better accessibility, implements a comprehensive state management system, adds mobile-optimized interactions like swipe-to-dismiss for the language selector, and provides clear visual feedback for all user actions.

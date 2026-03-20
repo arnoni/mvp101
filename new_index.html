@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="{{ lang|default('en') }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#071935">
+  <title>DillDrill – Construction & Demand Activity</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
+</head>
+<body 
+  data-tier="{{ tier|default('free') }}" 
+  data-demand-allowed="{{ 'true' if demand_allowed else 'false' }}"
+  data-turnstile-sitekey="{{ turnstile_site_key }}"
+>
+  <main class="app" id="app">
+    <!-- HEADER -->
+    <header class="topbar">
+      <div class="pill status-pill">{{ tier|default('free')|capitalize }}</div>
+      <h1 class="brand">DillDrill</h1>
+      <button class="pill">EN</button>
+    </header>
+
+    <section class="hero">
+      Check construction now, sleep better later.
+    </section>
+
+    <!-- INPUT STATE -->
+    <section class="card input-card">
+      <h2 class="sr-only">Location Entry</h2>
+      <p class="helper">Paste coordinates in decimal degrees.</p>
+      <form id="coordForm" novalidate>
+        <div class="input-grid">
+          <label class="field">
+            <span>Latitude</span>
+            <input id="latInput" type="text" inputmode="decimal" placeholder="16.0544" aria-describedby="coordError">
+          </label>
+          <label class="field">
+            <span>Longitude</span>
+            <input id="lngInput" type="text" inputmode="decimal" placeholder="108.2022" aria-describedby="coordError">
+          </label>
+        </div>
+        <div class="inline-error" id="coordError" aria-live="polite"></div>
+        
+        <div class="turnstile-slot hidden" id="turnstileSlot">
+          <p class="turnstile-label">Verification required</p>
+          <div id="turnstileContainer"></div>
+        </div>
+
+        <button class="primary-btn" id="mainActionBtn" disabled>Check Location</button>
+      </form>
+    </section>
+
+    <!-- CONSTRUCTION GAUGE -->
+    <section class="card gauge-card">
+      <h2 class="section-title">Construction Activity</h2>
+      <div class="gauge-wrap">
+        <svg viewBox="0 0 320 220" class="gauge-svg" aria-hidden="true">
+          <defs>
+            <linearGradient id="gradCon" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="#5ee500"/>
+              <stop offset="50%" stop-color="#ffb400"/>
+              <stop offset="100%" stop-color="#ff2f05"/>
+            </linearGradient>
+          </defs>
+          <path d="M40 180 A120 120 0 0 1 280 180" class="gauge-track" />
+          <path d="M40 180 A120 120 0 0 1 280 180" class="gauge-band" id="constructionBand" stroke="url(#gradCon)" stroke-dasharray="377" stroke-dashoffset="377" />
+          <g class="needle" id="constructionNeedle" transform="rotate(-82 160 180)">
+            <line x1="160" y1="180" x2="160" y2="78" class="needle-line" />
+            <circle cx="160" cy="180" r="10" class="needle-hub" />
+          </g>
+          <text x="50" y="170" class="gauge-label text-left">Low</text>
+          <text x="160" y="50" class="gauge-label text-center">Med</text>
+          <text x="270" y="170" class="gauge-label text-right">High</text>
+        </svg>
+        <div class="gauge-value" id="constructionValue">--</div>
+        <button class="gauge-btn" id="constructionGoBtn" disabled>Check</button>
+      </div>
+      <div class="message-board" id="constructionMessage" aria-live="polite">Enter coordinates to begin</div>
+    </section>
+
+    <!-- DEMAND GAUGE -->
+    <section class="card gauge-card">
+      <h2 class="section-title">Demand Signal</h2>
+      <div class="gauge-wrap smaller">
+        <svg viewBox="0 0 320 220" class="gauge-svg" aria-hidden="true">
+          <defs>
+            <linearGradient id="gradDem" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="#49d17d"/>
+              <stop offset="100%" stop-color="#4a90e2"/>
+            </linearGradient>
+          </defs>
+          <path d="M40 180 A120 120 0 0 1 280 180" class="gauge-track" />
+          <path d="M40 180 A120 120 0 0 1 280 180" class="gauge-band" id="demandBand" stroke="url(#gradDem)" stroke-dasharray="377" stroke-dashoffset="377" />
+          <g class="needle" id="demandNeedle" transform="rotate(-82 160 180)">
+            <line x1="160" y1="180" x2="160" y2="78" class="needle-line" />
+            <circle cx="160" cy="180" r="10" class="needle-hub" />
+          </g>
+          <text x="50" y="170" class="gauge-label text-left">Low</text>
+          <text x="160" y="50" class="gauge-label text-center">Med</text>
+          <text x="270" y="170" class="gauge-label text-right">High</text>
+        </svg>
+        <div class="gauge-value" id="demandValue">--</div>
+        <button class="gauge-btn small {% if not demand_allowed %}unlock-styled{% endif %}" id="demandGoBtn" disabled>
+          {{ 'Check' if demand_allowed else 'Unlock' }}
+        </button>
+      </div>
+      <div class="message-board" id="demandMessage" aria-live="polite">
+        {{ 'Ready' if demand_allowed else 'Paid pass required' }}
+      </div>
+    </section>
+
+    <!-- UTILITIES -->
+    <div class="utility-row">
+      <button class="utility-btn">Report</button>
+      <button class="utility-btn">Share</button>
+      <button class="utility-btn accent" id="unlockTriggerBtn">Unlock</button>
+    </div>
+    <button class="footer-btn">About · FAQ · Legal</button>
+
+    <!-- MULTI-STEP MODAL -->
+    <div class="modal-layer" id="unlockModalLayer" role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+      <div class="modal">
+        <div class="modal-head">
+          <h2 id="modalTitle" class="modal-title">Unlock Demand</h2>
+          <button class="modal-close" data-close="unlockModalLayer" aria-label="Close">✕</button>
+        </div>
+        
+        <div class="modal-body">
+          <!-- Step 1: Intent -->
+          <div class="modal-step active" id="stepIntent">
+            <p class="helper" style="margin-bottom: 16px;">Enter email to receive your secure access link.</p>
+            <div class="field" style="margin-bottom: 16px;">
+              <label for="unlockEmail" class="sr-only">Email Address</label>
+              <input type="email" id="unlockEmail" class="modal-input" placeholder="you@example.com">
+              <div class="inline-error" id="unlockEmailError"></div>
+            </div>
+            <div class="chip-grid">
+              <button class="chip active" data-plan="1_day">1 Day Pass<br/><span>$2.99</span></button>
+              <button class="chip" data-plan="3_day">3 Day Pass<br/><span>$4.99</span></button>
+            </div>
+            <button class="primary-btn" id="continueToPaymentBtn">Continue to Payment</button>
+          </div>
+
+          <!-- Step 2: Awaiting -->
+          <div class="modal-step hidden" id="stepAwaiting">
+            <div class="spinner"></div>
+            <h3 style="text-align: center; margin-top: 16px;">Complete Checkout</h3>
+            <p class="helper">Please complete your payment in the secure window. We will send your magic link to <strong id="awaitingEmailDisplay" style="color:#fff;"></strong>.</p>
+            <button class="modal-secondary" data-close="unlockModalLayer" style="margin-top: 24px;">Cancel</button>
+          </div>
+
+          <!-- Step 3: Success -->
+          <div class="modal-step hidden" id="stepSuccess">
+            <div class="success-icon">✓</div>
+            <h3 style="text-align: center; margin-top: 16px;">Link Sent!</h3>
+            <p class="helper">Check your email and click the secure link to instantly activate your dashboard.</p>
+            <button class="primary-btn" data-close="unlockModalLayer" style="margin-top: 24px;">Got it</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </main>
+  
+  <script src="/static/app.js"></script>
+</body>
+</html>

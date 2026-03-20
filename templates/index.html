@@ -1,649 +1,491 @@
-<!DOCTYPE html>
-<html lang="{{ current_lang }}">
-
+<!doctype html>
+<html lang="{{ lang|default('en') }}">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{{ t.title }}</title>
-    <!-- Tailwind CSS (mock) -->
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
-    <style>
-        ::-webkit-scrollbar {
-            width: 8px;
-        }
-
-        ::-webkit-scrollbar-track {
-            background: #f1f5f9;
-        }
-
-        ::-webkit-scrollbar-thumb {
-            background: #cbd5e1;
-            border-radius: 4px;
-        }
-
-        ::-webkit-scrollbar-thumb:hover {
-            background: #94a3b8;
-        }
-
-        /* Drilling/Rumble Animation for Item 3 */
-        @keyframes drill-rumble {
-            0% {
-                transform: translate(0, 0) rotate(0deg);
-            }
-
-            2% {
-                transform: translate(-1px, 1px) rotate(-1deg);
-            }
-
-            4% {
-                transform: translate(1px, -1px) rotate(1deg);
-            }
-
-            6% {
-                transform: translate(-1px, -1px) rotate(-1deg);
-            }
-
-            8% {
-                transform: translate(1px, 1px) rotate(1deg);
-            }
-
-            10% {
-                transform: translate(0, 0) rotate(0deg);
-            }
-
-            /* Pause */
-            100% {
-                transform: translate(0, 0) rotate(0deg);
-            }
-        }
-
-        .drill-text {
-            /* Drill sound visual: bursts of vibration */
-            animation: drill-rumble 2s infinite linear;
-            display: inline-block;
-        }
-
-        .drill-text:hover {
-            /* Continuous drilling on hover */
-            animation: drill-rumble 0.2s infinite linear;
-        }
-    </style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#071935">
+  <title>DillDrill – Construction & Demand Activity</title>
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit" async defer></script>
 </head>
+<body 
+  data-tier="{{ tier|default('free') }}" 
+  data-demand-allowed="{{ 'true' if demand_allowed else 'false' }}"
+  data-turnstile-sitekey="{{ turnstile_site_key }}"
+>
+  <main class="app" id="app">
+    <!-- HEADER -->
+    <header class="topbar">
+      <div class="pill status-pill" id="userMenuBtn" role="button" tabindex="0">{{ tier|default('free')|capitalize }}</div>
+      <h1 class="brand">DillDrill</h1>
+      <button class="pill" id="langOpenBtn">EN</button>
+    </header>
 
-<body class="bg-slate-50 min-h-screen flex flex-col items-center py-12 px-4 sm:px-6 lg:px-8 font-sans text-slate-900">
-    <div class="max-w-md w-full space-y-6 bg-white p-8 rounded-2xl shadow-xl border border-slate-100 relative">
-        <div class="absolute top-4 left-4 flex flex-col items-start text-xs space-y-1">
-            <button id="user-status-text" class="text-slate-700 font-medium hover:underline text-left"
-                onclick="event.preventDefault(); togglePaymentModal(); return false;">{{ initial_user_status.text
-                }}</button>
+    <section class="hero">
+      Check construction now, sleep better later.
+    </section>
+
+    <!-- INPUT STATE -->
+    <section class="card input-card">
+      <h2 class="sr-only">Location Entry</h2>
+      <p class="helper">Paste coordinates in decimal degrees.</p>
+      <form id="coordForm" novalidate>
+        <div class="input-grid">
+          <label class="field">
+            <span>Latitude</span>
+            <input id="latInput" type="text" inputmode="decimal" placeholder="16.0544" aria-describedby="coordError">
+          </label>
+          <label class="field">
+            <span>Longitude</span>
+            <input id="lngInput" type="text" inputmode="decimal" placeholder="108.2022" aria-describedby="coordError">
+          </label>
+        </div>
+        <div class="inline-error" id="coordError" aria-live="polite"></div>
+        
+        <div class="turnstile-slot hidden" id="turnstileSlot">
+          <p class="turnstile-label">Verification required</p>
+          <div id="turnstileContainer"></div>
         </div>
 
-        <!-- Language Selector -->
-        <div class="absolute top-4 right-4 flex space-x-2 text-xs">
-            <a href="?lang=en" onclick="setLang('en')"
-                class="hover:underline {% if current_lang == 'en' %}font-bold{% endif %}">EN</a>
-            <span class="text-slate-300">|</span>
-            <a href="?lang=es" onclick="setLang('es')"
-                class="hover:underline {% if current_lang == 'es' %}font-bold{% endif %}">ES</a>
-            <span class="text-slate-300">|</span>
-            <a href="?lang=ru" onclick="setLang('ru')"
-                class="hover:underline {% if current_lang == 'ru' %}font-bold{% endif %}">RU</a>
-            <span class="text-slate-300">|</span>
-            <a href="?lang=ko" onclick="setLang('ko')"
-                class="hover:underline {% if current_lang == 'ko' %}font-bold{% endif %}">KO</a>
-        </div>
+        <button class="primary-btn" id="mainActionBtn" disabled>Check Location</button>
+      </form>
+    </section>
 
-        <header class="text-center mb-6 mt-6">
-            <!-- Item 2 & 3: Animated Branding with Drilling Effect -->
-            <div class="mb-4 flex flex-col items-center justify-center">
-                <h1 class="text-4xl font-extrabold text-slate-800 tracking-tight drill-text relative">
-                    DillDrill
-                    <!-- Item 2: TM Mark (Explicitly positioned and styled) -->
-                    <span class="absolute -top-2 -right-6 text-sm font-bold text-slate-400 select-none">&trade;</span>
-                </h1>
-            </div>
-            <p class="text-slate-500 mt-1">{{ t.subtitle }}</p>
-            <p class="text-xs text-slate-400 mt-1">{{ t.early_preview }}</p>
-        </header>
+    <!-- CONSTRUCTION GAUGE -->
+    <section class="card gauge-card">
+      <h2 class="section-title">Construction Activity</h2>
+      <div class="gauge-wrap">
+        <svg viewBox="0 0 320 220" class="gauge-svg" aria-hidden="true">
+          <defs>
+            <linearGradient id="gradCon" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="#5ee500"/>
+              <stop offset="50%" stop-color="#ffb400"/>
+              <stop offset="100%" stop-color="#ff2f05"/>
+            </linearGradient>
+          </defs>
+          <path d="M40 180 A120 120 0 0 1 280 180" class="gauge-track" />
+          <path d="M40 180 A120 120 0 0 1 280 180" class="gauge-band" id="constructionBand" stroke="url(#gradCon)" stroke-dasharray="377" stroke-dashoffset="377" />
+          <g class="needle" id="constructionNeedle" transform="rotate(-82 160 180)">
+            <line x1="160" y1="180" x2="160" y2="78" class="needle-line" />
+            <circle cx="160" cy="180" r="10" class="needle-hub" />
+          </g>
+          <text x="50" y="170" class="gauge-label text-left">Low</text>
+          <text x="160" y="50" class="gauge-label text-center">Med</text>
+          <text x="270" y="170" class="gauge-label text-right">High</text>
+        </svg>
+        <div class="gauge-value" id="constructionValue">--</div>
+        <button class="gauge-btn" id="constructionGoBtn" disabled>Check</button>
+      </div>
+      <div class="message-board" id="constructionMessage" aria-live="polite">Enter coordinates to begin</div>
+    </section>
 
-        <form id="search-form" class="space-y-4">
-            <div class="flex justify-between items-center">
-                <label for="coordinates" class="block text-sm font-medium text-slate-700">{{ t.input_label }}</label>
-                <!-- Item 3: Tutorial Link -->
-                <button type="button" onclick="event.preventDefault(); toggleAboutModal(); return false;"
-                    class="text-xs text-blue-500 hover:text-blue-700 rounded p-1" aria-label="{{ t.how_to_use }}"
-                    title="{{ t.how_to_use }}">
-                    <span aria-hidden="true" class="font-bold">?</span>
-                    <span class="sr-only">{{ t.how_to_use }}</span>
-                </button>
-            </div>
-            <input type="text" id="coordinates" name="coordinates" required placeholder="{{ t.placeholder }}"
-                class="w-full px-4 py-3 border border-slate-300 rounded-lg focus:ring-blue-500 focus:border-blue-500 text-lg shadow-sm transition-all duration-200">
+    <!-- DEMAND GAUGE -->
+    <section class="card gauge-card">
+      <h2 class="section-title">Demand Signal</h2>
+      <div class="gauge-wrap smaller">
+        <svg viewBox="0 0 320 220" class="gauge-svg" aria-hidden="true">
+          <defs>
+            <linearGradient id="gradDem" x1="0%" y1="0%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="#49d17d"/>
+              <stop offset="100%" stop-color="#4a90e2"/>
+            </linearGradient>
+          </defs>
+          <path d="M40 180 A120 120 0 0 1 280 180" class="gauge-track" />
+          <path d="M40 180 A120 120 0 0 1 280 180" class="gauge-band" id="demandBand" stroke="url(#gradDem)" stroke-dasharray="377" stroke-dashoffset="377" />
+          <g class="needle" id="demandNeedle" transform="rotate(-82 160 180)">
+            <line x1="160" y1="180" x2="160" y2="78" class="needle-line" />
+            <circle cx="160" cy="180" r="10" class="needle-hub" />
+          </g>
+          <text x="50" y="170" class="gauge-label text-left">Low</text>
+          <text x="160" y="50" class="gauge-label text-center">Med</text>
+          <text x="270" y="170" class="gauge-label text-right">High</text>
+        </svg>
+        <div class="gauge-value" id="demandValue">--</div>
+        <button class="gauge-btn small {% if not demand_allowed %}unlock-styled{% endif %}" id="demandGoBtn" disabled>
+          {{ 'Check' if demand_allowed else 'Unlock' }}
+        </button>
+      </div>
+      <div class="message-board" id="demandMessage" aria-live="polite">
+        {{ 'Ready' if demand_allowed else 'Paid pass required' }}
+      </div>
+    </section>
 
-            {% if settings.ENV == 'development' %}
-            <div
-                class="p-3 bg-yellow-50 border border-yellow-200 text-yellow-800 rounded-lg mb-4 text-sm flex items-center">
-                <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                        d="M13 10V3L4 14h7v7l9-11h-7z" />
-                </svg>
-                Dev Mode: Extended error info enabled. Turnstile Verification Required.
-                {% if using_fallback_quota %}
-                <br />Using in‑memory quota fallback (Redis unavailable or disabled).
-                {% endif %}
-            </div>
+    <!-- UTILITIES -->
+    <div class="utility-row">
+      <button class="utility-btn" id="reportBtn">Report</button>
+      <button class="utility-btn" id="shareBtn">Share</button>
+      <button class="utility-btn accent" id="supportBtn">Unlock</button>
+    </div>
+    <button class="footer-btn" id="aboutBtn">About · FAQ · Legal</button>
+
+    
+<!-- ==========================================
+     MODAL SYSTEM - Unified Implementation
+     ========================================== -->
+
+<!-- 1. USER ACCESS / ACCOUNT STATUS MODAL -->
+<dialog class="modal-layer" id="userModalLayer" aria-labelledby="userModalTitle">
+  <div class="modal">
+    <div class="modal-head">
+      <h2 class="modal-title" id="userModalTitle">Your Access</h2>
+      <button class="modal-close" type="button" data-close="userModalLayer" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-stack">
+        <div class="option-card status-card">
+          <div class="status-badge" id="userTierBadge" data-tier="{{ tier|default('free') }}">
+            {{ tier|capitalize if tier else 'Free' }} Tier
+          </div>
+          <div class="option-meta" id="userStatusText">
+            {% if demand_allowed %}
+              Demand is unlocked and your pass is active.
+            {% else %}
+              Construction is available. Demand requires a paid pass.
             {% endif %}
-
-            <div id="turnstile-widget" class="cf-turnstile" data-sitekey="{{ turnstile_site_key }}"
-                data-callback="turnstileCallback"
-                style="{% if not initial_turnstile_required %}display:none{% endif %}"></div>
-            <input type="hidden" id="turnstile-token" name="turnstile_token">
-
-            <button type="submit" id="search-button"
-                class="w-full bg-blue-600 text-white py-3 rounded-lg text-lg font-semibold hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 disabled:opacity-50 shadow-md transition-all duration-200">
-                {{ t.button_search }}
-            </button>
-        </form>
-
-        <div id="results-section" class="mt-8 space-y-4">
-            <h2 class="text-xl font-semibold text-slate-800">{{ t.results_header }}</h2>
-            <div id="results-empty"
-                class="bg-gradient-to-r from-slate-50 to-slate-100 border border-slate-200 rounded-lg p-6 text-center">
-                <div class="mx-auto w-24 h-24 mb-3">
-                    <svg viewBox="0 0 64 64" class="w-full h-full text-slate-400">
-                        <rect x="10" y="22" width="44" height="28" rx="4" fill="currentColor" opacity="0.2" />
-                        <rect x="18" y="26" width="12" height="16" rx="2" fill="currentColor" opacity="0.35" />
-                        <rect x="34" y="26" width="12" height="12" rx="2" fill="currentColor" opacity="0.35" />
-                        <circle cx="48" cy="22" r="4" fill="currentColor" opacity="0.5" />
-                    </svg>
-                </div>
-                <p class="text-slate-700 font-medium">{{ t.results_empty_title }}</p>
-                <p class="text-slate-500 text-sm">{{ t.results_empty_subtitle }}</p>
-            </div>
-            <div id="results-list" class="space-y-4"></div>
-
-            <!-- Quota & Share Info -->
-            <div id="meta-info" class="mt-4 text-xs text-slate-400 text-center"></div>
+          </div>
         </div>
-        <div id="message-board" class="mt-4 p-3 text-sm rounded-lg hidden" role="status"></div>
 
-        <footer class="mt-8 text-center text-xs text-slate-400 space-y-2">
-            <div>v{{ settings.VERSION }}</div>
-            <!-- Item 5: Legal & Copyright -->
-            <div class="flex justify-center space-x-2">
-                <a href="javascript:void(0)" onclick="event.preventDefault(); toggleAboutModal(); return false;"
-                    class="hover:text-slate-600 hover:underline">{{ t.about }}</a>
-                <span>&bull;</span>
-                <span id="copyright">{{ t.rights }}
-                    <script>document.write(new Date().getFullYear())</script>
-                </span>
-            </div>
+        {% if not demand_allowed %}
+        <div class="option-card warning-card">
+          <div class="option-title">⚠️ Limitations</div>
+          <ul class="limitation-list">
+            <li>Demand checks are locked</li>
+            <li>Subject to rate limiting</li>
+            <li>Turnstile verification required</li>
+          </ul>
+        </div>
+
+        <div class="option-card tips-card">
+          <div class="option-title">💡 Recommendations</div>
+          <ul class="tips-list">
+            <li>Use valid coordinates</li>
+            <li>Run construction first</li>
+            <li>Then demand for same location</li>
+          </ul>
+        </div>
+
+        <button class="modal-primary" type="button" id="userUpgradeBtn">Unlock Full Access</button>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+</dialog>
+
+<!-- 2. SUBMIT A REPORT MODAL -->
+<dialog class="modal-layer" id="reportModalLayer" aria-labelledby="reportModalTitle">
+  <div class="modal">
+    <div class="modal-head">
+      <h2 class="modal-title" id="reportModalTitle">Submit Report</h2>
+      <button class="modal-close" type="button" data-close="reportModalLayer" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body">
+      <!-- Form State -->
+      <div class="modal-stack" id="reportFormState">
+        <div class="option-card location-card">
+          <div class="option-title">📍 Location</div>
+          <div class="option-meta" id="reportCoordsDisplay">Coordinates not set</div>
+        </div>
+
+        <div class="field-group">
+          <label class="field-label">Report Type</label>
+          <div class="chip-grid" id="reportTypeGrid" role="radiogroup" aria-label="Report type">
+            <button type="button" class="chip active" data-report-type="active_construction" role="radio" aria-checked="true">
+              Active Construction
+            </button>
+            <button type="button" class="chip" data-report-type="noise_heard" role="radio" aria-checked="false">
+              Noise Heard
+            </button>
+            <button type="button" class="chip" data-report-type="new_site_spotted" role="radio" aria-checked="false">
+              New Site Spotted
+            </button>
+            <button type="button" class="chip" data-report-type="unsure_but_suspicious" role="radio" aria-checked="false">
+              Suspicious / Unsure
+            </button>
+          </div>
+        </div>
+
+        <label class="field">
+          <span class="field-label">Additional Notes <span class="optional">(optional)</span></span>
+          <textarea class="modal-textarea" id="reportNote" rows="3" maxlength="180" 
+                    placeholder="Describe what you observed..."></textarea>
+          <span class="char-count" id="reportCharCount">0/180</span>
+        </label>
+
+        <div class="inline-error" id="reportError" role="alert" aria-live="polite"></div>
+
+        <div class="button-group">
+          <button class="modal-primary" type="button" id="reportSubmitBtn">
+            <span class="btn-text">Submit Report</span>
+            <span class="btn-spinner hidden">⟳</span>
+          </button>
+          <button class="modal-secondary" type="button" data-close="reportModalLayer">Cancel</button>
+        </div>
+      </div>
+
+      <!-- Success State -->
+      <div class="modal-stack hidden" id="reportSuccessState">
+        <div class="success-animation">
+          <div class="success-icon">✓</div>
+        </div>
+        <div class="option-card text-center">
+          <div class="option-title">Report Received!</div>
+          <div class="option-meta">Thank you for helping keep the community map accurate.</div>
+        </div>
+        <button class="modal-secondary" type="button" data-close="reportModalLayer">Done</button>
+      </div>
+    </div>
+  </div>
+</dialog>
+
+<!-- 3. SHARE THE APP MODAL -->
+<dialog class="modal-layer" id="shareModalLayer" aria-labelledby="shareModalTitle">
+  <div class="modal">
+    <div class="modal-head">
+      <h2 class="modal-title" id="shareModalTitle">Share DillDrill</h2>
+      <button class="modal-close" type="button" data-close="shareModalLayer" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-stack">
+        <label class="field">
+          <span class="field-label">Share Message</span>
+          <textarea class="modal-textarea" id="shareText" rows="2">Check construction activity near any location with DillDrill.</textarea>
+        </label>
+
+        <div class="field">
+          <span class="field-label">Link</span>
+          <div class="copy-field">
+            <div class="readbox" id="shareUrlBox">{{ share_url|default('https://dilldrill.com') }}</div>
+            <button class="icon-btn" type="button" id="copyLinkBtn" aria-label="Copy link">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
+                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+              </svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="share-grid">
+          <button class="modal-primary share-native" type="button" id="nativeShareBtn">
+            <span>📤 Share Now</span>
+          </button>
+          <button class="modal-secondary" type="button" id="copyAllBtn">Copy Text + Link</button>
+        </div>
+
+        <div class="inline-error" id="shareError" role="alert" aria-live="polite"></div>
+      </div>
+    </div>
+  </div>
+</dialog>
+
+<!-- 4. PURCHASE SUPPORT / SUBSCRIPTION MODAL -->
+<dialog class="modal-layer" id="supportModalLayer" aria-labelledby="supportModalTitle">
+  <div class="modal">
+    <div class="modal-head">
+      <h2 class="modal-title" id="supportModalTitle">Unlock Full Access</h2>
+      <button class="modal-close" type="button" data-close="supportModalLayer" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body">
+      <!-- Step 1: Email & Plan Selection -->
+      <div class="modal-stack purchase-step" id="purchaseStep1">
+        <div class="option-card info-card">
+          <div class="option-title">🔐 No Account Needed</div>
+          <div class="option-meta">
+            Enter your email, complete payment, then use the secure access link we send you.
+          </div>
+        </div>
+
+        <label class="field">
+          <span class="field-label">Email Address</span>
+          <input type="email" id="purchaseEmail" class="modal-input" 
+                 inputmode="email" autocomplete="email" 
+                 placeholder="you@example.com">
+          <div class="inline-error" id="purchaseEmailError" role="alert"></div>
+        </label>
+
+        <div class="field-group">
+          <label class="field-label">Select Pass</label>
+          <div class="plan-cards" id="planGrid" role="radiogroup" aria-label="Pass duration">
+            <button type="button" class="plan-card active" data-plan="1_day" role="radio" aria-checked="true">
+              <div class="plan-name">1 Day Pass</div>
+              <div class="plan-price">$4.99</div>
+              <div class="plan-desc">Full access for 24 hours</div>
+            </button>
+            <button type="button" class="plan-card" data-plan="3_day" role="radio" aria-checked="false">
+              <div class="plan-name">3 Day Pass</div>
+              <div class="plan-price">$9.99</div>
+              <div class="plan-desc">Full access for 72 hours</div>
+            </button>
+          </div>
+        </div>
+
+        <div class="button-group">
+          <button class="modal-primary" type="button" id="proceedToPaymentBtn">
+            <span class="btn-text">Continue to Payment</span>
+            <span class="btn-spinner hidden">⟳</span>
+          </button>
+        </div>
+
+        <div class="secondary-actions">
+          <button class="text-btn" type="button" id="alreadyPaidBtn">I Already Paid</button>
+          <button class="text-btn" type="button" id="resendLinkBtn">Resend Access Link</button>
+        </div>
+
+        <p class="privacy-note">We use your email only for receipt delivery and secure pass activation.</p>
+      </div>
+
+      <!-- Step 2: Processing -->
+      <div class="modal-stack purchase-step hidden" id="purchaseStep2">
+        <div class="processing-state">
+          <div class="spinner-large">⟳</div>
+          <div class="option-title">Preparing Checkout...</div>
+          <div class="option-meta">You'll be redirected to our secure payment provider.</div>
+        </div>
+        <button class="modal-secondary" type="button" id="cancelPaymentBtn">Cancel</button>
+        <div class="inline-error" id="purchaseRedirectError" role="alert"></div>
+      </div>
+
+      <!-- Step 3: Resend Confirmation -->
+      <div class="modal-stack purchase-step hidden" id="purchaseStep3">
+        <div class="option-card text-center">
+          <div class="option-title">📧 Check Your Email</div>
+          <div class="option-meta" id="resendMessage">
+            We've sent a secure access link to your email. Click it to activate your pass.
+          </div>
+        </div>
+        <button class="modal-secondary" type="button" data-close="supportModalLayer">Got It</button>
+      </div>
+    </div>
+  </div>
+</dialog>
+
+<!-- 5. ABOUT / LEARN MORE MODAL -->
+<dialog class="modal-layer" id="aboutModalLayer" aria-labelledby="aboutModalTitle">
+  <div class="modal">
+    <div class="modal-head">
+      <h2 class="modal-title" id="aboutModalTitle">About DillDrill</h2>
+      <button class="modal-close" type="button" data-close="aboutModalLayer" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-stack about-content">
+        <section class="about-section">
+          <div class="section-icon">🏗️</div>
+          <div class="option-title">What It Does</div>
+          <div class="option-meta">
+            DillDrill helps estimate construction activity and demand signals around any location before you commit to a lease or purchase.
+          </div>
+        </section>
+
+        <section class="about-section">
+          <div class="section-icon">⚙️</div>
+          <div class="option-title">How To Use</div>
+          <ol class="steps-list">
+            <li>Enter valid coordinates</li>
+            <li>Run construction check first</li>
+            <li>Then run demand for same location</li>
+            <li>Review the combined risk score</li>
+          </ol>
+        </section>
+
+        <section class="about-section warning-section">
+          <div class="section-icon">⚠️</div>
+          <div class="option-title">Important Notes</div>
+          <div class="option-meta">
+            Results may be partial, delayed, inferred, or unavailable depending on data coverage and access tier. Always verify independently.
+          </div>
+        </section>
+
+        <section class="about-section">
+          <div class="section-icon">❓</div>
+          <div class="option-title">Support & Legal</div>
+          <div class="option-meta">
+            <a href="{{ faq_url|default('#') }}" class="modal-link" target="_blank" rel="noopener">Open FAQ</a>
+            <span class="separator">•</span>
+            <a href="mailto:help@dilldrill.com" class="modal-link">help@dilldrill.com</a>
+          </div>
+        </section>
+
+        <footer class="about-footer">
+          <p class="copyright">© DillDrill 2025. All rights reserved.</p>
+          <p class="version">v1.0.0</p>
         </footer>
+      </div>
     </div>
+  </div>
+</dialog>
 
-    <!-- Support DillDrill Modal -->
-    <div id="payment-modal"
-        class="fixed inset-0 bg-black bg-opacity-50 hidden z-50 flex items-center justify-center p-4">
-        <div class="bg-white rounded-xl shadow-2xl max-w-sm w-full p-6 text-center transform transition-all scale-100">
-            <h3 class="text-2xl font-bold text-slate-900 mb-4">{{ t.support_title }}</h3>
-            <p class="text-slate-600 mb-6 leading-relaxed">
-                {{ t.support_body }}
-            </p>
-            <button class="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700 transition"
-                onclick="togglePaymentModal()">
-                {{ t.support_button }}
-            </button>
-            <button onclick="togglePaymentModal()" class="mt-4 text-sm text-slate-400 hover:text-slate-600">
-                {{ t.close }}
-            </button>
+<!-- 6. LANGUAGE SELECTION MODAL (Bottom Sheet Style) -->
+<dialog class="modal-layer bottom-sheet" id="langModalLayer" aria-labelledby="langModalTitle">
+  <div class="modal">
+    <div class="modal-handle" aria-hidden="true"></div>
+    <div class="modal-head">
+      <h2 class="modal-title" id="langModalTitle">Select Language</h2>
+      <button class="modal-close" type="button" data-close="langModalLayer" aria-label="Close">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="modal-stack">
+        <div class="lang-list" id="langList" role="listbox" aria-label="Available languages">
+          <button type="button" class="lang-item active" data-lang="en" role="option" aria-selected="true">
+            <span class="lang-flag">🇺🇸</span>
+            <span class="lang-name">English</span>
+            <span class="lang-native">English</span>
+            <span class="checkmark">✓</span>
+          </button>
+          <button type="button" class="lang-item" data-lang="es" role="option" aria-selected="false">
+            <span class="lang-flag">🇪🇸</span>
+            <span class="lang-name">Spanish</span>
+            <span class="lang-native">Español</span>
+            <span class="checkmark">✓</span>
+          </button>
+          <button type="button" class="lang-item" data-lang="fr" role="option" aria-selected="false">
+            <span class="lang-flag">🇫🇷</span>
+            <span class="lang-name">French</span>
+            <span class="lang-native">Français</span>
+            <span class="checkmark">✓</span>
+          </button>
+          <button type="button" class="lang-item" data-lang="de" role="option" aria-selected="false">
+            <span class="lang-flag">🇩🇪</span>
+            <span class="lang-name">German</span>
+            <span class="lang-native">Deutsch</span>
+            <span class="checkmark">✓</span>
+          </button>
+          <button type="button" class="lang-item" data-lang="ru" role="option" aria-selected="false">
+            <span class="lang-flag">🇷🇺</span>
+            <span class="lang-name">Russian</span>
+            <span class="lang-native">Русский</span>
+            <span class="checkmark">✓</span>
+          </button>
+          <button type="button" class="lang-item" data-lang="ko" role="option" aria-selected="false">
+            <span class="lang-flag">🇰🇷</span>
+            <span class="lang-name">Korean</span>
+            <span class="lang-native">한국어</span>
+            <span class="checkmark">✓</span>
+          </button>
+          <button type="button" class="lang-item" data-lang="zh" role="option" aria-selected="false">
+            <span class="lang-flag">🇨🇳</span>
+            <span class="lang-name">Chinese</span>
+            <span class="lang-native">中文</span>
+            <span class="checkmark">✓</span>
+          </button>
+          <button type="button" class="lang-item" data-lang="ja" role="option" aria-selected="false">
+            <span class="lang-flag">🇯🇵</span>
+            <span class="lang-name">Japanese</span>
+            <span class="lang-native">日本語</span>
+            <span class="checkmark">✓</span>
+          </button>
         </div>
+
+        <div class="inline-error" id="langError" role="alert" aria-live="polite"></div>
+
+        <button class="modal-primary" type="button" id="saveLanguageBtn">
+          <span class="btn-text">Save Language</span>
+          <span class="btn-spinner hidden">⟳</span>
+        </button>
+      </div>
     </div>
-
-    <!-- About DillDrill Modal -->
-    <div id="about-modal" class="fixed inset-0 bg-black bg-opacity-50 hidden z-50 flex items-center justify-center p-4">
-        <div class="bg-white rounded-xl shadow-2xl max-w-md w-full p-8 text-left transform transition-all scale-100">
-            <h3 class="text-2xl font-bold text-slate-900 mb-4 text-center">{{ t.about }}</h3>
-            <div class="text-slate-600 space-y-3 text-sm leading-relaxed">
-                <p>{{ t.about_body_p1 }}</p>
-                <p>{{ t.about_body_p2 }}</p>
-                <p class="text-xs text-slate-500 italic">{{ t.about_disclaimer }}</p>
-                <p>{{ t.about_support }}</p>
-                <div class="text-center pt-4 border-t border-slate-200 mt-4">
-                    <p class="font-semibold text-slate-800">DillDrill&trade;</p>
-                    <p class="text-xs text-slate-400 mt-1">2026 All rights reserved.</p>
-                </div>
-            </div>
-            <button onclick="toggleAboutModal()"
-                class="mt-6 w-full bg-slate-100 text-slate-700 py-2 rounded-lg font-medium hover:bg-slate-200 transition">
-                {{ t.close }}
-            </button>
-        </div>
-    </div>
-
-    <script>
-        // Error logging utility
-        function logError(context, error, data = {}) {
-            console.error(`[ERROR] ${context}:`, error, data);
-            if (window.Sentry) {
-                window.Sentry.captureException(error, { extra: { context, ...data } });
-            }
-        }
-
-        function logInfo(context, message, data = {}) {
-            console.log(`[INFO] ${context}:`, message, data);
-        }
-
-        // Safe DOM element getter with validation
-        function getElement(id, required = true) {
-            try {
-                const element = document.getElementById(id);
-                if (!element && required) {
-                    logError('DOM', `Required element not found: ${id}`);
-                }
-                return element;
-            } catch (e) {
-                logError('DOM', `Failed to get element: ${id}`, { error: e });
-                return null;
-            }
-        }
-
-        // Initialize DOM elements with safety checks
-        let form, coordsInput, searchButton, tokenInput, widgetContainer;
-        let messageBoard, resultsSection, resultsList, metaInfo;
-        let debugBoard, debugLogsContainer, userStatusText;
-        let paymentModal, aboutModal;
-
-        try {
-            form = getElement('search-form');
-            coordsInput = getElement('coordinates');
-            searchButton = getElement('search-button');
-            tokenInput = getElement('turnstile-token');
-            widgetContainer = getElement('turnstile-widget');
-            messageBoard = getElement('message-board');
-            resultsSection = getElement('results-section');
-            resultsList = getElement('results-list');
-            metaInfo = getElement('meta-info');
-            debugBoard = getElement('debug-board', false);
-            debugLogsContainer = getElement('debug-logs', false);
-            userStatusText = getElement('user-status-text');
-            paymentModal = getElement('payment-modal');
-            aboutModal = getElement('about-modal');
-
-            logInfo('INIT', 'DOM elements initialized', {
-                hasForm: !!form,
-                hasModals: !!(paymentModal && aboutModal)
-            });
-        } catch (e) {
-            logError('INIT', 'Failed to initialize DOM elements', { error: e });
-        }
-
-        // Modal toggle functions with extensive error handling
-        window.togglePaymentModal = function () {
-            try {
-                logInfo('MODAL', 'togglePaymentModal called');
-                if (!paymentModal) {
-                    logError('MODAL', 'paymentModal element not found');
-                    return;
-                }
-                paymentModal.classList.toggle('hidden');
-                logInfo('MODAL', 'Payment modal toggled', {
-                    visible: !paymentModal.classList.contains('hidden')
-                });
-            } catch (e) {
-                logError('MODAL', 'Failed to toggle payment modal', { error: e });
-            }
-        }
-
-        window.toggleAboutModal = function () {
-            try {
-                logInfo('MODAL', 'toggleAboutModal called');
-                if (!aboutModal) {
-                    logError('MODAL', 'aboutModal element not found');
-                    return;
-                }
-                aboutModal.classList.toggle('hidden');
-                logInfo('MODAL', 'About modal toggled', {
-                    visible: !aboutModal.classList.contains('hidden')
-                });
-            } catch (e) {
-                logError('MODAL', 'Failed to toggle about modal', { error: e });
-            }
-        }
-
-        // I18n strings for JS
-        const STRINGS = {
-            searching: "{{ t.button_searching }}",
-            btn_default: "{{ t.button_search }}",
-            error: "{{ t.error_prefix }}",
-            success: "{{ t.success_prefix }}",
-            go_there: "{{ t.go_there }}",
-            dist: "{{ t.distance_unit }}",
-            zero_results: "No active construction detected nearby",
-            waiting: "Waiting for user input...",
-            disclaimer1: "DillDrill uses public data and may not catch everything.",
-            disclaimer2: "Always visit in person before deciding."
-        };
-
-        const appState = {
-            can_search: {{ 'true' if initial_can_search else 'false' }},
-        turnstile_required: { { 'true' if initial_turnstile_required else 'false' } },
-        checks_today: { { initial_checks_today } },
-        tier: "{{ initial_tier }}"
-        };
-
-        async function refreshStatus() {
-            try {
-                logInfo('STATUS', 'Refreshing status');
-                const resp = await fetch('/api/status', { method: 'GET' });
-                if (!resp.ok) {
-                    logError('STATUS', 'Failed to fetch status', { status: resp.status });
-                    return;
-                }
-                const data = await resp.json();
-                appState.can_search = !!data.can_search;
-                appState.turnstile_required = !!data.turnstile_required;
-                appState.checks_today = data.checks_today || 0;
-
-                if (data.user_status && data.user_status.text && userStatusText) {
-                    userStatusText.textContent = data.user_status.text;
-                }
-
-                if (widgetContainer) {
-                    widgetContainer.style.display = appState.turnstile_required ? 'block' : 'none';
-                }
-
-                logInfo('STATUS', 'Status refreshed', appState);
-            } catch (e) {
-                logError('STATUS', 'Exception during status refresh', { error: e });
-            }
-        }
-
-        window.addEventListener('focus', () => {
-            try {
-                refreshStatus();
-            } catch (e) {
-                logError('EVENT', 'Focus event handler failed', { error: e });
-            }
-        });
-
-        function turnstileCallback(token) {
-            try {
-                logInfo('TURNSTILE', 'Callback received', { hasToken: !!token });
-                if (tokenInput) {
-                    tokenInput.value = token;
-                }
-                if (widgetContainer) {
-                    widgetContainer.style.display = 'none';
-                }
-            } catch (e) {
-                logError('TURNSTILE', 'Callback failed', { error: e });
-            }
-        }
-
-        function setLang(code) {
-            try {
-                logInfo('I18N', 'Setting language', { code });
-                document.cookie = `dd_lang=${code}; path=/; max-age=${60 * 60 * 24 * 90}; samesite=lax`;
-            } catch (e) {
-                logError('I18N', 'Failed to set language', { code, error: e });
-            }
-        }
-
-        function resetTurnstile() {
-            try {
-                if (typeof turnstile !== 'undefined') {
-                    turnstile.reset();
-                    if (tokenInput) tokenInput.value = '';
-                    if (widgetContainer) widgetContainer.style.display = 'block';
-                    logInfo('TURNSTILE', 'Reset successful');
-                } else {
-                    logError('TURNSTILE', 'Turnstile not loaded');
-                }
-            } catch (e) {
-                logError('TURNSTILE', 'Reset failed', { error: e });
-            }
-        }
-
-        function showMessage(primary, type = 'info', secondary = '') {
-            try {
-                if (!messageBoard) {
-                    logError('UI', 'messageBoard element not found');
-                    return;
-                }
-                const disclaimer = `${STRINGS.disclaimer1} ${STRINGS.disclaimer2}`;
-                const icon = type === 'success' ? 'OK' : (type === 'warning' ? '!' : (type === 'error' ? 'X' : 'i'));
-                const color = type === 'success' ? 'bg-green-100 text-green-800' : (type === 'warning' ? 'bg-amber-100 text-amber-800' : (type === 'error' ? 'bg-red-100 text-red-800' : 'bg-blue-100 text-blue-800'));
-                messageBoard.className = `mt-4 p-3 text-sm rounded-lg ${color}`;
-                messageBoard.innerHTML = `\u003cdiv class=\"flex items-start space-x-2\"\u003e\u003cspan\u003e${icon}\u003c/span\u003e\u003cdiv\u003e\u003cdiv\u003e${primary}\u003c/div\u003e${secondary ? `\u003cdiv class=\"text-xs text-slate-600\"\u003e${secondary}\u003c/div\u003e` : ''}\u003cdiv class=\"text-xs italic\"\u003e${disclaimer}\u003c/div\u003e\u003c/div\u003e\u003c/div\u003e`;
-                messageBoard.classList.remove('hidden');
-                logInfo('UI', 'Message shown', { type, primary });
-            } catch (e) {
-                logError('UI', 'Failed to show message', { error: e, primary, type });
-            }
-        }
-
-        function hideMessage() {
-            try {
-                if (messageBoard) {
-                    messageBoard.classList.add('hidden');
-                    logInfo('UI', 'Message hidden');
-                }
-            } catch (e) {
-                logError('UI', 'Failed to hide message', { error: e });
-            }
-        }
-
-        function parseCoordinates(input) {
-            try {
-                if (!input || typeof input !== 'string') {
-                    logError('PARSE', 'Invalid input', { input });
-                    return null;
-                }
-                const parts = input.split(',').map(s => s.trim());
-                if (parts.length !== 2) {
-                    logInfo('PARSE', 'Invalid coordinate format', { input });
-                    return null;
-                }
-                const lat = parseFloat(parts[0]);
-                const lon = parseFloat(parts[1]);
-                if (isNaN(lat) || isNaN(lon)) {
-                    logInfo('PARSE', 'Invalid numbers in coordinates', { input, lat, lon });
-                    return null;
-                }
-                logInfo('PARSE', 'Coordinates parsed', { lat, lon });
-                return { lat, lon };
-            } catch (e) {
-                logError('PARSE', 'Exception parsing coordinates', { error: e, input });
-                return null;
-            }
-        }
-
-        function renderResults(data) {
-            try {
-                if (!resultsList) {
-                    logError('RENDER', 'resultsList element not found');
-                    return;
-                }
-
-                resultsList.innerHTML = '';
-                const emptyState = document.getElementById('results-empty');
-                if (emptyState) emptyState.classList.add('hidden');
-
-                if (data.report_lines && data.report_lines.length > 0) {
-                    data.report_lines.forEach((line, index) => {
-                        try {
-                            const card = `
-                                \u003cdiv class=\"p-4 bg-white border border-slate-200 rounded-lg shadow-sm flex items-start space-x-3\"\u003e
-                                    \u003cspan class=\"text-blue-500 font-bold mt-0.5\"\u003e›\u003c/span\u003e
-                                    \u003cdiv class=\"font-mono text-sm text-slate-700 leading-relaxed\"\u003e${line}\u003c/div\u003e
-                                \u003c/div\u003e
-                            `;
-                            resultsList.insertAdjacentHTML('beforeend', card);
-                        } catch (e) {
-                            logError('RENDER', 'Failed to render individual result', { error: e, index, line });
-                        }
-                    });
-                    logInfo('RENDER', 'Results rendered', { count: data.report_lines.length });
-                }
-
-                if (resultsSection) resultsSection.classList.remove('hidden');
-
-                // Debug board handling
-                if (data.debug_logs && data.debug_logs.length > 0) {
-                    if (debugBoard && debugLogsContainer) {
-                        debugBoard.classList.remove('hidden');
-                        debugLogsContainer.innerHTML = data.debug_logs.map(log => `\u003cdiv\u003e\u003e ${log}\u003c/div\u003e`).join('');
-                        debugLogsContainer.scrollTop = debugLogsContainer.scrollHeight;
-                    }
-                } else {
-                    if (debugBoard) debugBoard.classList.add('hidden');
-                }
-            } catch (e) {
-                logError('RENDER', 'Exception rendering results', { error: e, data });
-            }
-        }
-
-        if (form) {
-            form.addEventListener('submit', async e => {
-                try {
-                    e.preventDefault();
-                    logInfo('FORM', 'Submit started');
-
-                    hideMessage();
-
-                    if (!searchButton || !coordsInput || !tokenInput) {
-                        logError('FORM', 'Required form elements missing', {
-                            hasButton: !!searchButton,
-                            hasInput: !!coordsInput,
-                            hasTokenInput: !!tokenInput
-                        });
-                        showMessage('Form initialization error. Please refresh the page.', 'error');
-                        return;
-                    }
-
-                    searchButton.disabled = true;
-                    searchButton.textContent = STRINGS.searching;
-
-                    const inputVal = coordsInput.value;
-                    const turnstile_token = tokenInput.value;
-
-                    logInfo('FORM', 'Form data collected', {
-                        hasInput: !!inputVal,
-                        hasToken: !!turnstile_token
-                    });
-
-                    const coords = parseCoordinates(inputVal);
-                    if (!coords) {
-                        showMessage("Use decimal degrees (lat, lon)", 'error');
-                        searchButton.disabled = false;
-                        searchButton.textContent = STRINGS.btn_default;
-                        return;
-                    }
-
-                    let success = false;
-                    try {
-                        logInfo('API', 'Sending search request', { coords });
-
-                        const response = await fetch('/api/find-nearest', {
-                            method: 'POST',
-                            headers: { 'Content-Type': 'application/json' },
-                            body: JSON.stringify({
-                                lat: coords.lat,
-                                lon: coords.lon,
-                                turnstile_token
-                            })
-                        });
-
-                        const reqId = response.headers.get('X-Request-ID') || 'unknown';
-                        logInfo('API', 'Response received', {
-                            status: response.status,
-                            ok: response.ok,
-                            reqId
-                        });
-
-                        const data = await response.json();
-
-                        if (response.ok) {
-                            success = true;
-                            if (coordsInput) coordsInput.blur();
-
-                            if (!data.report_lines || data.report_lines.length === 0) {
-                                if (data.results_state === "empty") {
-                                    showMessage(STRINGS.zero_results, 'info');
-                                } else if (data.results_state === "quota_limit" || data.results_state === "limit") {
-                                    togglePaymentModal();
-                                    if (userStatusText) userStatusText.textContent = data.user_status?.text || "Limit reached";
-                                } else {
-                                    showMessage(STRINGS.zero_results, 'info');
-                                }
-                                logInfo('API', 'Empty results', { results_state: data.results_state });
-                            } else {
-                                renderResults(data);
-                                showMessage(`${STRINGS.success}`, 'success');
-                                logInfo('API', 'Results rendered', { count: data.report_lines.length });
-                            }
-
-                            if (data.user_status && userStatusText) {
-                                userStatusText.textContent = data.user_status.text;
-                            }
-                            appState.can_search = !!data.can_search;
-
-                            if (widgetContainer) widgetContainer.style.display = 'none';
-                        } else {
-                            let errMsg = 'Unknown error';
-                            if (data.detail && data.detail.detail) {
-                                errMsg = data.detail.detail;
-                            } else if (data.detail && typeof data.detail === 'string') {
-                                errMsg = data.detail;
-                            }
-
-                            if (reqId) errMsg += ` (Req ID: ${reqId})`;
-
-                            logError('API', 'Request failed', {
-                                status: response.status,
-                                error: data.detail?.error,
-                                message: errMsg,
-                                reqId
-                            });
-
-                            if (data.detail && (data.detail.error === "QUOTA_EXCEEDED" || data.detail.error === "ABUSE_LIMIT" || response.status === 402)) {
-                                togglePaymentModal();
-                                if (userStatusText) userStatusText.textContent = "Limit reached";
-                            } else {
-                                showMessage(`${STRINGS.error}: ${errMsg}`, 'error');
-                            }
-
-                            if (data.detail && data.detail.error === "CHALLENGE_REQUIRED") {
-                                showMessage("Please verify you are human.", 'warning');
-                                resetTurnstile();
-                            }
-                        }
-                    } catch (err) {
-                        logError('API', 'Fetch exception', { error: err, message: err.message });
-                        showMessage(`${STRINGS.error}: Network error.`, 'error');
-                    } finally {
-                        if (searchButton) {
-                            searchButton.disabled = false;
-                            searchButton.textContent = STRINGS.btn_default;
-                        }
-                        logInfo('FORM', 'Submit completed', { success });
-                    }
-                } catch (e) {
-                    logError('FORM', 'Form submit handler failed', { error: e });
-                    showMessage('An unexpected error occurred. Please try again.', 'error');
-                    if (searchButton) {
-                        searchButton.disabled = false;
-                        searchButton.textContent = STRINGS.btn_default;
-                    }
-                }
-            });
-        } else {
-            logError('FORM', 'Form element not found - submit handler not registered');
-        }
-        refreshStatus();
-    </script>
-
+  </div>
+</dialog>
+  </main>
+  
+  <script src="/static/app.js"></script>
 </body>
-
 </html>
