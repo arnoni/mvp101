@@ -93,9 +93,9 @@
             <circle cx="160" cy="180" r="18" fill="url(#hubGrad)" />
             <circle cx="160" cy="180" r="8" class="needle-hub-inner" />
           </g>
-          <text x="60" y="110" transform="rotate(-50 60 110)" class="gauge-label text-center" fill="#5ee500">Low</text>
+          <text x="35" y="145" transform="rotate(-40 35 145)" class="gauge-label text-center" fill="#5ee500">Low</text>
           <text x="160" y="32" class="gauge-label text-center" fill="#ffb400">Medium</text>
-          <text x="260" y="110" transform="rotate(50 260 110)" class="gauge-label text-center" fill="#ff2f05">High</text>
+          <text x="285" y="145" transform="rotate(40 285 145)" class="gauge-label text-center" fill="#ff2f05">High</text>
         </svg>
         <button class="gauge-btn" id="constructionGoBtn" disabled>GO</button>
       </div>
@@ -143,9 +143,9 @@
             <circle cx="160" cy="180" r="18" fill="url(#hubGrad2)" />
             <circle cx="160" cy="180" r="8" class="needle-hub-inner" />
           </g>
-          <text x="60" y="110" transform="rotate(-50 60 110)" class="gauge-label text-center" fill="#49d17d">Low</text>
+          <text x="35" y="145" transform="rotate(-40 35 145)" class="gauge-label text-center" fill="#49d17d">Low</text>
           <text x="160" y="32" class="gauge-label text-center" fill="#a4bdec">Medium</text>
-          <text x="260" y="110" transform="rotate(50 260 110)" class="gauge-label text-center" fill="#4a90e2">High</text>
+          <text x="285" y="145" transform="rotate(40 285 145)" class="gauge-label text-center" fill="#4a90e2">High</text>
         </svg>
         <button class="gauge-btn small {% if not demand_allowed %}unlock-styled{% endif %}" id="demandGoBtn" disabled>
           {{ 'GO' if demand_allowed else 'Unlock' }}
