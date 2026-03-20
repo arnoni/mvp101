@@ -74,8 +74,8 @@
               <feGaussianBlur stdDeviation="3" result="offset-blur"/>
               <feComposite operator="out" in="SourceGraphic" in2="offset-blur" result="inverse"/>
               <feFlood flood-color="black" flood-opacity="0.6" result="color"/>
-              <feComposite operator="in" in="color" in2="inverse" result="shadow"/>
-              <feComposite operator="over" in="shadow" in2="SourceGraphic"/>
+              <feComposite operator="in" in="color" in2="inverse" result="innerGlowColor"/>
+              <feComposite operator="over" in="innerGlowColor" in2="SourceGraphic"/>
             </filter>
             <radialGradient id="hubGrad" cx="50%" cy="50%" r="50%">
               <stop offset="0%" stop-color="#555"/>
@@ -85,11 +85,11 @@
           <path d="M40 180 A120 120 0 0 1 280 180" class="gauge-track" filter="url(#innerGlow)" />
           <path d="M40 180 A120 120 0 0 1 280 180" class="gauge-ticks" />
           <path d="M40 180 A120 120 0 0 1 280 180" class="gauge-band" id="constructionBand" stroke="url(#gradCon)" stroke-dasharray="377" stroke-dashoffset="377" filter="url(#glowCon)" />
-          <g class="needle" id="constructionNeedle" transform="rotate(-82 160 180)">
-            <polygon points="154,205 166,205 166,180 154,180" class="needle-counterweight" filter="url(#shadow)" />
-            <polygon points="154,180 166,180 161,45 159,45" class="needle-poly" filter="url(#shadow)" />
-            <polygon points="159,180 161,180 160.5,45 159.5,45" class="needle-stripe" />
-            <circle cx="160" cy="180" r="18" fill="url(#hubGrad)" filter="url(#shadow)" />
+          <g class="needle" id="constructionNeedle" transform="rotate(-82 160 180)" filter="url(#shadow)">
+            <polygon points="154,205 166,205 166,180 154,180" class="needle-counterweight" />
+            <polygon points="154,180 166,180 161,45 159,45" class="needle-poly" />
+            <polygon points="159,180 161,180 161,45 159,45" class="needle-stripe" />
+            <circle cx="160" cy="180" r="18" fill="url(#hubGrad)" />
             <circle cx="160" cy="180" r="8" class="needle-hub-inner" />
           </g>
           <text x="60" y="110" transform="rotate(-50 60 110)" class="gauge-label text-center" fill="#5ee500">Low</text>
@@ -123,8 +123,8 @@
               <feGaussianBlur stdDeviation="3" result="offset-blur"/>
               <feComposite operator="out" in="SourceGraphic" in2="offset-blur" result="inverse"/>
               <feFlood flood-color="black" flood-opacity="0.6" result="color"/>
-              <feComposite operator="in" in="color" in2="inverse" result="shadow"/>
-              <feComposite operator="over" in="shadow" in2="SourceGraphic"/>
+              <feComposite operator="in" in="color" in2="inverse" result="innerGlowColor"/>
+              <feComposite operator="over" in="innerGlowColor" in2="SourceGraphic"/>
             </filter>
             <radialGradient id="hubGrad2" cx="50%" cy="50%" r="50%">
               <stop offset="0%" stop-color="#555"/>
@@ -134,11 +134,11 @@
           <path d="M40 180 A120 120 0 0 1 280 180" class="gauge-track" filter="url(#innerGlow2)" />
           <path d="M40 180 A120 120 0 0 1 280 180" class="gauge-ticks" />
           <path d="M40 180 A120 120 0 0 1 280 180" class="gauge-band" id="demandBand" stroke="url(#gradDem)" stroke-dasharray="377" stroke-dashoffset="377" filter="url(#glowDem)" />
-          <g class="needle" id="demandNeedle" transform="rotate(-82 160 180)">
-            <polygon points="154,205 166,205 166,180 154,180" class="needle-counterweight" filter="url(#shadow2)" />
-            <polygon points="154,180 166,180 161,45 159,45" class="needle-poly" filter="url(#shadow2)" />
-            <polygon points="159,180 161,180 160.5,45 159.5,45" class="needle-stripe" />
-            <circle cx="160" cy="180" r="18" fill="url(#hubGrad2)" filter="url(#shadow2)" />
+          <g class="needle" id="demandNeedle" transform="rotate(-82 160 180)" filter="url(#shadow2)">
+            <polygon points="154,205 166,205 166,180 154,180" class="needle-counterweight" />
+            <polygon points="154,180 166,180 161,45 159,45" class="needle-poly" />
+            <polygon points="159,180 161,180 161,45 159,45" class="needle-stripe" />
+            <circle cx="160" cy="180" r="18" fill="url(#hubGrad2)" />
             <circle cx="160" cy="180" r="8" class="needle-hub-inner" />
           </g>
           <text x="60" y="110" transform="rotate(-50 60 110)" class="gauge-label text-center" fill="#49d17d">Low</text>
