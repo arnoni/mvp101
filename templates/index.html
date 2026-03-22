@@ -172,50 +172,75 @@
      ========================================== -->
 
 <!-- 1. USER ACCESS / ACCOUNT STATUS MODAL -->
-<dialog class="modal-layer" id="userModalLayer" aria-labelledby="userModalTitle">
-  <div class="modal">
-    <div class="modal-head">
-      <h2 class="modal-title" id="userModalTitle">Your Access</h2>
-      <button class="modal-close" type="button" data-close="userModalLayer" aria-label="Close">✕</button>
+<dialog class="modal-layer" id="userModalLayer" aria-labelledby="modal-title">
+  <!-- Added a backdrop for click-outside-to-close functionality -->
+  <div class="modal-backdrop" onclick="closeModal('userModalLayer')" aria-hidden="true"></div>
+  
+  <div class="modal-card" role="dialog" aria-modal="true">
+    <!-- Header -->
+    <div class="modal-header">
+      <h2 id="modal-title">Your Access</h2>
+      <button class="btn-close" type="button" data-close="userModalLayer" aria-label="Close modal">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
     </div>
-    <div class="modal-body">
-      <div class="modal-stack">
-        <div class="option-card status-card">
-          <div class="status-badge" id="userTierBadge" data-tier="{{ tier|default('free') }}">
-            {{ tier|capitalize if tier else 'Free' }} Tier
-          </div>
-          <div class="option-meta" id="userStatusText">
-            {% if demand_allowed %}
-              Demand is unlocked and your pass is active.
-            {% else %}
-              Construction is available. Demand requires a paid pass.
-            {% endif %}
-          </div>
-        </div>
 
-        {% if not demand_allowed %}
-        <div class="option-card warning-card">
-          <div class="option-title">⚠️ Limitations</div>
-          <ul class="limitation-list">
-            <li>Demand checks are locked</li>
-            <li>Subject to rate limiting</li>
-            <li>Turnstile verification required</li>
-          </ul>
-        </div>
+    <!-- Tier Badge -->
+    <div class="tier-badge tier-{{ tier|default('free')|lower }}">
+      {{ tier|default('FREE')|upper }} TIER
+    </div>
 
-        <div class="option-card tips-card">
-          <div class="option-title">💡 Recommendations</div>
-          <ul class="tips-list">
-            <li>Use valid coordinates</li>
-            <li>Run construction first</li>
-            <li>Then demand for same location</li>
-          </ul>
-        </div>
-
-        <button class="modal-primary" type="button" id="userUpgradeBtn">Unlock Full Access</button>
+    <!-- Status -->
+    <div class="status-block">
+      <div class="status-row">
+        <span><strong>Construction:</strong></span>
+        <span class="available">Available ✓</span>
+      </div>
+      <div class="status-row">
+        <span><strong>Demand:</strong></span>
+        {% if demand_allowed %}
+          <span class="available">Available ✓</span>
+        {% else %}
+          <span class="locked">Locked 🔒</span>
         {% endif %}
       </div>
     </div>
+
+    <!-- Content -->
+    <div class="info-grid">
+      <div class="info-block">
+        <div class="info-title">⚠️ Free Limitations</div>
+        <ul>
+          <li>Demand checks locked</li>
+          <li>Rate limited to 10/day</li>
+          <li>Verification required</li>
+        </ul>
+      </div>
+
+      <div class="info-block">
+        <div class="info-title">💡 Pro Workflow</div>
+        <ul>
+          <li>Use valid coordinates</li>
+          <li>Run construction models</li>
+          <li><strong>Unlock to view demand</strong></li>
+        </ul>
+      </div>
+    </div>
+
+    <!-- CTA -->
+    {% if not demand_allowed %}
+    <div class="modal-footer">
+      <button class="cta-unlock" id="userUpgradeBtn">
+        🔓 Unlock Full Access
+      </button>
+      <div class="cta-subtext">
+        Get demand insights + higher accuracy
+      </div>
+    </div>
+    {% endif %}
   </div>
 </dialog>
 

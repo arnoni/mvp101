@@ -624,7 +624,10 @@ const ModalSystem = (function() {
         });
       });
 
-      // Click outside to close (for non-dialog modals)
+      // Click outside to close (for dialogs with backdrops)
+      window.closeModal = (modalId) => this.close(modalId);
+
+      // Click outside to close (for legacy non-dialog modals)
       document.querySelectorAll('.modal-layer').forEach(layer => {
         layer.addEventListener('click', (e) => {
           if (e.target === layer && !layer.classList.contains('bottom-sheet')) {
