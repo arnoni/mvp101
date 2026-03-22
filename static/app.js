@@ -285,14 +285,39 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function renderTurnstile() {
     els.turnstileSlot.classList.remove("hidden");
-    if (!window.turnstile || state.verification.widgetId) return;
+    
+    // If turnstile isn't loaded yet, try again in 100ms
+    if (!window.turnstile) {
+      setTimeout(renderTurnstile, 100);
+      return;
+    }
+
+    // If already rendered and container not empty, don't re-render
+    if (state.verification.widgetId && els.turnstileContainer.innerHTML !== "") return;
+    
+    // Clear container just in case
+    els.turnstileContainer.innerHTML = "";
+    
     state.verification.widgetId = window.turnstile.render('#turnstileContainer', {
       sitekey: document.body.dataset.turnstileSitekey,
+      theme: 'dark',
       callback: (token) => {
+        console.log("Turnstile verified");
         state.verification.passed = true;
         state.verification.token = token;
+        state.verification.required = false;
         els.turnstileSlot.classList.add("hidden");
+        updateButtons();
         fetchConstruction(); // Auto-retry
+      },
+      'error-callback': (err) => {
+        console.error("Turnstile Error:", err);
+        els.conMsg.textContent = "Verification failed. Please refresh.";
+      },
+      'expired-callback': () => {
+        state.verification.passed = false;
+        state.verification.token = null;
+        renderTurnstile(); // Re-render if expired
       }
     });
   }
