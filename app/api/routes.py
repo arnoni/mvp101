@@ -281,6 +281,30 @@ async def find_nearest(
 
 
 
+@router.post("/language")
+async def set_language(request: Request, response: Response):
+    try:
+        data = await request.json()
+        lang = data.get("lang", "en")
+        # Validate lang code (must be in TRANSLATIONS)
+        from app.services.i18n import TRANSLATIONS
+        if lang not in TRANSLATIONS:
+            lang = "en"
+        
+        # Set cookie: dd_lang
+        response.set_cookie(
+            key="dd_lang",
+            value=lang,
+            max_age=31536000, # 1 year
+            path="/",
+            httponly=False,  # Allow JS access for UI sync if needed
+            samesite="lax"
+        )
+        return {"ok": True, "lang": lang}
+    except Exception as e:
+        logger.error("set_language_failed", error=str(e))
+        raise HTTPException(status_code=400, detail="Invalid request")
+
 @router.post("/ugc/report-submit")
 async def ugc_report_submit(
     request: Request,
