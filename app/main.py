@@ -207,7 +207,7 @@ async def favicon():
 @app.get("/", response_class=HTMLResponse)
 async def root(request: Request, lang: str = "en"):
     # Implements TSD Section 12: I18n
-    from app.services.i18n import get_translations, TRANSLATIONS
+    from app.services.i18n import get_translations, TRANSLATIONS, LANG_META
     from app.services.entitlement_service import TierStatus
     from app.services.policy_engine import PolicyEngine, RequestContext, PolicyVerdict, PolicyDecision
     
@@ -263,6 +263,7 @@ async def root(request: Request, lang: str = "en"):
         "settings": settings,
         "t": tdict,
         "t_all": TRANSLATIONS,
+        "LANG_META": LANG_META,
         "current_lang": lang,
         "using_fallback_quota": using_fallback_quota,
         "initial_user_status": {"state": state, "text": status_text},

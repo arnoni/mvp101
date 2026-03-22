@@ -1022,66 +1022,52 @@ const ModalSystem = (function() {
     language: {
       init() {
         const btn = document.getElementById('langOpenBtn');
-        const saveBtn = document.getElementById('saveLanguageBtn');
         const list = document.getElementById('langList');
 
         btn?.addEventListener('click', () => {
-          state.language.selected = state.language.current;
-          this.syncUI();
           core.open('langModalLayer');
         });
 
-        // Language selection
+        // Language selection - One-click save
         list?.querySelectorAll('.lang-item').forEach(item => {
           item.addEventListener('click', () => {
-            list.querySelectorAll('.lang-item').forEach(el => {
-              el.classList.remove('active');
-              el.setAttribute('aria-selected', 'false');
-            });
-            item.classList.add('active');
-            item.setAttribute('aria-selected', 'true');
-            state.language.selected = item.dataset.lang;
+            const langCode = item.dataset.lang;
+            if (langCode === state.language.current) {
+              core.close('langModalLayer');
+              return;
+            }
+            this.save(langCode, item);
           });
         });
-
-        // Save handler
-        saveBtn?.addEventListener('click', () => this.save());
 
         // Swipe to dismiss for bottom sheet
         this.initSwipeToDismiss();
       },
 
-      syncUI() {
-        const list = document.getElementById('langList');
-        list?.querySelectorAll('.lang-item').forEach(item => {
-          const isActive = item.dataset.lang === state.language.current;
-          item.classList.toggle('active', isActive);
-          item.setAttribute('aria-selected', isActive);
-        });
-      },
-
-      async save() {
-        const btn = document.getElementById('saveLanguageBtn');
+      async save(langCode, itemEl) {
         const errorEl = document.getElementById('langError');
+        const checkEl = itemEl.querySelector('.lang-item__check');
+        const spinnerEl = itemEl.querySelector('.lang-item__spinner');
 
-        if (state.language.selected === state.language.current) {
-          core.close('langModalLayer');
-          return;
-        }
-
-        utils.setButtonLoading(btn, true);
-        errorEl.textContent = '';
+        if (errorEl) errorEl.textContent = '';
+        itemEl.classList.add('is-loading');
+        checkEl?.classList.add('hidden');
+        spinnerEl?.classList.remove('hidden');
 
         try {
-          await utils.apiPost('/api/language', { lang: state.language.selected });
+          await utils.apiPost('/api/language', { lang: langCode });
           
-          // Update cookie and reload
-          document.cookie = `dd_lang=${state.language.selected}; path=/; max-age=31536000; SameSite=Lax`;
+          state.language.current = langCode;
+          document.cookie = `dd_lang=${langCode}; path=/; max-age=31536000; SameSite=Lax`;
           window.location.reload();
 
         } catch (err) {
-          errorEl.textContent = err.message || 'Could not save language preference.';
-          utils.setButtonLoading(btn, false);
+          itemEl.classList.remove('is-loading');
+          spinnerEl?.classList.add('hidden');
+          if (itemEl.classList.contains('active')) {
+            checkEl?.classList.remove('hidden');
+          }
+          if (errorEl) errorEl.textContent = err.message || 'Could not save language preference.';
         }
       },
 

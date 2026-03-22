@@ -488,35 +488,56 @@
 </dialog>
 
 <!-- 6. LANGUAGE SELECTION MODAL (Bottom Sheet Style) -->
-<dialog class="modal-layer bottom-sheet" id="langModalLayer" aria-labelledby="langModalTitle">
-  <div class="modal">
-    <div class="modal-handle" aria-hidden="true"></div>
-    <div class="modal-head">
-      <h2 class="modal-title" id="langModalTitle">{{ t.get('select_language', 'Select Language') }}</h2>
-      <button class="modal-close" type="button" data-close="langModalLayer" aria-label="{{ t.get('close', 'Close') }}">✕</button>
-    </div>
-    <div class="modal-body">
-      <div class="modal-stack">
-        <div class="lang-list" id="langList" role="listbox" aria-label="Available languages">
-          {% for code, strings in t_all.items() %}
-          <button type="button" class="lang-item {% if current_lang == code %}active{% endif %}" data-lang="{{ code }}" role="option" aria-selected="{{ 'true' if current_lang == code else 'false' }}">
-            <span class="lang-flag">
-              {% if code == 'en' %}🇺🇸{% elif code == 'es' %}🇪🇸{% elif code == 'ru' %}🇷🇺{% elif code == 'ko' %}🇰🇷{% else %}🌐{% endif %}
-            </span>
-            <span class="lang-name">{{ strings['lang_' ~ code] }}</span>
-            <span class="lang-native">{{ strings['lang_' ~ code] }}</span>
-            <span class="checkmark">✓</span>
-          </button>
-          {% endfor %}
-        </div>
+<dialog class="modal-layer sheet-layer" id="langModalLayer" aria-labelledby="langModalTitle">
+  <div class="sheet-card sheet-card--language" role="document">
+    <div class="sheet-handle" aria-hidden="true"></div>
 
-        <div class="inline-error" id="langError" role="alert" aria-live="polite"></div>
-
-        <button class="modal-primary" type="button" id="saveLanguageBtn">
-          <span class="btn-text">{{ t.get('save_language', 'Save Language') }}</span>
-          <span class="btn-spinner hidden">⟳</span>
-        </button>
+    <div class="sheet-head">
+      <div>
+        <h2 class="sheet-title" id="langModalTitle">{{ t.get('select_language', 'Select Language') }}</h2>
+        <p class="sheet-subtitle">{{ t.get('choose_app_language', 'Choose the language for the app interface.') }}</p>
       </div>
+
+      <button 
+        class="sheet-close" 
+        type="button" 
+        data-close="langModalLayer"
+        aria-label="{{ t.get('close', 'Close') }}"
+      >
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+      </button>
+    </div>
+
+    <div class="sheet-body">
+      <div class="lang-list" id="langList" aria-label="{{ t.get('available_languages', 'Available languages') }}">
+        
+        <!-- Clean Jinja2 Iteration using LANG_META -->
+        {% for code, meta in LANG_META.items() %}
+        <button 
+          type="button" 
+          class="lang-item {% if current_lang == code %}active{% endif %}" 
+          data-lang="{{ code }}" 
+          {% if current_lang == code %}aria-current="true"{% endif %}
+        >
+          <span class="lang-item__flag" aria-hidden="true">{{ meta.flag }}</span>
+
+          <span class="lang-item__content">
+            <span class="lang-item__label">{{ meta.label }}</span>
+            <span class="lang-item__native">{{ meta.native }}</span>
+          </span>
+
+          <span class="lang-item__status" aria-hidden="true">
+            <!-- SVG Checkmark (Better than raw text character) -->
+            <svg class="lang-item__check" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg>
+            <!-- Loading Spinner -->
+            <svg class="lang-item__spinner hidden" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="2" x2="12" y2="6"></line><line x1="12" y1="18" x2="12" y2="22"></line><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"></line><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"></line><line x1="2" y1="12" x2="6" y2="12"></line><line x1="18" y1="12" x2="22" y2="12"></line><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"></line><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"></line></svg>
+          </span>
+        </button>
+        {% endfor %}
+
+      </div>
+
+      <div class="inline-error" id="langError" role="alert" aria-live="polite"></div>
     </div>
   </div>
 </dialog>

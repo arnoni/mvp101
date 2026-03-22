@@ -74,7 +74,9 @@ TRANSLATIONS = {
         "work_construction": "Run construction models",
         "work_unlock": "Unlock to view demand",
         "unlock_full_access": "Unlock Full Access",
-        "unlock_subtext": "Get demand insights + higher accuracy"
+        "unlock_subtext": "Get demand insights + higher accuracy",
+        "choose_app_language": "Choose the language for the app interface.",
+        "available_languages": "Available languages"
     },
     "es": {
         "title": "DillDrill",
@@ -148,7 +150,9 @@ TRANSLATIONS = {
         "work_construction": "Ejecute modelos de construcción",
         "work_unlock": "Desbloquee para ver la demanda",
         "unlock_full_access": "Desbloquear Acceso Total",
-        "unlock_subtext": "Obtenga información de demanda + mayor precisión"
+        "unlock_subtext": "Obtenga información de demanda + mayor precisión",
+        "choose_app_language": "Elija el idioma de la aplicación.",
+        "available_languages": "Idiomas disponibles"
     },
     "ru": {
         "title": "DillDrill",
@@ -222,7 +226,9 @@ TRANSLATIONS = {
         "work_construction": "Запуск моделей строительства",
         "work_unlock": "Разблокируйте для просмотра спроса",
         "unlock_full_access": "Разблокировать полный доступ",
-        "unlock_subtext": "Данные о спросе + высокая точность"
+        "unlock_subtext": "Данные о спросе + высокая точность",
+        "choose_app_language": "Выберите язык приложения.",
+        "available_languages": "Доступные языки"
     },
     "ko": {
         "title": "DillDrill",
@@ -296,7 +302,9 @@ TRANSLATIONS = {
         "work_construction": "공사 모델 실행",
         "work_unlock": "수요 확인을 위해 잠금 해제",
         "unlock_full_access": "모든 액세스 권한 해제",
-        "unlock_subtext": "수요 인사이트 + 높은 정확도 제공"
+        "unlock_subtext": "수요 인사이트 + 높은 정확도 제공",
+        "choose_app_language": "앱 인터페이스 언어를 선택하세요.",
+        "available_languages": "사용 가능한 언어"
     },
     "fr": {
         "title": "DillDrill",
@@ -370,7 +378,9 @@ TRANSLATIONS = {
         "work_construction": "Modèles de construction",
         "work_unlock": "Débloquer pour voir la demande",
         "unlock_full_access": "Débloquer l'Accès Complet",
-        "unlock_subtext": "Infos demande + haute précision"
+        "unlock_subtext": "Infos demande + haute précision",
+        "choose_app_language": "Choisissez la langue de l'application.",
+        "available_languages": "Langues disponibles"
     },
     "de": {
         "title": "DillDrill",
@@ -444,7 +454,9 @@ TRANSLATIONS = {
         "work_construction": "Baumodelle ausführen",
         "work_unlock": "Freischalten für Nachfrage",
         "unlock_full_access": "Vollen Zugang freischalten",
-        "unlock_subtext": "Nachfrage-Insights + höhere Genauigkeit"
+        "unlock_subtext": "Nachfrage-Insights + höhere Genauigkeit",
+        "choose_app_language": "Wählen Sie die Sprache für die App-Oberfläche.",
+        "available_languages": "Verfügbare Sprachen"
     },
     "zh": {
         "title": "DillDrill",
@@ -518,7 +530,9 @@ TRANSLATIONS = {
         "work_construction": "运行建设模型",
         "work_unlock": "解锁以查看需求",
         "unlock_full_access": "解锁全部权限",
-        "unlock_subtext": "获取需求洞察 + 更高准确度"
+        "unlock_subtext": "获取需求洞察 + 更高准确度",
+        "choose_app_language": "选择应用程序界面语言。",
+        "available_languages": "可用语言"
     },
     "ja": {
         "title": "DillDrill",
@@ -592,8 +606,21 @@ TRANSLATIONS = {
         "work_construction": "建設モデルの実行",
         "work_unlock": "ロック解除で需要を表示",
         "unlock_full_access": "フルアクセスを解除",
-        "unlock_subtext": "需要インサイト + 高精度な分析"
+        "unlock_subtext": "需要インサイト + 高精度な分析",
+        "choose_app_language": "アプリの言語を選択してください。",
+        "available_languages": "利用可能な言語"
     }
+}
+
+LANG_META = {
+    "en": {"flag": "🇺🇸", "label": "English", "native": "English"},
+    "es": {"flag": "🇪🇸", "label": "Spanish", "native": "Español"},
+    "ru": {"flag": "🇷🇺", "label": "Russian", "native": "Русский"},
+    "ko": {"flag": "🇰🇷", "label": "Korean", "native": "한국어"},
+    "fr": {"flag": "🇫🇷", "label": "French", "native": "Français"},
+    "de": {"flag": "🇩🇪", "label": "German", "native": "Deutsch"},
+    "zh": {"flag": "🇨🇳", "label": "Chinese", "native": "中文"},
+    "ja": {"flag": "🇯🇵", "label": "Japanese", "native": "日本語"},
 }
 
 _I18N_MAX = getattr(settings, "I18N_LRU_MAX", 8)
