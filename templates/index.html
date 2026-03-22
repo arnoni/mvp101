@@ -497,60 +497,22 @@
     <div class="modal-body">
       <div class="modal-stack">
         <div class="lang-list" id="langList" role="listbox" aria-label="Available languages">
-          <button type="button" class="lang-item active" data-lang="en" role="option" aria-selected="true">
-            <span class="lang-flag">🇺🇸</span>
-            <span class="lang-name">English</span>
-            <span class="lang-native">English</span>
+          {% for code, strings in t_all.items() %}
+          <button type="button" class="lang-item {% if current_lang == code %}active{% endif %}" data-lang="{{ code }}" role="option" aria-selected="{{ 'true' if current_lang == code else 'false' }}">
+            <span class="lang-flag">
+              {% if code == 'en' %}🇺🇸{% elif code == 'es' %}🇪🇸{% elif code == 'ru' %}🇷🇺{% elif code == 'ko' %}🇰🇷{% else %}🌐{% endif %}
+            </span>
+            <span class="lang-name">{{ strings['lang_' ~ code] }}</span>
+            <span class="lang-native">{{ strings['lang_' ~ code] }}</span>
             <span class="checkmark">✓</span>
           </button>
-          <button type="button" class="lang-item" data-lang="es" role="option" aria-selected="false">
-            <span class="lang-flag">🇪🇸</span>
-            <span class="lang-name">Spanish</span>
-            <span class="lang-native">Español</span>
-            <span class="checkmark">✓</span>
-          </button>
-          <button type="button" class="lang-item" data-lang="fr" role="option" aria-selected="false">
-            <span class="lang-flag">🇫🇷</span>
-            <span class="lang-name">French</span>
-            <span class="lang-native">Français</span>
-            <span class="checkmark">✓</span>
-          </button>
-          <button type="button" class="lang-item" data-lang="de" role="option" aria-selected="false">
-            <span class="lang-flag">🇩🇪</span>
-            <span class="lang-name">German</span>
-            <span class="lang-native">Deutsch</span>
-            <span class="checkmark">✓</span>
-          </button>
-          <button type="button" class="lang-item" data-lang="ru" role="option" aria-selected="false">
-            <span class="lang-flag">🇷🇺</span>
-            <span class="lang-name">Russian</span>
-            <span class="lang-native">Русский</span>
-            <span class="checkmark">✓</span>
-          </button>
-          <button type="button" class="lang-item" data-lang="ko" role="option" aria-selected="false">
-            <span class="lang-flag">🇰🇷</span>
-            <span class="lang-name">Korean</span>
-            <span class="lang-native">한국어</span>
-            <span class="checkmark">✓</span>
-          </button>
-          <button type="button" class="lang-item" data-lang="zh" role="option" aria-selected="false">
-            <span class="lang-flag">🇨🇳</span>
-            <span class="lang-name">Chinese</span>
-            <span class="lang-native">中文</span>
-            <span class="checkmark">✓</span>
-          </button>
-          <button type="button" class="lang-item" data-lang="ja" role="option" aria-selected="false">
-            <span class="lang-flag">🇯🇵</span>
-            <span class="lang-name">Japanese</span>
-            <span class="lang-native">日本語</span>
-            <span class="checkmark">✓</span>
-          </button>
+          {% endfor %}
         </div>
 
         <div class="inline-error" id="langError" role="alert" aria-live="polite"></div>
 
         <button class="modal-primary" type="button" id="saveLanguageBtn">
-          <span class="btn-text">Save Language</span>
+          <span class="btn-text">{{ t.get('save_language', 'Save Language') }}</span>
           <span class="btn-spinner hidden">⟳</span>
         </button>
       </div>
