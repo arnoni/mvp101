@@ -79,6 +79,8 @@ TRANSLATIONS = {
         "unlock_subtext": "Get demand insights + higher accuracy",
         "choose_app_language": "Choose the language for the app interface.",
         "available_languages": "Available languages",
+        "select_language": "Select Language",
+        "location": "Location",
         "submit_report": "Submit Report",
         "report_type": "Report Type",
         "active_construction": "Active Construction",
@@ -208,7 +210,9 @@ TRANSLATIONS = {
         "unlock_full_access": "Desbloquear Acceso Total",
         "unlock_subtext": "Obtenga información de demanda + mayor precisión",
         "choose_app_language": "Elija el idioma de la aplicación.",
-        "available_languages": "Idiomas disponibles"
+        "available_languages": "Idiomas disponibles",
+        "select_language": "Seleccionar idioma",
+        "location": "Ubicación"
     },
     "ru": {
         "title": "DillDrill",
@@ -286,7 +290,9 @@ TRANSLATIONS = {
         "unlock_full_access": "Разблокировать полный доступ",
         "unlock_subtext": "Данные о спросе + высокая точность",
         "choose_app_language": "Выберите язык приложения.",
-        "available_languages": "Доступные языки"
+        "available_languages": "Доступные языки",
+        "select_language": "Выбрать язык",
+        "location": "Местоположение"
     },
     "ko": {
         "title": "DillDrill",
@@ -364,7 +370,9 @@ TRANSLATIONS = {
         "unlock_full_access": "모든 액세스 권한 해제",
         "unlock_subtext": "수요 인사이트 + 높은 정확도 제공",
         "choose_app_language": "앱 인터페이스 언어를 선택하세요.",
-        "available_languages": "사용 가능한 언어"
+        "available_languages": "사용 가능한 언어",
+        "select_language": "언어 선택",
+        "location": "위치"
     },
     "fr": {
         "title": "DillDrill",
@@ -442,7 +450,9 @@ TRANSLATIONS = {
         "unlock_full_access": "Débloquer l'Accès Complet",
         "unlock_subtext": "Infos demande + haute précision",
         "choose_app_language": "Choisissez la langue de l'application.",
-        "available_languages": "Langues disponibles"
+        "available_languages": "Langues disponibles",
+        "select_language": "Choisir la langue",
+        "location": "Emplacement"
     },
     "de": {
         "title": "DillDrill",
@@ -520,7 +530,9 @@ TRANSLATIONS = {
         "unlock_full_access": "Vollen Zugang freischalten",
         "unlock_subtext": "Nachfrage-Insights + höhere Genauigkeit",
         "choose_app_language": "Wählen Sie die Sprache für die App-Oberfläche.",
-        "available_languages": "Verfügbare Sprachen"
+        "available_languages": "Verfügbare Sprachen",
+        "select_language": "Sprache wählen",
+        "location": "Standort"
     },
     "zh": {
         "title": "DillDrill",
@@ -598,7 +610,9 @@ TRANSLATIONS = {
         "unlock_full_access": "解锁全部权限",
         "unlock_subtext": "获取需求洞察 + 更高准确度",
         "choose_app_language": "选择应用程序界面语言。",
-        "available_languages": "可用语言"
+        "available_languages": "可用语言",
+        "select_language": "选择语言",
+        "location": "地点"
     },
     "ja": {
         "title": "DillDrill",
@@ -676,7 +690,9 @@ TRANSLATIONS = {
         "unlock_full_access": "フルアクセスを解除",
         "unlock_subtext": "需要インサイト + 高精度な分析",
         "choose_app_language": "アプリの言語を選択してください。",
-        "available_languages": "利用可能な言語"
+        "available_languages": "利用可能な言語",
+        "select_language": "言語を選択",
+        "location": "場所"
     }
 }
 
