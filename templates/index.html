@@ -433,26 +433,66 @@
 </dialog>
 
 <!-- 5. ABOUT / LEARN MORE MODAL -->
-<dialog class="modal-layer" id="aboutModalLayer" aria-labelledby="aboutModalTitle">
-  <div class="modal">
-    <div class="modal-head">
-      <h2 class="modal-title" id="aboutModalTitle">{{ t.get('about_dilldrill', 'About DillDrill') }}</h2>
-      <button class="modal-close" type="button" data-close="aboutModalLayer" aria-label="{{ t.get('close', 'Close') }}">✕</button>
+<dialog class="modal-layer info-sheet-layer" id="aboutModalLayer" aria-labelledby="aboutModalTitle">
+  <div class="modal info-sheet" role="document">
+    
+    <!-- Added mobile drag handle for consistency with your other sheets -->
+    <div class="sheet-handle mobile-only" aria-hidden="true"></div>
+
+    <div class="modal-head info-sheet__head">
+      <div class="info-sheet__title-wrap">
+        <div class="info-sheet__badge" aria-hidden="true">D</div>
+        <div>
+          <h2 class="modal-title info-sheet__title" id="aboutModalTitle">
+            {{ t.get('about_dilldrill', 'About DillDrill') }}
+          </h2>
+          <p class="info-sheet__subtitle">
+            {{ t.get('about_subtitle', 'Check construction now, sleep better later.') }}
+          </p>
+        </div>
+      </div>
+
+      <!-- Upgraded close button to SVG -->
+      <button 
+        class="sheet-close" 
+        type="button" 
+        data-close="aboutModalLayer"
+        aria-label="{{ t.get('close', 'Close') }}"
+      >
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+      </button>
     </div>
+
     <div class="modal-body">
       <div class="modal-stack about-content">
-        <section class="about-section">
-          <div class="section-icon">🏗️</div>
-          <div class="option-title">{{ t.get('what_it_does', 'What It Does') }}</div>
-          <div class="option-meta">
-            {{ t.get('what_it_does_desc', 'DillDrill helps estimate construction activity and demand signals around any location before you commit to a lease or purchase.') }}
+
+        <!-- Hero -->
+        <section class="about-hero-card">
+          <div class="about-hero-card__icon" aria-hidden="true">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 20h20"></path><path d="M5 20V4l8 4v12"></path><path d="M13 8h6v12"></path></svg>
+          </div>
+          <div class="about-hero-card__body">
+            <h3 class="about-hero-card__title">
+              {{ t.get('what_it_does', 'What It Does') }}
+            </h3>
+            <p class="about-hero-card__text">
+              {{ t.get('what_it_does_desc', 'DillDrill helps estimate construction activity and demand signals around any location before you commit to a lease or purchase.') }}
+            </p>
           </div>
         </section>
 
-        <section class="about-section">
-          <div class="section-icon">⚙️</div>
-          <div class="option-title">{{ t.get('how_to_use_title', 'How To Use') }}</div>
-          <ol class="steps-list">
+        <!-- Steps -->
+        <section class="about-panel">
+          <div class="about-panel__head">
+            <div class="about-panel__icon" aria-hidden="true">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+            </div>
+            <h3 class="about-panel__title">
+              {{ t.get('how_to_use_title', 'How To Use') }}
+            </h3>
+          </div>
+
+          <ol class="about-steps">
             <li>{{ t.get('step_1', 'Enter valid coordinates') }}</li>
             <li>{{ t.get('step_2', 'Run construction check first') }}</li>
             <li>{{ t.get('step_3', 'Then run demand for same location') }}</li>
@@ -460,28 +500,56 @@
           </ol>
         </section>
 
-        <section class="about-section warning-section">
-          <div class="section-icon">⚠️</div>
-          <div class="option-title">{{ t.get('important_notes', 'Important Notes') }}</div>
-          <div class="option-meta">
-            {{ t.get('important_notes_desc', 'Results may be partial, delayed, inferred, or unavailable depending on data coverage and access tier. Always verify independently.') }}
+        <!-- Notes (Warning) -->
+        <section class="about-panel about-panel--warning">
+          <div class="about-panel__head">
+            <div class="about-panel__icon warning-icon" aria-hidden="true">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
+            </div>
+            <h3 class="about-panel__title">
+              {{ t.get('important_notes', 'Important Notes') }}
+            </h3>
+          </div>
+
+          <p class="about-panel__text">
+            {{ t.get('important_notes_desc', 'DillDrill is an independent international research project and informational tool. Results may be partial, delayed, inferred, or unavailable depending on data coverage and access tier. Always verify independently.') }}
+          </p>
+        </section>
+
+        <!-- Support -->
+        <section class="about-panel">
+          <div class="about-panel__head">
+            <div class="about-panel__icon" aria-hidden="true">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
+            </div>
+            <h3 class="about-panel__title">
+              {{ t.get('support_legal', 'Support & Contact') }}
+            </h3>
+          </div>
+
+          <div class="about-links">
+            <!-- Added noreferrer for security -->
+            <a href="{{ faq_url|default('#') }}" class="about-link-chip" target="_blank" rel="noopener noreferrer">
+              {{ t.get('open_faq', 'Open FAQ') }}
+            </a>
+
+            <a href="mailto:help@dilldrill.com" class="about-link-chip">
+              help@dilldrill.com
+            </a>
+
+            <a href="mailto:dilldrillteam@gmail.com" class="about-link-chip about-link-chip--stack">
+              <span>{{ t.get('about_partner_contact_label', 'Partnerships & collaboration') }}</span>
+              <span class="chip-email">dilldrillteam@gmail.com</span>
+            </a>
           </div>
         </section>
 
-        <section class="about-section">
-          <div class="section-icon">❓</div>
-          <div class="option-title">{{ t.get('support_legal', 'Support & Legal') }}</div>
-          <div class="option-meta">
-            <a href="{{ faq_url|default('#') }}" class="modal-link" target="_blank" rel="noopener">{{ t.get('open_faq', 'Open FAQ') }}</a>
-            <span class="separator">•</span>
-            <a href="mailto:help@dilldrill.com" class="modal-link">help@dilldrill.com</a>
-          </div>
-        </section>
-
+        <!-- Footer -->
         <footer class="about-footer">
           <p class="copyright">© DillDrill 2026. {{ t.get('rights', 'All rights reserved.') }}</p>
           <p class="version">v1.2.0</p>
         </footer>
+
       </div>
     </div>
   </div>
