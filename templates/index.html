@@ -13,6 +13,7 @@
   data-demand-allowed="{{ 'true' if demand_allowed else 'false' }}"
   data-turnstile-sitekey="{{ turnstile_site_key }}"
   data-turnstile-required="{{ 'true' if initial_turnstile_required else 'false' }}"
+  data-current-lang="{{ current_lang }}"
 >
   <main class="app" id="app">
     <!-- HEADER -->
@@ -179,8 +180,8 @@
   <div class="modal-card" role="dialog" aria-modal="true">
     <!-- Header -->
     <div class="modal-header">
-      <h2 id="modal-title">Your Access</h2>
-      <button class="btn-close" type="button" data-close="userModalLayer" aria-label="Close modal">
+      <h2 id="modal-title">{{ t.get('your_access', 'Your Access') }}</h2>
+      <button class="btn-close" type="button" data-close="userModalLayer" aria-label="{{ t.get('close', 'Close') }}">
         <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <line x1="18" y1="6" x2="6" y2="18"></line>
           <line x1="6" y1="6" x2="18" y2="18"></line>
@@ -190,21 +191,21 @@
 
     <!-- Tier Badge -->
     <div class="tier-badge tier-{{ tier|default('free')|lower }}">
-      {{ tier|default('FREE')|upper }} TIER
+      {{ initial_tier|upper }} {{ t.get('tier', 'TIER') }}
     </div>
 
     <!-- Status -->
     <div class="status-block">
       <div class="status-row">
-        <span><strong>Construction:</strong></span>
-        <span class="available">Available ✓</span>
+        <span><strong>{{ t.get('construction', 'Construction') }}:</strong></span>
+        <span class="available">{{ t.get('available', 'Available') }} ✓</span>
       </div>
       <div class="status-row">
-        <span><strong>Demand:</strong></span>
+        <span><strong>{{ t.get('demand', 'Demand') }}:</strong></span>
         {% if demand_allowed %}
-          <span class="available">Available ✓</span>
+          <span class="available">{{ t.get('available', 'Available') }} ✓</span>
         {% else %}
-          <span class="locked">Locked 🔒</span>
+          <span class="locked">{{ t.get('locked', 'Locked') }} 🔒</span>
         {% endif %}
       </div>
     </div>
@@ -212,20 +213,20 @@
     <!-- Content -->
     <div class="info-grid">
       <div class="info-block">
-        <div class="info-title">⚠️ Free Limitations</div>
+        <div class="info-title">⚠️ {{ t.get('limitations_title', 'Free Limitations') }}</div>
         <ul>
-          <li>Demand checks locked</li>
-          <li>Rate limited to 10/day</li>
-          <li>Verification required</li>
+          <li>{{ t.get('limit_demand_locked', 'Demand checks locked') }}</li>
+          <li>{{ t.get('limit_rate_limited', 'Rate limited to 10/day') }}</li>
+          <li>{{ t.get('limit_verification', 'Verification required') }}</li>
         </ul>
       </div>
 
       <div class="info-block">
-        <div class="info-title">💡 Pro Workflow</div>
+        <div class="info-title">💡 {{ t.get('workflow_title', 'Pro Workflow') }}</div>
         <ul>
-          <li>Use valid coordinates</li>
-          <li>Run construction models</li>
-          <li><strong>Unlock to view demand</strong></li>
+          <li>{{ t.get('work_coords', 'Use valid coordinates') }}</li>
+          <li>{{ t.get('work_construction', 'Run construction models') }}</li>
+          <li><strong>{{ t.get('work_unlock', 'Unlock to view demand') }}</strong></li>
         </ul>
       </div>
     </div>
@@ -234,10 +235,10 @@
     {% if not demand_allowed %}
     <div class="modal-footer">
       <button class="cta-unlock" id="userUpgradeBtn">
-        🔓 Unlock Full Access
+        🔓 {{ t.get('unlock_full_access', 'Unlock Full Access') }}
       </button>
       <div class="cta-subtext">
-        Get demand insights + higher accuracy
+        {{ t.get('unlock_subtext', 'Get demand insights + higher accuracy') }}
       </div>
     </div>
     {% endif %}
@@ -248,39 +249,39 @@
 <dialog class="modal-layer" id="reportModalLayer" aria-labelledby="reportModalTitle">
   <div class="modal">
     <div class="modal-head">
-      <h2 class="modal-title" id="reportModalTitle">Submit Report</h2>
-      <button class="modal-close" type="button" data-close="reportModalLayer" aria-label="Close">✕</button>
+      <h2 class="modal-title" id="reportModalTitle">{{ t.get('submit_report', 'Submit Report') }}</h2>
+      <button class="modal-close" type="button" data-close="reportModalLayer" aria-label="{{ t.get('close', 'Close') }}">✕</button>
     </div>
     <div class="modal-body">
       <!-- Form State -->
       <div class="modal-stack" id="reportFormState">
         <div class="option-card location-card">
-          <div class="option-title">📍 Location</div>
-          <div class="option-meta" id="reportCoordsDisplay">Coordinates not set</div>
+          <div class="option-title">📍 {{ t.get('location', 'Location') }}</div>
+          <div class="option-meta" id="reportCoordsDisplay">{{ t.get('coordinates_not_set', 'Coordinates not set') }}</div>
         </div>
 
         <div class="field-group">
-          <label class="field-label">Report Type</label>
-          <div class="chip-grid" id="reportTypeGrid" role="radiogroup" aria-label="Report type">
+          <label class="field-label">{{ t.get('report_type', 'Report Type') }}</label>
+          <div class="chip-grid" id="reportTypeGrid" role="radiogroup" aria-label="{{ t.get('report_type', 'Report Type') }}">
             <button type="button" class="chip active" data-report-type="active_construction" role="radio" aria-checked="true">
-              Active Construction
+              {{ t.get('active_construction', 'Active Construction') }}
             </button>
             <button type="button" class="chip" data-report-type="noise_heard" role="radio" aria-checked="false">
-              Noise Heard
+              {{ t.get('noise_heard', 'Noise Heard') }}
             </button>
             <button type="button" class="chip" data-report-type="new_site_spotted" role="radio" aria-checked="false">
-              New Site Spotted
+              {{ t.get('new_site_spotted', 'New Site Spotted') }}
             </button>
             <button type="button" class="chip" data-report-type="unsure_but_suspicious" role="radio" aria-checked="false">
-              Suspicious / Unsure
+              {{ t.get('suspicious_unsure', 'Suspicious / Unsure') }}
             </button>
           </div>
         </div>
 
         <label class="field">
-          <span class="field-label">Additional Notes <span class="optional">(optional)</span></span>
+          <span class="field-label">{{ t.get('additional_notes', 'Additional Notes') }} <span class="optional">({{ t.get('optional', 'optional') }})</span></span>
           <textarea class="modal-textarea" id="reportNote" rows="3" maxlength="180" 
-                    placeholder="Describe what you observed..."></textarea>
+                    placeholder="{{ t.get('report_placeholder', 'Describe what you observed...') }}"></textarea>
           <span class="char-count" id="reportCharCount">0/180</span>
         </label>
 
@@ -288,10 +289,10 @@
 
         <div class="button-group">
           <button class="modal-primary" type="button" id="reportSubmitBtn">
-            <span class="btn-text">Submit Report</span>
+            <span class="btn-text">{{ t.get('submit_report_btn', 'Submit Report') }}</span>
             <span class="btn-spinner hidden">⟳</span>
           </button>
-          <button class="modal-secondary" type="button" data-close="reportModalLayer">Cancel</button>
+          <button class="modal-secondary" type="button" data-close="reportModalLayer">{{ t.get('cancel', 'Cancel') }}</button>
         </div>
       </div>
 
@@ -301,10 +302,10 @@
           <div class="success-icon">✓</div>
         </div>
         <div class="option-card text-center">
-          <div class="option-title">Report Received!</div>
-          <div class="option-meta">Thank you for helping keep the community map accurate.</div>
+          <div class="option-title">{{ t.get('report_received', 'Report Received!') }}</div>
+          <div class="option-meta">{{ t.get('report_success_msg', 'Thank you for helping keep the community map accurate.') }}</div>
         </div>
-        <button class="modal-secondary" type="button" data-close="reportModalLayer">Done</button>
+        <button class="modal-secondary" type="button" data-close="reportModalLayer">{{ t.get('done', 'Done') }}</button>
       </div>
     </div>
   </div>
@@ -314,21 +315,21 @@
 <dialog class="modal-layer" id="shareModalLayer" aria-labelledby="shareModalTitle">
   <div class="modal">
     <div class="modal-head">
-      <h2 class="modal-title" id="shareModalTitle">Share DillDrill</h2>
-      <button class="modal-close" type="button" data-close="shareModalLayer" aria-label="Close">✕</button>
+      <h2 class="modal-title" id="shareModalTitle">{{ t.get('share_dilldrill', 'Share DillDrill') }}</h2>
+      <button class="modal-close" type="button" data-close="shareModalLayer" aria-label="{{ t.get('close', 'Close') }}">✕</button>
     </div>
     <div class="modal-body">
       <div class="modal-stack">
         <label class="field">
-          <span class="field-label">Share Message</span>
-          <textarea class="modal-textarea" id="shareText" rows="2">Check construction activity near any location with DillDrill.</textarea>
+          <span class="field-label">{{ t.get('share_message', 'Share Message') }}</span>
+          <textarea class="modal-textarea" id="shareText" rows="2">{{ t.get('share_default_text', 'Check construction activity near any location with DillDrill.') }}</textarea>
         </label>
 
         <div class="field">
-          <span class="field-label">Link</span>
+          <span class="field-label">{{ t.get('link', 'Link') }}</span>
           <div class="copy-field">
             <div class="readbox" id="shareUrlBox">{{ share_url|default('https://dilldrill.com') }}</div>
-            <button class="icon-btn" type="button" id="copyLinkBtn" aria-label="Copy link">
+            <button class="icon-btn" type="button" id="copyLinkBtn" aria-label="{{ t.get('copy_link', 'Copy link') }}">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
                 <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
@@ -339,9 +340,9 @@
 
         <div class="share-grid">
           <button class="modal-primary share-native" type="button" id="nativeShareBtn">
-            <span>📤 Share Now</span>
+            <span>📤 {{ t.get('share_now', 'Share Now') }}</span>
           </button>
-          <button class="modal-secondary" type="button" id="copyAllBtn">Copy Text + Link</button>
+          <button class="modal-secondary" type="button" id="copyAllBtn">{{ t.get('copy_all', 'Copy Text + Link') }}</button>
         </div>
 
         <div class="inline-error" id="shareError" role="alert" aria-live="polite"></div>
@@ -354,21 +355,21 @@
 <dialog class="modal-layer" id="supportModalLayer" aria-labelledby="supportModalTitle">
   <div class="modal">
     <div class="modal-head">
-      <h2 class="modal-title" id="supportModalTitle">Unlock Full Access</h2>
-      <button class="modal-close" type="button" data-close="supportModalLayer" aria-label="Close">✕</button>
+      <h2 class="modal-title" id="supportModalTitle">{{ t.get('unlock_full_access_title', 'Unlock Full Access') }}</h2>
+      <button class="modal-close" type="button" data-close="supportModalLayer" aria-label="{{ t.get('close', 'Close') }}">✕</button>
     </div>
     <div class="modal-body">
       <!-- Step 1: Email & Plan Selection -->
       <div class="modal-stack purchase-step" id="purchaseStep1">
         <div class="option-card info-card">
-          <div class="option-title">🔐 No Account Needed</div>
+          <div class="option-title">🔐 {{ t.get('no_account_needed', 'No Account Needed') }}</div>
           <div class="option-meta">
-            Enter your email, complete payment, then use the secure access link we send you.
+            {{ t.get('purchase_intro', 'Enter your email, complete payment, then use the secure access link we send you.') }}
           </div>
         </div>
 
         <label class="field">
-          <span class="field-label">Email Address</span>
+          <span class="field-label">{{ t.get('email_address', 'Email Address') }}</span>
           <input type="email" id="purchaseEmail" class="modal-input" 
                  inputmode="email" autocomplete="email" 
                  placeholder="you@example.com">
@@ -376,56 +377,56 @@
         </label>
 
         <div class="field-group">
-          <label class="field-label">Select Pass</label>
-          <div class="plan-cards" id="planGrid" role="radiogroup" aria-label="Pass duration">
+          <label class="field-label">{{ t.get('select_pass', 'Select Pass') }}</label>
+          <div class="plan-cards" id="planGrid" role="radiogroup" aria-label="{{ t.get('select_pass', 'Select Pass') }}">
             <button type="button" class="plan-card active" data-plan="1_day" role="radio" aria-checked="true">
-              <div class="plan-name">1 Day Pass</div>
+              <div class="plan-name">{{ t.get('pass_1_day', '1 Day Pass') }}</div>
               <div class="plan-price">$4.99</div>
-              <div class="plan-desc">Full access for 24 hours</div>
+              <div class="plan-desc">{{ t.get('pass_1_day_desc', 'Full access for 24 hours') }}</div>
             </button>
             <button type="button" class="plan-card" data-plan="3_day" role="radio" aria-checked="false">
-              <div class="plan-name">3 Day Pass</div>
+              <div class="plan-name">{{ t.get('pass_3_day', '3 Day Pass') }}</div>
               <div class="plan-price">$9.99</div>
-              <div class="plan-desc">Full access for 72 hours</div>
+              <div class="plan-desc">{{ t.get('pass_3_day_desc', 'Full access for 72 hours') }}</div>
             </button>
           </div>
         </div>
 
         <div class="button-group">
           <button class="modal-primary" type="button" id="proceedToPaymentBtn">
-            <span class="btn-text">Continue to Payment</span>
+            <span class="btn-text">{{ t.get('continue_to_payment', 'Continue to Payment') }}</span>
             <span class="btn-spinner hidden">⟳</span>
           </button>
         </div>
 
         <div class="secondary-actions">
-          <button class="text-btn" type="button" id="alreadyPaidBtn">I Already Paid</button>
-          <button class="text-btn" type="button" id="resendLinkBtn">Resend Access Link</button>
+          <button class="text-btn" type="button" id="alreadyPaidBtn">{{ t.get('already_paid', 'I Already Paid') }}</button>
+          <button class="text-btn" type="button" id="resendLinkBtn">{{ t.get('resend_link', 'Resend Access Link') }}</button>
         </div>
 
-        <p class="privacy-note">We use your email only for receipt delivery and secure pass activation.</p>
+        <p class="privacy-note">{{ t.get('purchase_privacy_note', 'We use your email only for receipt delivery and secure pass activation.') }}</p>
       </div>
 
       <!-- Step 2: Processing -->
       <div class="modal-stack purchase-step hidden" id="purchaseStep2">
         <div class="processing-state">
           <div class="spinner-large">⟳</div>
-          <div class="option-title">Preparing Checkout...</div>
-          <div class="option-meta">You'll be redirected to our secure payment provider.</div>
+          <div class="option-title">{{ t.get('preparing_checkout', 'Preparing Checkout...') }}</div>
+          <div class="option-meta">{{ t.get('checkout_redirect_msg', "You'll be redirected to our secure payment provider.") }}</div>
         </div>
-        <button class="modal-secondary" type="button" id="cancelPaymentBtn">Cancel</button>
+        <button class="modal-secondary" type="button" id="cancelPaymentBtn">{{ t.get('cancel', 'Cancel') }}</button>
         <div class="inline-error" id="purchaseRedirectError" role="alert"></div>
       </div>
 
       <!-- Step 3: Resend Confirmation -->
       <div class="modal-stack purchase-step hidden" id="purchaseStep3">
         <div class="option-card text-center">
-          <div class="option-title">📧 Check Your Email</div>
+          <div class="option-title">📧 {{ t.get('check_your_email', 'Check Your Email') }}</div>
           <div class="option-meta" id="resendMessage">
-            We've sent a secure access link to your email. Click it to activate your pass.
+            {{ t.get('resend_success_msg', "We've sent a secure access link to your email. Click it to activate your pass.") }}
           </div>
         </div>
-        <button class="modal-secondary" type="button" data-close="supportModalLayer">Got It</button>
+        <button class="modal-secondary" type="button" data-close="supportModalLayer">{{ t.get('got_it', 'Got It') }}</button>
       </div>
     </div>
   </div>
@@ -435,51 +436,51 @@
 <dialog class="modal-layer" id="aboutModalLayer" aria-labelledby="aboutModalTitle">
   <div class="modal">
     <div class="modal-head">
-      <h2 class="modal-title" id="aboutModalTitle">About DillDrill</h2>
-      <button class="modal-close" type="button" data-close="aboutModalLayer" aria-label="Close">✕</button>
+      <h2 class="modal-title" id="aboutModalTitle">{{ t.get('about_dilldrill', 'About DillDrill') }}</h2>
+      <button class="modal-close" type="button" data-close="aboutModalLayer" aria-label="{{ t.get('close', 'Close') }}">✕</button>
     </div>
     <div class="modal-body">
       <div class="modal-stack about-content">
         <section class="about-section">
           <div class="section-icon">🏗️</div>
-          <div class="option-title">What It Does</div>
+          <div class="option-title">{{ t.get('what_it_does', 'What It Does') }}</div>
           <div class="option-meta">
-            DillDrill helps estimate construction activity and demand signals around any location before you commit to a lease or purchase.
+            {{ t.get('what_it_does_desc', 'DillDrill helps estimate construction activity and demand signals around any location before you commit to a lease or purchase.') }}
           </div>
         </section>
 
         <section class="about-section">
           <div class="section-icon">⚙️</div>
-          <div class="option-title">How To Use</div>
+          <div class="option-title">{{ t.get('how_to_use_title', 'How To Use') }}</div>
           <ol class="steps-list">
-            <li>Enter valid coordinates</li>
-            <li>Run construction check first</li>
-            <li>Then run demand for same location</li>
-            <li>Review the combined risk score</li>
+            <li>{{ t.get('step_1', 'Enter valid coordinates') }}</li>
+            <li>{{ t.get('step_2', 'Run construction check first') }}</li>
+            <li>{{ t.get('step_3', 'Then run demand for same location') }}</li>
+            <li>{{ t.get('step_4', 'Review the combined risk score') }}</li>
           </ol>
         </section>
 
         <section class="about-section warning-section">
           <div class="section-icon">⚠️</div>
-          <div class="option-title">Important Notes</div>
+          <div class="option-title">{{ t.get('important_notes', 'Important Notes') }}</div>
           <div class="option-meta">
-            Results may be partial, delayed, inferred, or unavailable depending on data coverage and access tier. Always verify independently.
+            {{ t.get('important_notes_desc', 'Results may be partial, delayed, inferred, or unavailable depending on data coverage and access tier. Always verify independently.') }}
           </div>
         </section>
 
         <section class="about-section">
           <div class="section-icon">❓</div>
-          <div class="option-title">Support & Legal</div>
+          <div class="option-title">{{ t.get('support_legal', 'Support & Legal') }}</div>
           <div class="option-meta">
-            <a href="{{ faq_url|default('#') }}" class="modal-link" target="_blank" rel="noopener">Open FAQ</a>
+            <a href="{{ faq_url|default('#') }}" class="modal-link" target="_blank" rel="noopener">{{ t.get('open_faq', 'Open FAQ') }}</a>
             <span class="separator">•</span>
             <a href="mailto:help@dilldrill.com" class="modal-link">help@dilldrill.com</a>
           </div>
         </section>
 
         <footer class="about-footer">
-          <p class="copyright">© DillDrill 2025. All rights reserved.</p>
-          <p class="version">v1.0.0</p>
+          <p class="copyright">© DillDrill 2026. {{ t.get('rights', 'All rights reserved.') }}</p>
+          <p class="version">v1.2.0</p>
         </footer>
       </div>
     </div>
@@ -491,8 +492,8 @@
   <div class="modal">
     <div class="modal-handle" aria-hidden="true"></div>
     <div class="modal-head">
-      <h2 class="modal-title" id="langModalTitle">Select Language</h2>
-      <button class="modal-close" type="button" data-close="langModalLayer" aria-label="Close">✕</button>
+      <h2 class="modal-title" id="langModalTitle">{{ t.get('select_language', 'Select Language') }}</h2>
+      <button class="modal-close" type="button" data-close="langModalLayer" aria-label="{{ t.get('close', 'Close') }}">✕</button>
     </div>
     <div class="modal-body">
       <div class="modal-stack">

@@ -376,8 +376,8 @@ const ModalSystem = (function() {
       email: ''
     },
     language: {
-      current: document.documentElement.lang || 'en',
-      selected: document.documentElement.lang || 'en'
+      current: document.body.dataset.currentLang || document.documentElement.lang || 'en',
+      selected: document.body.dataset.currentLang || document.documentElement.lang || 'en'
     },
     modals: {
       active: null,
