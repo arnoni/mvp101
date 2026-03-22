@@ -12,6 +12,7 @@
   data-tier="{{ tier|default('free') }}" 
   data-demand-allowed="{{ 'true' if demand_allowed else 'false' }}"
   data-turnstile-sitekey="{{ turnstile_site_key }}"
+  data-turnstile-required="{{ 'true' if initial_turnstile_required else 'false' }}"
 >
   <main class="app" id="app">
     <!-- HEADER -->

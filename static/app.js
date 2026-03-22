@@ -308,6 +308,13 @@ document.addEventListener("DOMContentLoaded", () => {
   
   animateGauge(els.conBand, els.conNeedle, null);
   animateGauge(els.demBand, els.demNeedle, null);
+
+  // Initial Pre-hydration Check
+  if (document.body.dataset.turnstileRequired === "true") {
+    state.verification.required = true;
+    renderTurnstile();
+    updateButtons();
+  }
 });
 
 
