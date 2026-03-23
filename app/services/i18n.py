@@ -1057,7 +1057,7 @@ TRANSLATIONS = {
         "support_legal": "サポート・お問い合わせ",
         "open_faq": "FAQ を開く",
         "coordinates_not_set": "座標未設定"
-    },}
+    }
 }
 
 LANG_META = {
