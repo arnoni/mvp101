@@ -148,11 +148,12 @@ app = FastAPI(
 )
 
 # --- Middleware and Exception Handlers ---
-# --- Middleware and Exception Handlers ---
 from app.middleware.identity import IdentityMiddleware
 from app.core.middleware import EntitlementMiddleware
-# SessionMiddleware and AnonIdMiddleware are replaced by IdentityMiddleware
+# LoggingMiddleware is imported above at line 20
 
+# Order of precedence is BOTTOM to TOP for add_middleware in FastAPI
+# For Identity (1st) -> Entitlement (2nd) -> Logging (3rd):
 app.add_middleware(LoggingMiddleware)
 app.add_middleware(EntitlementMiddleware)
 app.add_middleware(IdentityMiddleware)
