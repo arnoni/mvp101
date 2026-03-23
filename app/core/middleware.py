@@ -126,36 +126,13 @@ class SessionMiddleware(BaseHTTPMiddleware):
 
 class EntitlementMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
-        # 1. Determine Tier
-        user_id = getattr(request.state, "user_id", None)
+        identity_id = getattr(request.state, "identity_id", None)
+        identity_kind = getattr(request.state, "identity_kind", "anon")
         
-        try:
-            # Check entitlement cache
-            entitlement_result = await EntitlementService.get_tier(user_id, redis_client.client, ttl_seconds=300)
-            
-            request.state.tier = entitlement_result.tier
-            request.state.entitlement_stale = entitlement_result.is_stale
-            request.state.entitlement_data = entitlement_result.raw_data
-            
-            # --- SENTRY INTEGRATION START ---
-            # Tag the transaction with the tier. 
-            # In Sentry, you can now search: `tier:free` AND `status:500`
-            sentry_sdk.set_tag("tier", entitlement_result.tier)
-            
-            # If we have complex raw_data, add it as extra context (debug data)
-            if entitlement_result.raw_data:
-                sentry_sdk.set_context("entitlements", entitlement_result.raw_data)
-            # --- SENTRY INTEGRATION END ---
-
-        except Exception as e:
-            # If entitlement service completely dies (e.g. DB down), capture it
-            # and potentially allow a fallback (or let it crash if that's preferred)
-            sentry_sdk.capture_exception(e)
-            
-            # Fallback to safe defaults so the app doesn't 500 loop
-            request.state.tier = "free_fallback" 
-            request.state.entitlement_stale = True
-            request.state.entitlement_data = {}
-            # Re-raise if you prefer strict failure: raise e
+        service = EntitlementService()
+        # Ensure EntitlementService.get_user_tier is called with correct parameters
+        tier = await service.get_user_tier(identity_id, is_paid=(identity_kind == "paid"))
+        
+        request.state.tier = tier
         
         return await call_next(request)
