@@ -889,10 +889,15 @@ const ModalSystem = (function() {
      */
     support: {
       init() {
+        // Check for success redirect parameter on page load 
+        const urlParams = new URLSearchParams(window.location.search);
+        if (urlParams.get('magic_success') === '1') {
+          this.handleSuccessfulLogin();
+        }
+
         const btn = document.getElementById('supportBtn');
         const proceedBtn = document.getElementById('proceedToPaymentBtn');
         const cancelBtn = document.getElementById('cancelPaymentBtn');
-        const alreadyPaidBtn = document.getElementById('alreadyPaidBtn');
         const resendBtn = document.getElementById('resendLinkBtn');
         const planGrid = document.getElementById('planGrid');
 
@@ -916,77 +921,97 @@ const ModalSystem = (function() {
 
         proceedBtn?.addEventListener('click', () => this.proceedToPayment());
         cancelBtn?.addEventListener('click', () => this.reset());
-        alreadyPaidBtn?.addEventListener('click', () => this.showResendInfo());
         resendBtn?.addEventListener('click', () => this.resendLink());
+      },
+
+      handleSuccessfulLogin() {
+        // Clean the URL so the user doesn't copy/paste it or refresh and trigger it again 
+        window.history.replaceState({}, document.title, window.location.pathname);
+        
+        // Show feedback
+        window.dispatchEvent(new CustomEvent('app:notify', { 
+          detail: { message: '🎉 Pass Activated! You now have full access.', type: 'success' } 
+        }));
+        
+        // Fetch updated session state
+        if (window.core && window.core.fetchUserEntitlements) {
+          window.core.fetchUserEntitlements();
+        } else {
+          // Fallback if core isn't exposed or structured this way
+          window.location.reload();
+        }
       },
 
       async proceedToPayment() {
         const emailInput = document.getElementById('purchaseEmail');
         const errorEl = document.getElementById('purchaseEmailError');
-        const email = emailInput.value.trim();
+        const email = emailInput.value.trim().toLowerCase(); // Always lower-case! 
+        
+        // Turnstile token extraction
+        const turnstileToken = document.querySelector('[name="cf-turnstile-response"]')?.value;
 
-        // Validate
         if (!utils.isValidEmail(email)) {
           errorEl.textContent = 'Please enter a valid email address.';
-          emailInput.focus();
+          return;
+        }
+        if (!turnstileToken) {
+          errorEl.textContent = 'Please complete the security check.';
           return;
         }
 
         errorEl.textContent = '';
         state.unlock.email = email;
-
-        // Show processing state
-        this.showStep(2);
+        this.showStep(2); // Show processing spinner 
 
         try {
           const data = await utils.apiPost('/billing/unlock_intent', {
             email,
-            plan: state.unlock.plan
+            plan: state.unlock.plan,
+            turnstile_token: turnstileToken
           });
 
-          // Redirect to checkout
           window.location.href = data.checkout_url;
-
         } catch (err) {
           this.showStep(1);
-          errorEl.textContent = err.message || 'Could not start checkout. Please try again.';
+          errorEl.textContent = err.message || 'Checkout failed. Please try again.';
+          // Reset Turnstile on failure 
+          if (window.turnstile) turnstile.reset();
         }
       },
 
       async resendLink() {
         const emailInput = document.getElementById('purchaseEmail');
         const errorEl = document.getElementById('purchaseEmailError');
-        const btn = document.getElementById('resendLinkBtn');
-        const email = emailInput.value.trim();
+        const email = emailInput.value.trim().toLowerCase();
+        const turnstileToken = document.querySelector('[name="cf-turnstile-response"]')?.value;
 
         if (!utils.isValidEmail(email)) {
-          errorEl.textContent = 'Enter the email used for payment.';
+          errorEl.textContent = 'Enter your email above, then click Resend.';
+          emailInput.focus();
+          return;
+        }
+        if (!turnstileToken) {
+          errorEl.textContent = 'Please complete the security check.';
           return;
         }
 
-        utils.setButtonLoading(btn, true);
+        utils.setButtonLoading(document.getElementById('resendLinkBtn'), true);
         errorEl.textContent = '';
 
         try {
-          await utils.apiPost('/billing/resend_magic_link', { email });
-          this.showStep(3);
+          await utils.apiPost('/billing/resend_magic_link', {
+            email,
+            turnstile_token: turnstileToken
+          });
+          
+          this.showStep(3); // Show Success Check-Email screen 
           document.getElementById('resendMessage').textContent = 
-            `We've sent a new access link to ${email}. Check your inbox and spam folder.`;
+            `If ${email} has an active pass, we've sent a new access link.`;
         } catch (err) {
-          errorEl.textContent = err.message || 'Could not resend link. Please try again.';
+          errorEl.textContent = err.message || 'Could not resend link.';
+          if (window.turnstile) turnstile.reset();
         } finally {
-          utils.setButtonLoading(btn, false);
-        }
-      },
-
-      showResendInfo() {
-        const emailInput = document.getElementById('purchaseEmail');
-        const errorEl = document.getElementById('purchaseEmailError');
-        
-        if (!utils.isValidEmail(emailInput.value.trim())) {
-          errorEl.textContent = 'Enter your email above, then click "Resend Access Link".';
-        } else {
-          errorEl.textContent = 'Click "Resend Access Link" below to get a new link.';
+          utils.setButtonLoading(document.getElementById('resendLinkBtn'), false);
         }
       },
 
@@ -998,9 +1023,10 @@ const ModalSystem = (function() {
 
       reset() {
         this.showStep(1);
-        document.getElementById('purchaseEmail').value = '';
-        document.getElementById('purchaseEmailError').textContent = '';
-        document.getElementById('purchaseRedirectError').textContent = '';
+        const emailInput = document.getElementById('purchaseEmail');
+        if (emailInput) emailInput.value = '';
+        const errorEl = document.getElementById('purchaseEmailError');
+        if (errorEl) errorEl.textContent = '';
       }
     },
 

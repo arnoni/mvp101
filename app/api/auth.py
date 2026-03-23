@@ -67,7 +67,9 @@ async def magic_landing(token: str, request: Request, response: Response):
         samesite="lax"
     )
     
-    return {"message": "Logged in", "user_id": user_id}
+    # Redirect back to the app with a success flag
+    from fastapi.responses import RedirectResponse
+    return RedirectResponse(url="/?magic_success=1", status_code=302)
 
 @router.post("/logout")
 async def logout(request: Request, response: Response):

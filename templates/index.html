@@ -351,60 +351,83 @@
   </div>
 </dialog>
 
-<!-- 4. PURCHASE SUPPORT / SUBSCRIPTION MODAL -->
-<dialog class="modal-layer" id="supportModalLayer" aria-labelledby="supportModalTitle">
+<!-- 4. PURCHASE SUPPORT / SUBSCRIPTION MODAL (DEEP NAVY THEME) -->
+<dialog class="modal-layer theme-navy" id="supportModalLayer" aria-labelledby="supportModalTitle">
   <div class="modal">
     <div class="modal-head">
       <h2 class="modal-title" id="supportModalTitle">{{ t.get('unlock_full_access_title', 'Unlock Full Access') }}</h2>
       <button class="modal-close" type="button" data-close="supportModalLayer" aria-label="{{ t.get('close', 'Close') }}">✕</button>
     </div>
     <div class="modal-body">
+      
       <!-- Step 1: Email & Plan Selection -->
       <div class="modal-stack purchase-step" id="purchaseStep1">
         <div class="option-card info-card">
           <div class="option-title">🔐 {{ t.get('no_account_needed', 'No Account Needed') }}</div>
           <div class="option-meta">
-            {{ t.get('purchase_intro', 'Enter your email, complete payment, then use the secure access link we send you.') }}
+            {{ t.get('purchase_intro', 'Enter your email and pay. We will instantly email you a secure access link to unlock the app.') }}
           </div>
         </div>
 
-        <label class="field">
-          <span class="field-label">{{ t.get('email_address', 'Email Address') }}</span>
-          <input type="email" id="purchaseEmail" class="modal-input" 
-                 inputmode="email" autocomplete="email" 
-                 placeholder="you@example.com">
-          <div class="inline-error" id="purchaseEmailError" role="alert"></div>
-        </label>
-
         <div class="field-group">
-          <label class="field-label">{{ t.get('select_pass', 'Select Pass') }}</label>
-          <div class="plan-cards" id="planGrid" role="radiogroup" aria-label="{{ t.get('select_pass', 'Select Pass') }}">
+          <label class="field-label">1. {{ t.get('select_pass', 'Select Pass') }}</label>
+          <div class="plan-cards" id="planGrid" role="radiogroup">
+            <!-- 1 Day Pass (Active State) -->
             <button type="button" class="plan-card active" data-plan="1_day" role="radio" aria-checked="true">
-              <div class="plan-name">{{ t.get('pass_1_day', '1 Day Pass') }}</div>
+              <div class="plan-header">
+                <span class="plan-name">{{ t.get('pass_1_day', '1 Day Pass') }}</span>
+                <span class="plan-check">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                </span>
+              </div>
               <div class="plan-price">$4.99</div>
               <div class="plan-desc">{{ t.get('pass_1_day_desc', 'Full access for 24 hours') }}</div>
             </button>
+
+            <!-- 3 Day Pass -->
             <button type="button" class="plan-card" data-plan="3_day" role="radio" aria-checked="false">
-              <div class="plan-name">{{ t.get('pass_3_day', '3 Day Pass') }}</div>
+              <div class="plan-header">
+                <span class="plan-name">{{ t.get('pass_3_day', '3 Day Pass') }}</span>
+                <span class="plan-check">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
+                </span>
+              </div>
               <div class="plan-price">$9.99</div>
               <div class="plan-desc">{{ t.get('pass_3_day_desc', 'Full access for 72 hours') }}</div>
             </button>
           </div>
         </div>
 
+        <label class="field">
+          <span class="field-label">2. {{ t.get('email_address', 'Email Address') }} ({{ t.get('purchase_privacy_note', 'For receipt & access link') }})</span>
+          <input type="email" id="purchaseEmail" class="modal-input" 
+                 inputmode="email" autocomplete="email" 
+                 placeholder="you@example.com">
+          <div class="inline-error" id="purchaseEmailError" role="alert"></div>
+        </label>
+
+        <!-- Turnstile Security Widget -->
+        <div class="cf-turnstile-container">
+          <div class="cf-turnstile" data-sitekey="{{ turnstile_site_key }}" data-theme="dark"></div>
+        </div>
+
         <div class="button-group">
-          <button class="modal-primary" type="button" id="proceedToPaymentBtn">
-            <span class="btn-text">{{ t.get('continue_to_payment', 'Continue to Payment') }}</span>
+          <!-- The Glowing "GO" Button Style -->
+          <button class="modal-primary btn-glow" type="button" id="proceedToPaymentBtn">
+            <span class="btn-text">{{ t.get('continue_to_payment', 'Continue to Payment') }} ➔</span>
             <span class="btn-spinner hidden">⟳</span>
           </button>
         </div>
 
-        <div class="secondary-actions">
-          <button class="text-btn" type="button" id="alreadyPaidBtn">{{ t.get('already_paid', 'I Already Paid') }}</button>
-          <button class="text-btn" type="button" id="resendLinkBtn">{{ t.get('resend_link', 'Resend Access Link') }}</button>
+        <!-- Trust Signals -->
+        <div class="trust-signals">
+           🔒 Secure checkout via Paddle/DodoPay 
         </div>
 
-        <p class="privacy-note">{{ t.get('purchase_privacy_note', 'We use your email only for receipt delivery and secure pass activation.') }}</p>
+        <div class="secondary-actions">
+          <span class="text-muted">{{ t.get('already_paid', 'Already have an active pass?') }}</span>
+          <button class="text-btn text-accent" type="button" id="resendLinkBtn">{{ t.get('resend_link', 'Resend Access Link') }}</button>
+        </div>
       </div>
 
       <!-- Step 2: Processing -->
