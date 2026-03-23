@@ -1,83 +1,179 @@
-import secrets
 import time
+import secrets
 import json
-from fastapi import APIRouter, HTTPException, Request, Response
+import logging
+from typing import Optional
+from fastapi import APIRouter, HTTPException, Request, Response, Depends
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, EmailStr
-from app.services.magic_link_service import MagicLinkService
-from app.core.config import settings
-from app.core.keys import KeyBuilder
 
-router = APIRouter()
+from app.core.config import settings
+from app.services.magic_auth_service import MagicAuthService, PaymentGatewayFactory
+
+logger = logging.getLogger(__name__)
+
+# ==========================================
+# SCHEMAS
+# ==========================================
 
 class LoginRequest(BaseModel):
     email: EmailStr
+    purchase_id: Optional[str] = None
+    provider: Optional[str] = None  # "paddle", "lemonsqueezy", or "dodo"
 
-@router.post("/login")
-async def login(payload: LoginRequest, request: Request):
-    engine = getattr(request.app.state, "db_engine", None)
-    if not engine:
-        raise HTTPException(503, "Database unavailable")
-    
-    service = MagicLinkService(engine)
-    token = await service.create_magic_link(payload.email)
-    
-    # Mock Email Sending
-    # In production, use Resend or SES here
-    magic_link = f"{settings.APP_ORIGIN or 'http://localhost:8000'}/api/auth/magic?token={token}"
-    
-    if settings.ENV == "development":
-        print(f"MAGIC LINK for {payload.email}: {magic_link}")
-    
-    return {"message": "Magic link sent"}
+class AuthResponse(BaseModel):
+    message: str
 
-@router.get("/magic")
-async def magic_landing(token: str, request: Request, response: Response):
-    """
-    Exchanges magic token for session cookie.
-    """
+class LogoutResponse(BaseModel):
+    message: str
+
+
+# ==========================================
+# ROUTER & DEPENDENCIES
+# ==========================================
+
+router = APIRouter()
+
+def get_auth_service(request: Request) -> MagicAuthService:
+    """Dependency injector for the auth service."""
     engine = getattr(request.app.state, "db_engine", None)
     redis_cli = getattr(request.app.state, "redis", None)
     
     if not engine or not redis_cli:
-        raise HTTPException(503, "Service unavailable")
+        raise HTTPException(status_code=503, detail="Database or cache service unavailable")
+    
+    return MagicAuthService(
+        db=engine,
+        redis=redis_cli,
+        payment_factory=PaymentGatewayFactory()
+    )
+
+
+# ==========================================
+# ENDPOINTS
+# ==========================================
+
+@router.post("/login", response_model=AuthResponse, status_code=200)
+async def login(
+    payload: LoginRequest,
+    request: Request,
+    service: MagicAuthService = Depends(get_auth_service)
+):
+    """
+    Initiates magic link flow: creates a token (optionally tied to a MoR purchase) and "sends" it.
+    """
+    try:
+        # Pass the purchase_id & provider to bind the payment strictly to this auth token
+        token = await service.create_magic_link(
+            email=payload.email,
+            purchase_id=payload.purchase_id,
+            provider=payload.provider
+        )
         
-    service = MagicLinkService(engine)
-    user_id = await service.redeem_token(token)
-    
-    if not user_id:
-        raise HTTPException(401, "Invalid or expired token")
+        # Build the callback URL
+        app_origin = settings.APP_ORIGIN or "http://localhost:8000"
+        magic_link = f"{app_origin}/api/auth/magic?token={token}"
         
-    # Create Session
-    sid = secrets.token_urlsafe(32)
-    session_data = {
-        "user_id": user_id,
-        "created_at": int(time.time()),
-        "csrf": secrets.token_hex(16)
-    }
+        # 🚨 DEV ONLY: Log link. In production, integrate Resend, SES, Postmark, etc.
+        if settings.ENV == "development":
+            logger.info(f"🔐 MAGIC LINK for {payload.email}: {magic_link}")
+        else:
+            # TODO: Integrate with Resend service here
+            logger.info(f"Magic link requested for {payload.email}")
+        
+        return AuthResponse(message="Magic link sent. Check your email.")
+        
+    except Exception as e:
+        logger.error(f"Login request failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to process authentication request")
+
+
+@router.get("/magic", include_in_schema=False)
+async def magic_landing(
+    token: str,
+    response: Response,
+    service: MagicAuthService = Depends(get_auth_service)
+):
+    """
+    Consumes magic link: 
+    1. Validates token cryptographically.
+    2. Enforces one-time use atomically in Postgres.
+    3. Queries Paddle/Dodo/LemonSqueezy APIs if webhook hasn't fired yet.
+    4. Sets an ultra-fast Redis session and strict secure cookie.
+    """
+    app_origin = settings.APP_ORIGIN or "http://localhost:8000"
     
-    session_key = KeyBuilder.session(sid)
-    await redis_cli.set(session_key, json.dumps(session_data), ex=settings.SESSION_TTL_SECONDS)
+    try:
+        auth_result = await service.redeem_token(token)
+        
+        if not auth_result.success:
+            logger.warning(f"Auth failed for token redemption: {auth_result.error}")
+            return RedirectResponse(
+                url=f"{app_origin}/?error={auth_result.error_code or 'invalid_link'}",
+                status_code=303
+            )
+            
+        # Success! Create ultra-fast Redis session
+        session_id = secrets.token_urlsafe(32)
+        session_ttl = settings.SESSION_TTL_SECONDS
+        
+        session_data = {
+            "user_id": auth_result.user_id,
+            "email": auth_result.email,
+            "auth_time": int(time.time()),
+            "csrf_token": secrets.token_hex(16)
+        }
+        
+        # Store in Redis
+        from app.core.keys import KeyBuilder
+        session_key = KeyBuilder.session(session_id)
+        await service.redis.set(
+            session_key, 
+            json.dumps(session_data),
+            ex=session_ttl
+        )
+        
+        # Set Strict Secure Cookie
+        response.set_cookie(
+            key=settings.SESSION_COOKIE_NAME,
+            value=session_id,
+            max_age=session_ttl,
+            httponly=True,
+            secure=(settings.ENV == "production"),
+            samesite="lax",
+            path="/"
+        )
+        
+        logger.info(f"✅ Auth successful for {auth_result.email}")
+        return RedirectResponse(url=f"{app_origin}/?magic_success=1", status_code=302)
+        
+    except Exception as e:
+        logger.error(f"Critical error during auth magic consumption: {e}", exc_info=True)
+        return RedirectResponse(url=f"{app_origin}/?error=server_error", status_code=303)
+
+
+@router.post("/logout", response_model=LogoutResponse)
+async def logout(
+    request: Request,
+    response: Response,
+    service: MagicAuthService = Depends(get_auth_service)
+):
+    """
+    Invalidates session: safely deletes the Redis record and clears the client cookie.
+    """
+    session_id = request.cookies.get(settings.SESSION_COOKIE_NAME)
     
-    response.set_cookie(
+    if session_id:
+        from app.core.keys import KeyBuilder
+        await service.redis.delete(KeyBuilder.session(session_id))
+        logger.debug(f"🗑️ Session invalidated in Redis: {session_id[:8]}...")
+    
+    response.delete_cookie(
         key=settings.SESSION_COOKIE_NAME,
-        value=sid,
-        max_age=settings.SESSION_TTL_SECONDS,
-        httponly=True,
+        path="/",
         secure=(settings.ENV == "production"),
+        httponly=True,
         samesite="lax"
     )
     
-    # Redirect back to the app with a success flag
-    from fastapi.responses import RedirectResponse
-    return RedirectResponse(url="/?magic_success=1", status_code=302)
-
-@router.post("/logout")
-async def logout(request: Request, response: Response):
-    sid = request.cookies.get(settings.SESSION_COOKIE_NAME)
-    redis_cli = getattr(request.app.state, "redis", None)
-    
-    if sid and redis_cli:
-        await redis_cli.delete(KeyBuilder.session(sid))
-        
-    response.delete_cookie(settings.SESSION_COOKIE_NAME)
-    return {"message": "Logged out"}
+    return LogoutResponse(message="Logged out successfully")

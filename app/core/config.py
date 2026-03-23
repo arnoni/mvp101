@@ -75,6 +75,11 @@ class Settings(BaseSettings):
     RESEND_API_KEY: Optional[str] = Field(None, description="Resend API Key for magic links")
     RESEND_FROM_EMAIL: str = "DillDrill <dilldrillteam@gmail.com>"
     
+    # Merchant of Record (MoR) Settings
+    LEMON_SQUEEZY_API_KEY: Optional[str] = Field(None, description="Lemon Squeezy API Key")
+    PADDLE_API_KEY: Optional[str] = Field(None, description="Paddle API Key")
+    DODO_API_KEY: Optional[str] = Field(None, description="Dodo Payments API Key")
+    
     # Quota (rolling windows, single-digit caps)
     QUOTA_FREE_ROLLING60_SOFT: int = 1
     QUOTA_FREE_ROLLING60_HARD: int = 2
