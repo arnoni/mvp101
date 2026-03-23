@@ -299,13 +299,35 @@ async def db_health():
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     error_id = str(uuid.uuid4())
-    logger.error(f"Unhandled exception (ID: {error_id}): {exc}", exc_info=True)
+    
+    # Extract more context for silent exceptions
+    error_context = {
+        "error_id": error_id,
+        "method": request.method,
+        "url": str(request.url),
+        "client_ip": request.client.host if request.client else "unknown",
+        "identity": getattr(request.state, "identity_id", "unknown"),
+        "exception_type": type(exc).__name__,
+        "exception_msg": str(exc)
+    }
+    
+    # Log with full context and stack trace
+    logger.critical(f"Unhandled exception (ID: {error_id}): {exc}", extra=error_context, exc_info=True)
+    
+    # Integrate with Sentry explicitly for critical unhandled errors
+    import sentry_sdk
+    with sentry_sdk.push_scope() as scope:
+        scope.set_tag("error_id", error_id)
+        for k, v in error_context.items():
+            scope.set_extra(k, v)
+        sentry_sdk.capture_exception(exc)
+
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={
             "detail": {
                 "error": "INTERNAL_SERVER_ERROR",
-                "detail": "An unexpected error occurred. Please report this error ID.",
+                "detail": "An unexpected error occurred. Our team has been notified. Please provide the Error ID if you contact support.",
                 "error_id": error_id
             }
         }

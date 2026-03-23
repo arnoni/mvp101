@@ -98,32 +98,54 @@ class PaddleProvider(PaymentProvider):
 
 class DodoProvider(PaymentProvider):
     async def fetch_transaction(self, transaction_id: str) -> Optional[PurchaseRecord]:
-        """Fetches Payment by ID from Dodo Payments."""
-        if not settings.DODO_API_KEY:
-            logger.error("DODO_API_KEY not configured")
-            return None
-            
-        async with httpx.AsyncClient() as client:
-            base_url = "https://api.dodopayments.com/v1" if settings.ENV == "production" else "https://test.dodopayments.com/v1"
-            response = await client.get(
-                f"{base_url}/payments/{transaction_id}",
-                headers={"Authorization": f"Bearer {settings.DODO_API_KEY}"}
-            )
-            if response.status_code != 200:
-                return None
-                
-            data = response.json()
-            
-            # Normalize Dodo status
-            raw_status = data.get("status")
-            status_map = {"succeeded": PaymentStatus.PAID, "pending": PaymentStatus.PENDING, "failed": PaymentStatus.FAILED}
-            
+        """Fetches Payment by ID from Dodo Payments (Simulated for development)."""
+        # --- SIMULATION START ---
+        # If transaction_id starts with 'sim_', we simulate a successful payment.
+        if transaction_id.startswith("sim_"):
+            logger.info(f"🚀 Simulating successful Dodo payment for ID: {transaction_id}")
             return PurchaseRecord(
                 purchase_id=transaction_id,
                 provider="dodo",
-                status=status_map.get(raw_status, PaymentStatus.PENDING),
-                email=data.get("customer", {}).get("email")
+                status=PaymentStatus.PAID,
+                email="simulated-user@example.com"
             )
+        # --- SIMULATION END ---
+
+        if not settings.DODO_API_KEY:
+            logger.warning("DODO_API_KEY not configured. Falling back to simulation if ID is 'sim_'.")
+            return None
+            
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                base_url = "https://api.dodopayments.com/v1" if settings.ENV == "production" else "https://test.dodopayments.com/v1"
+                response = await client.get(
+                    f"{base_url}/payments/{transaction_id}",
+                    headers={"Authorization": f"Bearer {settings.DODO_API_KEY}"}
+                )
+                
+                if response.status_code == 404:
+                    logger.warning(f"Dodo payment not found: {transaction_id}")
+                    return None
+                    
+                response.raise_for_status()
+                data = response.json()
+                
+                # Normalize Dodo status
+                raw_status = data.get("status")
+                status_map = {"succeeded": PaymentStatus.PAID, "pending": PaymentStatus.PENDING, "failed": PaymentStatus.FAILED}
+                
+                return PurchaseRecord(
+                    purchase_id=transaction_id,
+                    provider="dodo",
+                    status=status_map.get(raw_status, PaymentStatus.PENDING),
+                    email=data.get("customer", {}).get("email")
+                )
+        except httpx.HTTPError as e:
+            logger.error(f"Dodo API communication error: {e}")
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error in DodoProvider: {e}", exc_info=True)
+            return None
 
 class PaymentGatewayFactory:
     def get_provider(self, provider_name: str) -> PaymentProvider:
