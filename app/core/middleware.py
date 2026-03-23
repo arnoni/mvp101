@@ -7,7 +7,7 @@ import uuid
 import json
 from typing import Optional
 from app.core.config import settings
-from app.services.entitlement_service import TierStatus, EntitlementService
+from app.services.entitlement_service import EntitlementService
 from app.services.redis_client import redis_client
 
 # --- Helper Functions (No changes needed) ---
@@ -127,12 +127,11 @@ class SessionMiddleware(BaseHTTPMiddleware):
 class EntitlementMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         identity_id = getattr(request.state, "identity_id", None)
-        identity_kind = getattr(request.state, "identity_kind", "anon")
-        
-        service = EntitlementService()
-        # Ensure EntitlementService.get_user_tier is called with correct parameters
-        tier = await service.get_user_tier(identity_id, is_paid=(identity_kind == "paid"))
-        
-        request.state.tier = tier
-        
+
+        # Use the Redis client from app state if available
+        redis_cli = getattr(request.app.state, "redis", None)
+
+        result = await EntitlementService.get_tier(identity_id, redis_cli)
+        request.state.tier = result.tier
+
         return await call_next(request)
