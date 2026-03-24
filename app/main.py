@@ -13,6 +13,14 @@ import uuid
 # Local imports
 from app.core.config import settings
 from app.core.observability import init_sentry
+
+# Configure Sentry as early as possible
+init_sentry(
+    dsn=settings.SENTRY_DSN,
+    env=settings.ENV,
+    release=settings.RELEASE or settings.VERSION
+)
+
 from app.services.poi_service import POIService
 from app.logging import configure_logging
 from app.middleware.logging import LoggingMiddleware
@@ -105,13 +113,16 @@ async def lifespan(app: FastAPI):
 
     # 3. Initialize MVP102 Services
     try:
+        logger.info("Initializing MVP102 Services...")
         app.state.precompute_repo = PrecomputeRepository(app.state.db_engine)
         # Anomaly and Demand depend on Redis, but can handle None (no-op)
         app.state.anomaly_service = AnomalyService(app.state.redis)
         app.state.demand_service = DemandService(app.state.redis)
-        logger.info("MVP102 Services initialized (Precompute, Anomaly, Demand).")
+        logger.info("MVP102 Services initialized successfully.")
     except Exception as e:
-        logger.critical(f"Failed to init MVP102 services: {e}")
+        logger.critical(f"Failed to init MVP102 services: {e}", exc_info=True)
+
+    logger.info("Lifespan startup complete.")
 
 
     yield
@@ -131,10 +142,6 @@ async def lifespan(app: FastAPI):
     except Exception:
         pass
 
-
-# --- FastAPI Application Initialization ---
-# 1. Init Sentry BEFORE creating the app instance
-init_sentry(settings.SENTRY_DSN, settings.ENV, settings.RELEASE)
 
 # 2. Create App
 app = FastAPI(
@@ -347,13 +354,18 @@ async def global_exception_handler(request: Request, exc: Exception):
     logger.critical(f"GLOBAL_CRITICAL_FAILURE (ID: {error_id}): {exc}", extra=error_context, exc_info=True)
     
     # Integrate with Sentry explicitly for critical unhandled errors
-    import sentry_sdk
-    with sentry_sdk.push_scope() as scope:
-        scope.set_tag("error_id", error_id)
-        scope.set_tag("exception_type", type(exc).__name__)
-        for k, v in error_context.items():
-            scope.set_extra(k, v)
-        sentry_sdk.capture_exception(exc)
+    try:
+        import sentry_sdk
+        with sentry_sdk.push_scope() as scope:
+            scope.set_tag("error_id", error_id)
+            scope.set_tag("exception_type", type(exc).__name__)
+            for k, v in error_context.items():
+                scope.set_extra(k, v)
+            sentry_sdk.capture_exception(exc)
+            # Ensure the exception is sent immediately
+            sentry_sdk.flush()
+    except Exception as sentry_err:
+        logger.error(f"Failed to report to Sentry: {sentry_err}")
 
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
