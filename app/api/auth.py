@@ -2,6 +2,8 @@ import time
 import secrets
 import json
 import logging
+import hashlib
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Request, Response, Depends
 from fastapi.responses import RedirectResponse
@@ -106,61 +108,82 @@ async def magic_landing(
     service: MagicAuthService = Depends(get_auth_service)
 ):
     """
-    Consumes magic link: 
-    1. Validates token cryptographically.
-    2. Enforces one-time use atomically in Postgres.
-    3. Queries Paddle/Dodo/LemonSqueezy APIs if webhook hasn't fired yet.
-    4. Sets an ultra-fast Redis session and strict secure cookie.
+    Consumes the magic link clicked from the user's email.
     """
     app_origin = settings.APP_ORIGIN or "http://localhost:8000"
+    redis = service.redis
+    db = service.db
     
     try:
-        auth_result = await service.redeem_token(token)
+        # 1. Hash the incoming raw token to match what is stored in Redis
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
         
-        if not auth_result.success:
-            logger.warning(f"Auth failed for token redemption: {auth_result.error}")
-            return RedirectResponse(
-                url=f"{app_origin}/?error={auth_result.error_code or 'invalid_link'}",
-                status_code=303
+        # 2. ATOMIC CONSUME: Get the payload and delete the key in one step.
+        # GETDEL is available in Redis 6.2+.
+        payload_str = await redis.getdel(f"magic:{token_hash}")
+        
+        if not payload_str:
+            logger.warning("Attempted use of invalid, expired, or already-consumed magic link.")
+            return RedirectResponse(url=f"{app_origin}/?error=invalid_link", status_code=303)
+            
+        # Parse the data safely stored during the webhook phase
+        payload = json.loads(payload_str)
+        email = payload.get("email")
+        plan = payload.get("plan")
+        purchase_id = payload.get("purchase_id")
+            
+        # 3. Activate Pass & Get Expiry (Updates DB to mark pass active starting NOW)
+        async with db.begin() as conn:
+            # Mark purchase as active and calculate expiry based on plan
+            days = 1 if plan == "1_day" else 3
+            expiry = datetime.now(timezone.utc) + timedelta(days=days)
+            
+            await conn.execute(
+                text("UPDATE purchases SET status = 'active', activated_at = NOW(), expires_at = :exp WHERE id = :pid"),
+                {"exp": expiry, "pid": purchase_id}
             )
             
-        # Success! Create ultra-fast Redis session
+            # Ensure user exists and get ID
+            user_res = await conn.execute(
+                text("INSERT INTO users (email) VALUES (:email) ON CONFLICT (email) DO UPDATE SET last_login = NOW() RETURNING id"),
+                {"email": email}
+            )
+            user_id = user_res.scalar()
+
+        # 4. Create durable session identifier for the browser
         session_id = secrets.token_urlsafe(32)
-        session_ttl = settings.SESSION_TTL_SECONDS
+        session_ttl = 86400 * 3  # 3 days
         
         session_data = {
-            "user_id": auth_result.user_id,
-            "email": auth_result.email,
+            "user_id": user_id,
+            "email": email,
+            "plan": plan,
             "auth_time": int(time.time()),
             "csrf_token": secrets.token_hex(16)
         }
         
-        # Store in Redis
         from app.core.keys import KeyBuilder
-        session_key = KeyBuilder.session(session_id)
-        await service.redis.set(
-            session_key, 
-            json.dumps(session_data),
-            ex=session_ttl
-        )
+        await redis.set(KeyBuilder.session(session_id), json.dumps(session_data), ex=session_ttl)
+
+        # 5. Redirect to UI with success state and secure HttpOnly cookie
+        redirect_response = RedirectResponse(url=f"{app_origin}/?magic_success=1", status_code=303)
         
-        # Set Strict Secure Cookie
-        response.set_cookie(
+        redirect_response.set_cookie(
             key=settings.SESSION_COOKIE_NAME,
             value=session_id,
-            max_age=session_ttl,
             httponly=True,
-            secure=(settings.ENV == "production"),
             samesite="lax",
+            secure=(settings.ENV == "production"),
+            max_age=session_ttl,
             path="/"
         )
         
-        logger.info(f"✅ Auth successful for {auth_result.email}")
-        return RedirectResponse(url=f"{app_origin}/?magic_success=1", status_code=302)
-        
+        logger.info(f"✅ Auth successful for {email} via atomic magic link")
+        return redirect_response
+
     except Exception as e:
-        logger.error(f"Critical error during auth magic consumption: {e}", exc_info=True)
-        return RedirectResponse(url=f"{app_origin}/?error=server_error", status_code=303)
+        logger.exception(f"System error during magic link consumption: {e}")
+        return RedirectResponse(url=f"{app_origin}/?error=system_error", status_code=303)
 
 
 @router.post("/logout", response_model=LogoutResponse)
