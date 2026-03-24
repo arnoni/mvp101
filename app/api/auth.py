@@ -9,6 +9,7 @@ from pydantic import BaseModel, EmailStr
 
 from app.core.config import settings
 from app.services.magic_auth_service import MagicAuthService, PaymentGatewayFactory
+from email_service import EmailService
 
 logger = logging.getLogger(__name__)
 
@@ -74,15 +75,25 @@ async def login(
         app_origin = settings.APP_ORIGIN or "http://localhost:8000"
         magic_link = f"{app_origin}/api/auth/magic?token={token}"
         
-        # 🚨 DEV ONLY: Log link. In production, integrate Resend, SES, Postmark, etc.
-        if settings.ENV == "development":
-            logger.info(f"🔐 MAGIC LINK for {payload.email}: {magic_link}")
-        else:
-            # TODO: Integrate with Resend service here
-            logger.info(f"Magic link requested for {payload.email}")
+        # Send via Resend
+        email_service = EmailService()
+        sent = await email_service.send_magic_link(
+            email=payload.email, 
+            magic_link=magic_link,
+            expire_minutes=settings.MAGICLINK_EXPIRY_MINUTES
+        )
         
-        return AuthResponse(message="Magic link sent. Check your email.")
+        if not sent:
+            # Fallback for dev environment if Resend is not configured
+            if settings.ENV == "development":
+                logger.info(f"🔐 [DEV FALLBACK] MAGIC LINK for {payload.email}: {magic_link}")
+                return AuthResponse(message="Magic link logged to console (Dev Mode).")
+            raise HTTPException(status_code=500, detail="Failed to send magic link email")
         
+        return AuthResponse(message="Magic link sent. Check your inbox.")
+        
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Login request failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to process authentication request")

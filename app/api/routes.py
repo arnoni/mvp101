@@ -59,6 +59,15 @@ class UGCReportRequest(BaseModel):
 
 # --- Routes ---
 
+@router.get("/test-email")
+async def test_email(email: str = "dilldrillteam@gmail.com"):
+    from app.services.email_service import EmailService
+    service = EmailService()
+    success = await service.send_test_email(email)
+    if success:
+        return {"message": f"Test email sent to {email}"}
+    return {"message": "Failed to send test email", "status": 500}
+
 @router.get("/status", response_model=StatusResponse)
 async def status(
     request: Request,
