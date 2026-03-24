@@ -77,6 +77,20 @@ async def login(
         app_origin = settings.APP_ORIGIN or "http://localhost:8000"
         magic_link = f"{app_origin}/api/auth/magic?token={token}"
         
+        # --- dilldrillteamtest START ---
+        # Backdoor for development: Automatically validate payment for the test email
+        if payload.email.lower() == "dilldrillteam@gmail.com":
+            logger.info("🧪 [dilldrillteamtest] Bypassing webhook for test email. Pre-validating in Redis.")
+            token_hash = hashlib.sha256(token.encode()).hexdigest()
+            redis_payload = json.dumps({
+                "email": payload.email.lower(),
+                "plan": "1_day",
+                "purchase_id": "sim_backdoor_test"
+            })
+            # Use the same Redis key structure as the webhook
+            await service.redis.set(f"magic:{token_hash}", redis_payload, ex=1800)
+        # --- dilldrillteamtest END ---
+
         # Send via Resend
         email_service = EmailService()
         sent = await email_service.send_magic_link(
