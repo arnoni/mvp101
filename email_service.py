@@ -26,19 +26,23 @@ class EmailService:
         Wraps the synchronous Resend SDK call in an async thread to prevent 
         blocking the main event loop. 
         """ 
-        # asyncio.to_thread is available in Python 3.9+ 
-        # It runs the blocking network call in a separate thread. 
-        response = await asyncio.to_thread(resend.Emails.send, params) 
-        
-        # Depending on the Resend SDK version, it might return a dict or an object 
-        if isinstance(response, dict): 
-            return response.get("id") 
-        return getattr(response, "id", "Unknown ID") 
+        try:
+            # asyncio.to_thread is available in Python 3.9+ 
+            # It runs the blocking network call in a separate thread. 
+            response = await asyncio.to_thread(resend.Emails.send, params) 
+            
+            # Depending on the Resend SDK version, it might return a dict or an object 
+            if isinstance(response, dict): 
+                return response.get("id") 
+            return getattr(response, "id", "Unknown ID")
+        except Exception as e:
+            logger.error(f"EMAIL_RESEND_SDK_CALL_FAILED: {e}")
+            raise 
  
     async def send_magic_link(self, email: str, magic_link: str, expire_minutes: int = 30) -> bool: 
         """Sends the magic link email via Resend.""" 
         if not self.api_key or not self.from_email: 
-            logger.error(f"Cannot send magic link to {email}: Resend configuration missing.") 
+            logger.error(f"EMAIL_CONFIG_MISSING: Cannot send magic link to {email}: Resend configuration missing.") 
             return False 
  
         # Escape the link to prevent HTML breaking or injection 
@@ -68,18 +72,18 @@ class EmailService:
             } 
             
             email_id = await self._send_async(params) 
-            logger.info(f"✅ Magic link sent to {email}. ID: {email_id}") 
+            logger.info(f"EMAIL_SENT: ✅ Magic link sent to {email}. ID: {email_id}") 
             return True 
             
-        except Exception: 
+        except Exception as e: 
             # logger.exception automatically includes the full stack trace and the error message 
-            logger.exception(f"❌ Failed to send magic link email to {email}") 
+            logger.exception(f"EMAIL_SEND_MAGIC_LINK_FAILED: ❌ Failed to send magic link email to {email}: {e}") 
             return False 
  
     async def send_test_email(self, email: str) -> bool: 
         """Sends a simple test email to verify Resend configuration.""" 
         if not self.api_key or not self.from_email: 
-            logger.error("Cannot send test email: Resend configuration missing.") 
+            logger.error("EMAIL_CONFIG_MISSING: Cannot send test email: Resend configuration missing.") 
             return False 
  
         try: 
@@ -91,8 +95,8 @@ class EmailService:
                 "html": "<strong>It works!</strong><p>This is a test email from your DillDrill app using Resend.</p>" 
             } 
             email_id = await self._send_async(params) 
-            logger.info(f"✅ Test email sent to {email}. ID: {email_id}") 
+            logger.info(f"EMAIL_TEST_SENT: ✅ Test email sent to {email}. ID: {email_id}") 
             return True 
-        except Exception: 
-            logger.exception(f"❌ Failed to send test email to {email}") 
+        except Exception as e: 
+            logger.exception(f"EMAIL_SEND_TEST_FAILED: ❌ Failed to send test email to {email}: {e}") 
             return False

@@ -111,7 +111,7 @@ async def login(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Login request failed: {e}", exc_info=True)
+        logger.exception(f"AUTH_LOGIN_CRITICAL_FAILURE: {e}")
         raise HTTPException(status_code=500, detail="Failed to process authentication request")
 
 
@@ -134,35 +134,51 @@ async def magic_landing(
         
         # 2. ATOMIC CONSUME: Get the payload and delete the key in one step.
         # GETDEL is available in Redis 6.2+.
-        payload_str = await redis.getdel(f"magic:{token_hash}")
+        try:
+            payload_str = await redis.getdel(f"magic:{token_hash}")
+        except Exception as e:
+            logger.error(f"AUTH_MAGIC_REDIS_GETDEL_FAILED: {e}")
+            return RedirectResponse(url=f"{app_origin}/?error=system_error&code=AUTH_MAGIC_REDIS_ERROR", status_code=303)
         
         if not payload_str:
-            logger.warning("Attempted use of invalid, expired, or already-consumed magic link.")
+            logger.warning(f"AUTH_MAGIC_INVALID_LINK: Attempted use of invalid, expired, or already-consumed magic link. Hash: {token_hash[:8]}")
             return RedirectResponse(url=f"{app_origin}/?error=invalid_link", status_code=303)
             
         # Parse the data safely stored during the webhook phase
-        payload = json.loads(payload_str)
-        email = payload.get("email")
-        plan = payload.get("plan")
-        purchase_id = payload.get("purchase_id")
+        try:
+            payload = json.loads(payload_str)
+            email = payload.get("email")
+            plan = payload.get("plan")
+            purchase_id = payload.get("purchase_id")
+        except (json.JSONDecodeError, AttributeError) as e:
+            logger.error(f"AUTH_MAGIC_PAYLOAD_PARSE_FAILED: {e}")
+            return RedirectResponse(url=f"{app_origin}/?error=system_error&code=AUTH_MAGIC_INVALID_PAYLOAD", status_code=303)
             
+        if not email or not purchase_id:
+            logger.error(f"AUTH_MAGIC_INCOMPLETE_PAYLOAD: email={email}, purchase_id={purchase_id}")
+            return RedirectResponse(url=f"{app_origin}/?error=system_error&code=AUTH_MAGIC_INCOMPLETE_DATA", status_code=303)
+
         # 3. Activate Pass & Get Expiry (Updates DB to mark pass active starting NOW)
-        async with db.begin() as conn:
-            # Mark purchase as active and calculate expiry based on plan
-            days = 1 if plan == "1_day" else 3
-            expiry = datetime.now(timezone.utc) + timedelta(days=days)
-            
-            await conn.execute(
-                text("UPDATE purchases SET status = 'active', activated_at = NOW(), expires_at = :exp WHERE id = :pid"),
-                {"exp": expiry, "pid": purchase_id}
-            )
-            
-            # Ensure user exists and get ID
-            user_res = await conn.execute(
-                text("INSERT INTO users (email) VALUES (:email) ON CONFLICT (email) DO UPDATE SET last_login = NOW() RETURNING id"),
-                {"email": email}
-            )
-            user_id = user_res.scalar()
+        try:
+            async with db.begin() as conn:
+                # Mark purchase as active and calculate expiry based on plan
+                days = 1 if plan == "1_day" else 3
+                expiry = datetime.now(timezone.utc) + timedelta(days=days)
+                
+                await conn.execute(
+                    text("UPDATE purchases SET status = 'active', activated_at = NOW(), expires_at = :exp WHERE id = :pid"),
+                    {"exp": expiry, "pid": purchase_id}
+                )
+                
+                # Ensure user exists and get ID
+                user_res = await conn.execute(
+                    text("INSERT INTO users (email) VALUES (:email) ON CONFLICT (email) DO UPDATE SET last_login = NOW() RETURNING id"),
+                    {"email": email}
+                )
+                user_id = user_res.scalar()
+        except Exception as e:
+            logger.error(f"AUTH_MAGIC_DB_ACTIVATION_FAILED: {e}")
+            return RedirectResponse(url=f"{app_origin}/?error=system_error&code=AUTH_MAGIC_DB_ERROR", status_code=303)
 
         # 4. Create durable session identifier for the browser
         session_id = secrets.token_urlsafe(32)
@@ -177,7 +193,11 @@ async def magic_landing(
         }
         
         from app.core.keys import KeyBuilder
-        await redis.set(KeyBuilder.session(session_id), json.dumps(session_data), ex=session_ttl)
+        try:
+            await redis.set(KeyBuilder.session(session_id), json.dumps(session_data), ex=session_ttl)
+        except Exception as e:
+            logger.error(f"AUTH_MAGIC_SESSION_STORE_FAILED: {e}")
+            return RedirectResponse(url=f"{app_origin}/?error=system_error&code=AUTH_MAGIC_SESSION_ERROR", status_code=303)
 
         # 5. Redirect to UI with success state and secure HttpOnly cookie
         redirect_response = RedirectResponse(url=f"{app_origin}/?magic_success=1", status_code=303)
@@ -192,12 +212,12 @@ async def magic_landing(
             path="/"
         )
         
-        logger.info(f"✅ Auth successful for {email} via atomic magic link")
+        logger.info(f"AUTH_SUCCESS: ✅ Auth successful for {email} via atomic magic link")
         return redirect_response
 
     except Exception as e:
-        logger.exception(f"System error during magic link consumption: {e}")
-        return RedirectResponse(url=f"{app_origin}/?error=system_error", status_code=303)
+        logger.exception(f"AUTH_MAGIC_CRITICAL_FAILURE: {e}")
+        return RedirectResponse(url=f"{app_origin}/?error=system_error&code=AUTH_MAGIC_UNKNOWN_ERROR", status_code=303)
 
 
 @router.post("/logout", response_model=LogoutResponse)

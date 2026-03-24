@@ -297,6 +297,37 @@ async def db_health():
         raise HTTPException(status_code=503, detail="database unavailable")
 
 # --- Global Exception Handler (for unhandled errors) ---
+from fastapi.exceptions import RequestValidationError
+from starlette.exceptions import HTTPException as StarletteHTTPException
+
+@app.exception_handler(StarletteHTTPException)
+async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={
+            "detail": {
+                "error": "HTTP_ERROR",
+                "detail": exc.detail,
+                "status_code": exc.status_code
+            }
+        }
+    )
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    error_id = str(uuid.uuid4())
+    logger.warning(f"VALIDATION_ERROR (ID: {error_id}): {exc.errors()}", extra={"url": str(request.url)})
+    return JSONResponse(
+        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+        content={
+            "detail": {
+                "error": "VALIDATION_ERROR",
+                "detail": exc.errors(),
+                "error_id": error_id
+            }
+        }
+    )
+
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception):
     error_id = str(uuid.uuid4())
@@ -307,18 +338,19 @@ async def global_exception_handler(request: Request, exc: Exception):
         "method": request.method,
         "url": str(request.url),
         "client_ip": request.client.host if request.client else "unknown",
-        "identity": getattr(request.state, "identity_id", "unknown"),
+        "identity": getattr(request.state, "identity_id", "unknown") if hasattr(request.state, "identity_id") else "unknown",
         "exception_type": type(exc).__name__,
         "exception_msg": str(exc)
     }
     
     # Log with full context and stack trace
-    logger.critical(f"Unhandled exception (ID: {error_id}): {exc}", extra=error_context, exc_info=True)
+    logger.critical(f"GLOBAL_CRITICAL_FAILURE (ID: {error_id}): {exc}", extra=error_context, exc_info=True)
     
     # Integrate with Sentry explicitly for critical unhandled errors
     import sentry_sdk
     with sentry_sdk.push_scope() as scope:
         scope.set_tag("error_id", error_id)
+        scope.set_tag("exception_type", type(exc).__name__)
         for k, v in error_context.items():
             scope.set_extra(k, v)
         sentry_sdk.capture_exception(exc)
