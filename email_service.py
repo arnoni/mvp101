@@ -11,6 +11,7 @@ class EmailService:
     def __init__(self): 
         self.api_key = settings.RESEND_API_KEY 
         self.from_email = settings.RESEND_FROM_EMAIL 
+        self.reply_to = settings.RESEND_REPLY_TO
         
         if self.api_key: 
             resend.api_key = self.api_key 
@@ -47,6 +48,7 @@ class EmailService:
             params = { 
                 "from": self.from_email, 
                 "to": [email], 
+                "reply_to": self.reply_to,
                 "subject": "Your DillDrill Access Link", 
                 "html": f""" 
                 <div style="font-family: sans-serif; max-width: 600px; margin: 0 auto; padding: 20px; border: 1px solid #eee; border-radius: 10px;"> 
@@ -84,6 +86,7 @@ class EmailService:
             params = { 
                 "from": self.from_email, 
                 "to": [email], 
+                "reply_to": self.reply_to,
                 "subject": "DillDrill Resend Test", 
                 "html": "<strong>It works!</strong><p>This is a test email from your DillDrill app using Resend.</p>" 
             } 

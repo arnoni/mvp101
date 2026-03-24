@@ -73,7 +73,8 @@ class Settings(BaseSettings):
     MAGICLINK_TOKEN_BYTES: int = 32
     MAGICLINK_EXPIRY_MINUTES: int = 30
     RESEND_API_KEY: Optional[str] = Field(None, description="Resend API Key for magic links")
-    RESEND_FROM_EMAIL: str = "DillDrill <dilldrillteam@gmail.com>"
+    RESEND_FROM_EMAIL: str = "DillDrill <hello@onboarding-seg001.dilldrill.com>"
+    RESEND_REPLY_TO: str = "dilldrillteam@gmail.com"
     
     # Merchant of Record (MoR) Settings
     LEMON_SQUEEZY_API_KEY: Optional[str] = Field(None, description="Lemon Squeezy API Key")
