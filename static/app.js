@@ -3,6 +3,7 @@ document.addEventListener("DOMContentLoaded", () => {
   const state = {
     access: { demandAllowed: document.body.dataset.demandAllowed === "true" },
     coords: { lat: null, lng: null, valid: false, key: null },
+    input: { kind: "empty", original: "", preview: "", parsed: null, error: "", touched: false },
     construction: { status: "idle", coordKey: null, score: null },
     demand: { status: "idle", coordKey: null, score: null },
     verification: { required: false, passed: false, token: null, widgetId: null },
@@ -15,8 +16,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // DOM Elements
   const els = {
-    lat: document.getElementById("latInput"),
-    lng: document.getElementById("lngInput"),
+    location: document.getElementById("locationInput"),
+    preview: document.getElementById("parsedPreview"),
     err: document.getElementById("coordError"),
     mainBtn: document.getElementById("mainActionBtn"),
     
@@ -46,15 +47,159 @@ document.addEventListener("DOMContentLoaded", () => {
     alert("Pass Activated Successfully! Demand is unlocked."); // Replace with sleek toast in prod
   }
 
+  function normalizeInput(raw) {
+    return (raw || "")
+      .replace(/[\u2018\u2019]/g, "'")
+      .replace(/[\u201C\u201D]/g, "\"")
+      .replace(/\u00A0/g, " ")
+      .trim();
+  }
+
+  function validateLatLng(lat, lng) {
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) throw new Error("Invalid coordinates.");
+    if (lat < -90 || lat > 90) throw new Error("Latitude must be between -90 and 90.");
+    if (lng < -180 || lng > 180) throw new Error("Longitude must be between -180 and 180.");
+  }
+
+  function classifyLocationInput(raw) {
+    if (!raw || !raw.trim()) return "empty";
+    if (raw.length > 2048) return "invalid";
+    if (/[\u0000-\u001F\u007F]/.test(raw)) return "invalid";
+    if (/^https?:\/\//i.test(raw)) {
+      try {
+        const url = new URL(raw);
+        const host = url.hostname.toLowerCase();
+        if (host === "maps.app.goo.gl") return "google_maps_short_url";
+        if ((host === "google.com" || host.endsWith(".google.com")) && url.pathname.includes("/maps")) return "google_maps_url";
+        if (host === "maps.google.com") return "google_maps_url";
+        return "invalid";
+      } catch {
+        return "invalid";
+      }
+    }
+    if (/^[+-]?\d+(?:\.\d+)?\s*,\s*[+-]?\d+(?:\.\d+)?$/.test(raw)) return "decimal_pair";
+    if (/^[+-]?\d+(?:\.\d+)?\s+[+-]?\d+(?:\.\d+)?$/.test(raw)) return "decimal_pair";
+    if (/[NSEW]/i.test(raw) && /°/.test(raw)) return "degree_pair";
+    return "invalid";
+  }
+
+  function parseDecimalPair(raw) {
+    if (/^\d+,\d+\s+\d+,\d+$/.test(raw)) {
+      throw new Error("Locale decimal commas are not supported. Use decimal point.");
+    }
+    const parts = raw.split(/[,\s]+/).filter(Boolean);
+    if (parts.length !== 2) throw new Error("Enter exactly two decimal values.");
+    let lat = Number(parts[0]);
+    let lng = Number(parts[1]);
+    let note = "";
+    if (Math.abs(lat) > 90 && Math.abs(lat) <= 180 && Math.abs(lng) <= 90) {
+      [lat, lng] = [lng, lat];
+      note = "Parsed as longitude, latitude input. Normalized to latitude, longitude.";
+    }
+    validateLatLng(lat, lng);
+    return { lat, lng, normalizedText: `${lat.toFixed(6)}, ${lng.toFixed(6)}`, note };
+  }
+
+  function parseDmsToken(token) {
+    const m = token.match(/(\d{1,3})\D+(\d{1,2})\D+(\d{1,2}(?:\.\d+)?)\D*([NSEW])/i);
+    if (!m) throw new Error("Invalid degree format.");
+    const deg = Number(m[1]);
+    const min = Number(m[2]);
+    const sec = Number(m[3]);
+    const hemi = m[4].toUpperCase();
+    if (min >= 60 || sec >= 60) throw new Error("Degree format minutes/seconds out of range.");
+    let value = deg + (min / 60) + (sec / 3600);
+    if (hemi === "S" || hemi === "W") value *= -1;
+    return { value, hemi };
+  }
+
+  function parseDegreePair(raw) {
+    const tokens = raw.match(/\d{1,3}[^NSEW]*[NSEW]/gi) || [];
+    if (tokens.length !== 2) throw new Error("Degree format must include latitude and longitude with hemisphere markers.");
+    const first = parseDmsToken(tokens[0]);
+    const second = parseDmsToken(tokens[1]);
+    const lat = ["N", "S"].includes(first.hemi) ? first.value : second.value;
+    const lng = ["E", "W"].includes(first.hemi) ? first.value : second.value;
+    if (!["N", "S"].includes(first.hemi) && !["N", "S"].includes(second.hemi)) {
+      throw new Error("Missing latitude hemisphere marker.");
+    }
+    if (!["E", "W"].includes(first.hemi) && !["E", "W"].includes(second.hemi)) {
+      throw new Error("Missing longitude hemisphere marker.");
+    }
+    validateLatLng(lat, lng);
+    return { lat, lng, normalizedText: `${lat.toFixed(6)}, ${lng.toFixed(6)}` };
+  }
+
+  function extractPair(raw) {
+    const m = raw.match(/([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)/);
+    if (!m) return null;
+    const lat = Number(m[1]);
+    const lng = Number(m[2]);
+    validateLatLng(lat, lng);
+    return [lat, lng];
+  }
+
+  function parseGoogleMapsLongUrl(raw) {
+    const url = new URL(raw);
+    const rawUrl = decodeURIComponent(raw);
+    const place = rawUrl.match(/!3d([+-]?\d+(?:\.\d+)?)!4d([+-]?\d+(?:\.\d+)?)/);
+    if (place) {
+      const lat = Number(place[1]);
+      const lng = Number(place[2]);
+      validateLatLng(lat, lng);
+      return { lat, lng, normalizedText: `${lat.toFixed(6)}, ${lng.toFixed(6)}`, sourceKind: "place_3d4d" };
+    }
+    for (const key of ["q", "ll"]) {
+      const pair = extractPair(url.searchParams.get(key) || "");
+      if (pair) return { lat: pair[0], lng: pair[1], normalizedText: `${pair[0].toFixed(6)}, ${pair[1].toFixed(6)}`, sourceKind: `query_${key}` };
+    }
+    const vp = rawUrl.match(/@([+-]?\d+(?:\.\d+)?),([+-]?\d+(?:\.\d+)?)/);
+    if (vp) {
+      const lat = Number(vp[1]);
+      const lng = Number(vp[2]);
+      validateLatLng(lat, lng);
+      return { lat, lng, normalizedText: `${lat.toFixed(6)}, ${lng.toFixed(6)}`, sourceKind: "viewport_center" };
+    }
+    throw new Error("Could not extract coordinates from this Google Maps link.");
+  }
+
+  function buildSubmitPayload() {
+    const parsed = state.input.parsed;
+    return {
+      location_input: state.input.original,
+      input_kind_hint: state.input.kind,
+      client_parsed_lat: parsed ? parsed.lat : null,
+      client_parsed_lng: parsed ? parsed.lng : null,
+      turnstile_token: state.verification.token
+    };
+  }
+
   // 2. COORDINATE PARSING & HARD RESET
-  function handleCoordInput() {
+  function updateLocationInputState() {
     clearTimeout(state.debounce);
     state.debounce = setTimeout(() => {
-      const lat = parseFloat(els.lat.value);
-      const lng = parseFloat(els.lng.value);
-      
-      let valid = !isNaN(lat) && !isNaN(lng) && lat >= -90 && lat <= 90 && lng >= -180 && lng <= 180;
-      const newKey = valid ? `${lat.toFixed(4)},${lng.toFixed(4)}` : null;
+      const raw = normalizeInput(els.location.value);
+      const kind = classifyLocationInput(raw);
+      let parsed = null;
+      let error = "";
+      let preview = "";
+      try {
+        if (kind === "decimal_pair") parsed = parseDecimalPair(raw);
+        else if (kind === "degree_pair") parsed = parseDegreePair(raw);
+        else if (kind === "google_maps_url") parsed = parseGoogleMapsLongUrl(raw);
+        else if (kind === "google_maps_short_url") preview = "Google Maps short link detected";
+        else if (kind === "invalid") error = "Unsupported input. Use coordinates or Google Maps link.";
+      } catch (e) {
+        error = e.message || "Invalid location input.";
+      }
+
+      const valid = Boolean(parsed || kind === "google_maps_short_url");
+      const lat = parsed ? parsed.lat : null;
+      const lng = parsed ? parsed.lng : null;
+      const newKey = parsed ? `${lat.toFixed(4)},${lng.toFixed(4)}` : null;
+      if (parsed) {
+        preview = parsed.note ? `${parsed.note} Parsed as: ${parsed.normalizedText}` : `Parsed as: ${parsed.normalizedText}`;
+      }
 
       // Hard Reset: If coordinates change, invalidate ALL previous data to prevent ghost states
       if (state.coords.key && state.coords.key !== newKey) {
@@ -72,19 +217,23 @@ document.addEventListener("DOMContentLoaded", () => {
         els.turnstileSlot.classList.add("hidden");
       }
 
-      state.coords = { lat, lng, valid, key: newKey };
-      if (valid) {
+      state.coords = { lat, lng, valid: Boolean(parsed), key: newKey };
+      state.input = { kind, original: raw, preview, parsed, error, touched: state.input.touched };
+      if (parsed) {
         if (window.ModalSystem) window.ModalSystem.setCoords(lat, lng);
       } else {
         if (window.ModalSystem) window.ModalSystem.clearCoords();
       }
-      els.err.textContent = valid ? "" : (els.lat.value || els.lng.value ? "Invalid coordinates." : "");
+      els.preview.textContent = preview;
+      els.preview.classList.toggle("hidden", !preview);
+      const showError = state.input.touched || document.activeElement !== els.location;
+      els.err.textContent = showError ? error : "";
       updateButtons();
-    }, 300);
+    }, 180);
   }
 
   function updateButtons() {
-    const valid = state.coords.valid;
+    const valid = state.coords.valid || state.input.kind === "google_maps_short_url";
     const conLoading = state.construction.status === "loading";
     const demLoading = state.demand.status === "loading";
 
@@ -161,7 +310,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // 4. API CALLS WITH ABORT CONTROLLER
   async function fetchConstruction() {
-    if (!state.coords.valid) return;
+    if (!(state.coords.valid || state.input.kind === "google_maps_short_url")) return;
     
     // Auto-scroll to turnstile if needed
     if (state.verification.required && !state.verification.passed) {
@@ -180,7 +329,11 @@ document.addEventListener("DOMContentLoaded", () => {
       const res = await fetch("/api/construction", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lat: state.coords.lat, lng: state.coords.lng, turnstile_token: state.verification.token }),
+        body: JSON.stringify({
+          ...buildSubmitPayload(),
+          lat: state.coords.lat,
+          lng: state.coords.lng
+        }),
         signal: state.requests.construction.signal
       });
       
@@ -324,8 +477,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
 
   // Event Listeners Binding
-  els.lat.addEventListener("input", handleCoordInput);
-  els.lng.addEventListener("input", handleCoordInput);
+  els.location.addEventListener("input", updateLocationInputState);
+  els.location.addEventListener("blur", () => {
+    state.input.touched = true;
+    updateLocationInputState();
+  });
   
   document.getElementById("coordForm").addEventListener("submit", (e) => { e.preventDefault(); fetchConstruction(); });
   els.conBtn.addEventListener("click", fetchConstruction);
