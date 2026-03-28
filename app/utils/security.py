@@ -73,8 +73,8 @@ async def verify_turnstile(token: str, anon_id: str | None = None, client_ip: st
                 logger.info(f"Turnstile EXACT verification SUCCESS for: {cache_key}")
                 if cache_key and redis_client:
                     try:
-                        _ = await redis_client.setex(cache_key, 180, "1")
-                        logger.info(f"Turnstile success cached (3m) for: {cache_key}")
+                        _ = await redis_client.setex(cache_key, 300, "1")
+                        logger.info(f"Turnstile success cached (5m) for: {cache_key}")
                     except Exception as e:
                         logger.error(f"Failed to cache Turnstile success for {cache_key}: {e}")
                 return True
