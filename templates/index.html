@@ -30,18 +30,27 @@
     <!-- INPUT STATE -->
     <section class="card input-card">
       <h2 class="sr-only">Location Entry</h2>
-      <p class="helper">{{ t.get('input_label', 'Paste coordinates in decimal degrees.') }}</p>
+      <p class="helper">{{ t.get('input_label', 'Paste coordinates or Google Maps link.') }}</p>
       <form id="coordForm" novalidate>
-        <div class="input-grid">
-          <label class="field">
-            <span>{{ t.get('lat', 'Latitude') }}</span>
-            <input id="latInput" type="text" inputmode="decimal" placeholder="16.0544" aria-describedby="coordError">
-          </label>
-          <label class="field">
-            <span>{{ t.get('lon', 'Longitude') }}</span>
-            <input id="lngInput" type="text" inputmode="decimal" placeholder="108.2022" aria-describedby="coordError">
-          </label>
+        <label class="field field-full">
+          <span>{{ t.get('location_input', 'Location') }}</span>
+          <input
+            id="locationInput"
+            name="location_input"
+            type="text"
+            inputmode="text"
+            autocomplete="off"
+            autocapitalize="off"
+            spellcheck="false"
+            maxlength="2048"
+            placeholder="16.0544, 108.2022 or Google Maps link"
+            aria-describedby="coordHelp coordError parsedPreview"
+          >
+        </label>
+        <div class="field-help" id="coordHelp">
+          {{ t.get('location_input_help', 'Accepted: decimal coordinates, Google Maps link, or degree format.') }}
         </div>
+        <div class="parsed-preview hidden" id="parsedPreview" aria-live="polite"></div>
         <div class="inline-error" id="coordError" aria-live="polite"></div>
         
         <div class="turnstile-slot hidden" id="turnstileSlot">

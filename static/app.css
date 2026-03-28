@@ -65,9 +65,12 @@ body {
 .text-right { text-anchor: end; }
 
 /* FORMS */
-.input-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .field { display: flex; flex-direction: column; gap: 6px; }
+.field-full { width: 100%; }
 .field span { font-size: 13px; font-weight: 500; color: var(--muted); padding-left: 4px; }
+.field-help { margin-top: 8px; color: var(--muted); font-size: 12px; text-align: left; }
+.parsed-preview { margin-top: 8px; color: #b9e7ff; font-size: 12px; text-align: left; }
+.hidden { display: none !important; }
 input {
   width: 100%; height: 52px; border: 2px solid transparent; border-radius: 16px;
   padding: 0 16px; background: rgba(255,255,255,0.96); color: #273245; font-size: 17px;

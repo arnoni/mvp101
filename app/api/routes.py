@@ -19,6 +19,13 @@ from app.services.demand_service import DemandService
 from app.services.report_renderer import ReportRenderer
 from app.services.i18n import get_translations
 from app.core.config import is_inside_da_nang_bbox
+from app.services.location_parser import (
+    LocationParseError,
+    ParsedLocationInput,
+    parse_location_input,
+)
+from app.services.query_history_repository import QueryHistoryEvent, QueryHistoryRepository
+import time
 
 router = APIRouter()
 logger = structlog.get_logger(__name__)
@@ -43,6 +50,9 @@ def get_anomaly_service(request: Request) -> AnomalyService:
 def get_demand_service(request: Request) -> DemandService:
     return request.app.state.demand_service
 
+def get_query_history_repo(request: Request) -> QueryHistoryRepository:
+    return request.app.state.query_history_repo
+
 def get_policy_engine(quota_repo: QuotaRepository = Depends(get_quota_repo)) -> PolicyEngine:
     return PolicyEngine(quota_repo)
 
@@ -56,6 +66,17 @@ class UGCReportRequest(BaseModel):
     severity: Optional[int] = None
     evidence_urls: Optional[list[str]] = None
     turnstile_token: Optional[str] = None
+
+
+class ParseLocationRequest(BaseModel):
+    location_input: str = Field(..., min_length=1, max_length=2048)
+
+
+class ParseLocationResponse(BaseModel):
+    ok: bool
+    normalized: dict | None = None
+    error_code: str | None = None
+    message: str | None = None
 
 # --- Routes ---
 
@@ -146,6 +167,22 @@ async def status(
             ).model_dump()
         )
 
+@router.post("/parse-location", response_model=ParseLocationResponse)
+async def parse_location(data: ParseLocationRequest):
+    try:
+        parsed = parse_location_input(data.location_input)
+        return ParseLocationResponse(
+            ok=True,
+            normalized={
+                "latitude": parsed.latitude,
+                "longitude": parsed.longitude,
+                "display": parsed.normalized_input,
+                "input_kind": parsed.input_kind,
+            },
+        )
+    except LocationParseError as exc:
+        return ParseLocationResponse(ok=False, error_code=exc.error_code, message=str(exc))
+
 @router.post("/find-nearest", response_model=FindNearestResponse)
 async def find_nearest(
     request: Request,
@@ -156,17 +193,45 @@ async def find_nearest(
     precompute_repo: PrecomputeRepository = Depends(get_precompute_repo),
     anomaly_service: AnomalyService = Depends(get_anomaly_service),
     demand_service: DemandService = Depends(get_demand_service),
+    query_history_repo: QueryHistoryRepository = Depends(get_query_history_repo),
 ):
     # CSRF protection for quota-consuming POST
     await protect_mutation(request)
     
     try:
+        started_at = time.perf_counter()
         anon_id = getattr(request.state, "anon_id", "unknown_anon")
         user_id = getattr(request.state, "user_id", None)
         client_ip = get_client_ip(request)
         tier = getattr(request.state, "tier", TierStatus.FREE)
         entitlement_stale = getattr(request.state, "entitlement_stale", False)
         
+        parsed_input: ParsedLocationInput
+        if data.location_input:
+            try:
+                parsed_input = parse_location_input(data.location_input)
+                data.lat = parsed_input.latitude
+                data.lon = parsed_input.longitude
+            except LocationParseError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=ErrorResponse(error=exc.error_code, detail=str(exc)).model_dump()
+                ) from exc
+        elif data.lat is not None and data.lon is not None:
+            parsed_input = ParsedLocationInput(
+                input_kind="decimal_pair",
+                original_input=f"{data.lat}, {data.lon}",
+                normalized_input=f"{data.lat:.6f}, {data.lon:.6f}",
+                latitude=data.lat,
+                longitude=data.lon,
+                resolution_method="legacy_lat_lon",
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=ErrorResponse(error="INVALID_LOCATION_INPUT", detail="Location input is required.").model_dump()
+            )
+
         # 1. Anomaly Check
         # Identify based on user_id if present, else anon_id
         is_abusive = await anomaly_service.check_is_abusive(
@@ -185,10 +250,10 @@ async def find_nearest(
 
         # 2. Bucket Engine
         from app.services.bucket_engine import BucketEngine
-        cell_id = BucketEngine.get_cell_id(data.lat, data.lon)
+        cell_id = BucketEngine.get_cell_id(parsed_input.latitude, parsed_input.longitude)
         # Using cell_id as "area_code" logic for policy if we wanted per-cell quotas?
         # For now, stick to "area_code" from AreaBucketer for simple "global/danang" check if needed.
-        area_code = AreaBucketer.get_area_code(data.lat, data.lon)
+        area_code = AreaBucketer.get_area_code(parsed_input.latitude, parsed_input.longitude)
 
         # 3. Policy Gate
         gate_result = await run_gate(
@@ -222,7 +287,7 @@ async def find_nearest(
         
         # 7. Render Opaque Report
         from app.services.report_renderer import ReportRenderer
-        report_lines = ReportRenderer.render(candidates, data.lat, data.lon, limit=decision.max_results)
+        report_lines = ReportRenderer.render(candidates, parsed_input.latitude, parsed_input.longitude, limit=decision.max_results)
         
         # 8. Construct Response
         remaining_after = gate_result.remaining_after
@@ -250,8 +315,8 @@ async def find_nearest(
 
         resp = FindNearestResponse(
             report_lines=report_lines,
-            user_lat=data.lat,
-            user_lon=data.lon,
+            user_lat=parsed_input.latitude,
+            user_lon=parsed_input.longitude,
             quota_remaining=remaining_after,
             share_url=f"/share?lat={data.lat}&lon={data.lon}",
             debug_logs=logs if settings.ENV == "development" else None,
@@ -269,6 +334,23 @@ async def find_nearest(
             tier=tier_str,
             results_state=results_state,
             errors=None
+        )
+
+        await query_history_repo.log_event(
+            QueryHistoryEvent(
+                parsed=parsed_input,
+                anon_id=anon_id,
+                session_id=request.cookies.get(settings.SESSION_COOKIE_NAME),
+                user_id=user_id,
+                demand_cell_id=cell_id,
+                user_agent=request.headers.get("user-agent"),
+                request_country=request.headers.get("cf-ipcountry"),
+                request_city=request.headers.get("x-vercel-ip-city"),
+                result_status=results_state,
+                result_count=len(report_lines),
+                error_code=None,
+                response_ms=int((time.perf_counter() - started_at) * 1000),
+            )
         )
         
         logger.info("search_request_processed", anon_id=anon_id, cell_id=cell_id, results_count=len(report_lines))
@@ -456,4 +538,3 @@ async def ugc_report_submit(
     except Exception:
         pass
     return {"ok": True, "report_id": public_id, "duplicate": False}
-

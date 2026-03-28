@@ -31,6 +31,7 @@ from upstash_redis.asyncio import Redis
 from app.services.precompute_repo import PrecomputeRepository
 from app.services.anomaly_service import AnomalyService
 from app.services.demand_service import DemandService
+from app.services.query_history_repository import QueryHistoryRepository
 
 # Configure logging (Structlog)
 configure_logging()
@@ -118,6 +119,7 @@ async def lifespan(app: FastAPI):
         # Anomaly and Demand depend on Redis, but can handle None (no-op)
         app.state.anomaly_service = AnomalyService(app.state.redis)
         app.state.demand_service = DemandService(app.state.redis)
+        app.state.query_history_repo = QueryHistoryRepository(app.state.db_engine, app.state.redis)
         logger.info("MVP102 Services initialized successfully.")
     except Exception as e:
         logger.critical(f"Failed to init MVP102 services: {e}", exc_info=True)

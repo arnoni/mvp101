@@ -1,7 +1,7 @@
 # Implements TSD Section 4.2: Data Models
 # Implements TSD Section 7.2: Type hints mandatory
 
-from pydantic import BaseModel, Field, HttpUrl, ConfigDict
+from pydantic import BaseModel, Field, HttpUrl, ConfigDict, model_validator
 from typing import List, Optional
 
 # --- Internal Data Models (MasterList) ---
@@ -73,9 +73,24 @@ class FindNearestRequest(BaseModel):
     """Request model for the /api/find-nearest endpoint."""
     # Implements TSD Section 4.3: Request Body
     # Implements TSD v1.1: Direct Lat/Lng input
-    lat: float = Field(..., description="Latitude of the user/search center.")
-    lon: float = Field(..., description="Longitude of the user/search center.")
+    lat: Optional[float] = Field(default=None, description="Latitude of the user/search center.")
+    lon: Optional[float] = Field(default=None, description="Longitude of the user/search center.")
     turnstile_token: Optional[str] = Field(None, description="Cloudflare Turnstile verification token (optional).")
+    location_input: Optional[str] = Field(default=None, max_length=2048)
+    input_kind_hint: Optional[str] = Field(default=None, max_length=64)
+    client_parsed_lat: Optional[float] = Field(default=None)
+    client_parsed_lng: Optional[float] = Field(default=None)
+
+    @model_validator(mode="before")
+    @classmethod
+    def fill_legacy_lat_lon(cls, values):
+        if not isinstance(values, dict):
+            return values
+        if values.get("lat") is None and values.get("client_parsed_lat") is not None:
+            values["lat"] = values["client_parsed_lat"]
+        if values.get("lon") is None and values.get("client_parsed_lng") is not None:
+            values["lon"] = values["client_parsed_lng"]
+        return values
 
 # --- Error Response Model ---
 
@@ -94,4 +109,3 @@ class StatusResponse(BaseModel):
     turnstile_required: bool
     checks_today: int
     tier: Optional[str] = None
-
