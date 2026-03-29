@@ -275,14 +275,11 @@
             <button type="button" class="chip active" data-report-type="active_construction" role="radio" aria-checked="true">
               {{ t.get('active_construction', 'Active Construction') }}
             </button>
-            <button type="button" class="chip" data-report-type="noise_heard" role="radio" aria-checked="false">
-              {{ t.get('noise_heard', 'Noise Heard') }}
+            <button type="button" class="chip" data-report-type="maybe_construction" role="radio" aria-checked="false">
+              {{ t.get('maybe_construction', 'Maybe Construction') }}
             </button>
-            <button type="button" class="chip" data-report-type="new_site_spotted" role="radio" aria-checked="false">
-              {{ t.get('new_site_spotted', 'New Site Spotted') }}
-            </button>
-            <button type="button" class="chip" data-report-type="unsure_but_suspicious" role="radio" aria-checked="false">
-              {{ t.get('suspicious_unsure', 'Suspicious / Unsure') }}
+            <button type="button" class="chip" data-report-type="construction_ended" role="radio" aria-checked="false">
+              {{ t.get('construction_ended', 'Construction Ended') }}
             </button>
           </div>
         </div>
@@ -292,6 +289,13 @@
           <textarea class="modal-textarea" id="reportNote" rows="3" maxlength="180" 
                     placeholder="{{ t.get('report_placeholder', 'Describe what you observed...') }}"></textarea>
           <span class="char-count" id="reportCharCount">0/180</span>
+        </label>
+
+        
+
+        <label class="field checkbox-field">
+          <input type="checkbox" id="reportNearbyNow" />
+          <span class="field-label">{{ t.get('is_nearby_now', 'I am nearby right now') }}</span>
         </label>
 
         <div class="inline-error" id="reportError" role="alert" aria-live="polite"></div>

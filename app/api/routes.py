@@ -6,6 +6,9 @@ from pydantic import BaseModel, Field
 
 from app.core.config import settings
 from app.models.dto import FindNearestRequest, FindNearestResponse, ErrorResponse, StatusResponse, UserStatus
+from app.schemas.search import SearchRequest, SearchResponse, SearchTarget
+from app.schemas.user_reports import UserReportRequest, UserReportResponse
+from app.services.search_service import SearchService, SearchDependencies
 from app.services.area_bucketer import AreaBucketer
 from app.services.entitlement_service import EntitlementService, TierStatus
 from app.services.policy_engine import PolicyEngine, RequestContext, PolicyVerdict, PolicyDecision, run_gate
@@ -67,6 +70,31 @@ class UGCReportRequest(BaseModel):
     evidence_urls: Optional[list[str]] = None
     turnstile_token: Optional[str] = None
 
+
+
+
+def _map_user_report_to_ugc(data: UserReportRequest) -> UGCReportRequest:
+    category_map = {
+        "active_construction": "active_construction",
+        "maybe_construction": "unsure_but_suspicious",
+        "construction_ended": "new_site_spotted",
+    }
+    title_map = {
+        "active_construction": "Active construction observed",
+        "maybe_construction": "Possible construction observed",
+        "construction_ended": "Construction appears ended",
+    }
+    category = category_map.get(data.report_kind.value, "active_construction")
+    return UGCReportRequest(
+        title=title_map[data.report_kind.value],
+        description=(data.note or title_map[data.report_kind.value]),
+        lat=data.lat,
+        lon=data.lon,
+        category=category,
+        severity=3,
+        evidence_urls=None,
+        turnstile_token=data.turnstile_token,
+    )
 
 class ParseLocationRequest(BaseModel):
     location_input: str = Field(..., min_length=1, max_length=2048)
@@ -370,6 +398,94 @@ async def find_nearest(
             ).model_dump()
         )
 
+
+
+@router.post("/search", response_model=SearchResponse)
+async def search(
+    request: Request,
+    data: SearchRequest,
+    policy_engine: PolicyEngine = Depends(get_policy_engine),
+    quota_repo: QuotaRepository = Depends(get_quota_repo),
+    precompute_repo: PrecomputeRepository = Depends(get_precompute_repo),
+    demand_service: DemandService = Depends(get_demand_service),
+):
+    await protect_mutation(request)
+
+    anon_id = getattr(request.state, "anon_id", "unknown_anon")
+    user_id = getattr(request.state, "user_id", None)
+    tier = getattr(request.state, "tier", TierStatus.FREE)
+    entitlement_stale = getattr(request.state, "entitlement_stale", False)
+    area_code = AreaBucketer.get_area_code(data.lat, data.lon)
+
+    gate_result = await run_gate(
+        request=request,
+        data_turnstile_token=data.turnstile_token,
+        policy_engine=policy_engine,
+        quota_repo=quota_repo,
+        anon_id=anon_id,
+        user_id=user_id,
+        tier=tier,
+        entitlement_stale=entitlement_stale,
+        area_code=area_code,
+    )
+
+    limit = PolicyEngine.FREE_TIER_DAILY_LIMIT if tier == TierStatus.FREE else PolicyEngine.PAID_TIER_DAILY_LIMIT
+    checks_today = max(0, limit - gate_result.remaining_after)
+    tier_str = "pro" if tier == TierStatus.PAID else "free"
+
+    service = SearchService(
+        SearchDependencies(
+            redis=getattr(request.app.state, "redis", None),
+            precompute_repo=precompute_repo,
+            demand_service=demand_service,
+        )
+    )
+    return await service.run(
+        request=data,
+        tier=tier_str,
+        quota_remaining=gate_result.remaining_after,
+        checks_today=checks_today,
+    )
+
+
+@router.post("/construction")
+async def construction_wrapper(
+    request: Request,
+    data: SearchRequest,
+    policy_engine: PolicyEngine = Depends(get_policy_engine),
+    quota_repo: QuotaRepository = Depends(get_quota_repo),
+    precompute_repo: PrecomputeRepository = Depends(get_precompute_repo),
+    demand_service: DemandService = Depends(get_demand_service),
+):
+    data.target = SearchTarget.CONSTRUCTION
+    payload = await search(request, data, policy_engine, quota_repo, precompute_repo, demand_service)
+    return payload.construction or {"message": "No construction result"}
+
+
+@router.post("/demand")
+async def demand_wrapper(
+    request: Request,
+    data: SearchRequest,
+    policy_engine: PolicyEngine = Depends(get_policy_engine),
+    quota_repo: QuotaRepository = Depends(get_quota_repo),
+    precompute_repo: PrecomputeRepository = Depends(get_precompute_repo),
+    demand_service: DemandService = Depends(get_demand_service),
+):
+    data.target = SearchTarget.DEMAND
+    payload = await search(request, data, policy_engine, quota_repo, precompute_repo, demand_service)
+    return payload.demand or {"message": "No demand result"}
+
+
+@router.post("/user-reports", response_model=UserReportResponse)
+async def user_report_submit(
+    request: Request,
+    data: UserReportRequest,
+    quota_repo: QuotaRepository = Depends(get_quota_repo),
+    policy_engine: PolicyEngine = Depends(get_policy_engine),
+):
+    ugc_data = _map_user_report_to_ugc(data)
+    result = await ugc_report_submit(request=request, data=ugc_data, quota_repo=quota_repo, policy_engine=policy_engine)
+    return UserReportResponse(ok=result["ok"], report_id=result["report_id"], duplicate=result.get("duplicate", False))
 
 
 @router.post("/language")

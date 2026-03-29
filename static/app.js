@@ -326,13 +326,14 @@ document.addEventListener("DOMContentLoaded", () => {
     updateButtons();
 
     try {
-      const res = await fetch("/api/construction", {
+      const res = await fetch("/api/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           ...buildSubmitPayload(),
           lat: state.coords.lat,
-          lng: state.coords.lng
+          lon: state.coords.lng,
+          target: 'construction'
         }),
         signal: state.requests.construction.signal
       });
@@ -345,8 +346,9 @@ document.addEventListener("DOMContentLoaded", () => {
         data = await res.json();
       }
 
-      console.log("SERVER KEY:", data.coord_key, "| CLIENT KEY:", state.coords.key);
-      if (normalizeKey(data.coord_key) !== normalizeKey(state.coords.key)) return; // Stale
+      const construction = data.construction || data;
+      console.log("SERVER KEY:", construction.coord_key, "| CLIENT KEY:", state.coords.key);
+      if (normalizeKey(construction.coord_key || state.coords.key) !== normalizeKey(state.coords.key)) return; // Stale
 
       if (data.verification_required) {
         state.verification.required = true;
@@ -357,11 +359,11 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
-      const score = data.score !== undefined ? data.score : 87;
-      state.construction = { status: "ready", score: score, coordKey: data.coord_key || state.coords.key };
+      const score = construction.score !== undefined ? construction.score : 87;
+      state.construction = { status: "ready", score: score, coordKey: construction.coord_key || state.coords.key };
       console.log("Triggering animateGauge with score:", score);
       animateGauge(els.conBand, els.conNeedle, score);
-      els.conMsg.textContent = data.message || "Analysis complete";
+      els.conMsg.textContent = (construction && construction.message) || data.message || "Analysis complete";
 
     } catch (e) {
       if (e.name !== "AbortError") {
@@ -385,12 +387,7 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
 
-    if (state.construction.status !== "ready" || normalizeKey(state.construction.coordKey) !== normalizeKey(state.coords.key)) {
-      els.demMsg.textContent = "Run construction check first";
-      return;
-    }
-
-    if (state.requests.demand) state.requests.demand.abort();
+        if (state.requests.demand) state.requests.demand.abort();
     state.requests.demand = new AbortController();
     
     state.demand.status = "loading";
@@ -398,10 +395,10 @@ document.addEventListener("DOMContentLoaded", () => {
     updateButtons();
 
     try {
-      const res = await fetch("/api/demand", {
+      const res = await fetch("/api/search", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lat: state.coords.lat, lng: state.coords.lng, construction_coord_key: state.construction.coordKey }),
+        body: JSON.stringify({ lat: state.coords.lat, lon: state.coords.lng, target: "demand" }),
         signal: state.requests.demand.signal
       });
       
@@ -413,14 +410,15 @@ document.addEventListener("DOMContentLoaded", () => {
         data = await res.json();
       }
 
-      console.log("SERVER KEY:", data.coord_key, "| CLIENT KEY:", state.coords.key);
-      if (normalizeKey(data.coord_key) !== normalizeKey(state.coords.key)) return; // Stale
+      const demand = data.demand || data;
+      console.log("SERVER KEY:", demand.coord_key, "| CLIENT KEY:", state.coords.key);
+      if (normalizeKey(demand.coord_key || state.coords.key) !== normalizeKey(state.coords.key)) return; // Stale
 
-      const score = data.score !== undefined ? data.score : 65;
-      state.demand = { status: "ready", score: score, coordKey: data.coord_key || state.coords.key };
+      const score = demand.score !== undefined ? demand.score : 65;
+      state.demand = { status: "ready", score: score, coordKey: demand.coord_key || state.coords.key };
       console.log("Triggering animateGauge with score:", score);
       animateGauge(els.demBand, els.demNeedle, score);
-      els.demMsg.textContent = data.message || "Demand analyzed";
+      els.demMsg.textContent = (demand && demand.message) || data.message || "Demand analyzed";
 
     } catch (e) {
       if (e.name !== "AbortError") {
@@ -920,10 +918,11 @@ const ModalSystem = (function() {
         utils.setButtonLoading(btn, true);
 
         try {
-          await utils.apiPost('/api/reports', {
+          await utils.apiPost('/api/user-reports', {
             lat: state.coords.lat,
-            lng: state.coords.lng,
-            report_type: state.report.type,
+            lon: state.coords.lng,
+            report_kind: state.report.type,
+            is_nearby_now: Boolean(document.getElementById('reportNearbyNow')?.checked),
             note: state.report.note
           });
 
@@ -947,6 +946,8 @@ const ModalSystem = (function() {
         document.getElementById('reportFormState')?.classList.remove('hidden');
         document.getElementById('reportSuccessState')?.classList.add('hidden');
         document.getElementById('reportNote').value = '';
+        const nearby = document.getElementById('reportNearbyNow');
+        if (nearby) nearby.checked = false;
         document.getElementById('reportCharCount').textContent = '0/180';
         document.getElementById('reportError').textContent = '';
         
@@ -1120,7 +1121,7 @@ const ModalSystem = (function() {
         this.showStep(2); // Show processing spinner 
 
         try {
-          const data = await utils.apiPost('/billing/unlock_intent', {
+          const data = await utils.apiPost('/api/billing/unlock-intent', {
             email,
             plan: state.unlock.plan,
             turnstile_token: turnstileToken
@@ -1155,7 +1156,7 @@ const ModalSystem = (function() {
         errorEl.textContent = '';
 
         try {
-          await utils.apiPost('/billing/resend_magic_link', {
+          await utils.apiPost('/api/auth/magic-link', {
             email,
             turnstile_token: turnstileToken
           });
