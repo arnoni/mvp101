@@ -103,6 +103,19 @@ The current codebase is **partially aligned** with the target architecture but s
 - Add `POST /api/user-reports` with new DTO.
 - Provide temporary adapters from legacy paths during migration; then remove.
 
+### 6.1) API Versioning vs in-place replacement (cross-cutting for routes/DTOs)
+
+**Current state**
+- Current API shape is already consumed by existing frontend code with legacy route and payload assumptions.
+- Proposed refactor changes both endpoint paths and response DTO structures.
+
+**Gap**
+- Wrapper-only migration can still create accidental contract bleed if old and new DTO handling coexist under the same base path.
+
+**Refactor requirement**
+- Evaluate introducing a versioned cut (e.g., `/api/v2/search`, `/api/v2/user-reports`, `/api/v2/billing/unlock-intent`, `/api/v2/auth/magic-link`) while preserving `/api/*` current behavior during migration.
+- If versioning is not chosen, require explicit compatibility tests and telemetry guards for every legacy wrapper before removal.
+
 ### 7) Revised DTOs
 
 **Current state**
@@ -141,6 +154,23 @@ The current codebase is **partially aligned** with the target architecture but s
 **Refactor requirement**
 - Add checkbox UI and pass `is_nearby_now` in `UserReportRequest`.
 
+### 9.1) Database migration requirements for report taxonomy + nearby flag
+
+**Current state**
+- Existing UGC persistence expects free-form title/description/category/severity/evidence fields and does not represent the strict new `report_kind` + `is_nearby_now` schema.
+
+**Gap**
+- The spec-level DTO change requires data-model and storage updates that are not yet planned in this report.
+- Legacy report rows using old categories (e.g., `noise_heard`, `new_site_spotted`, `unsure_but_suspicious`) need an explicit mapping/backfill strategy.
+
+**Refactor requirement**
+- Add a DB migration step (Alembic or SQL migration script) to:
+  1. add `report_kind` constrained enum (`active_construction|maybe_construction|construction_ended`)
+  2. add `is_nearby_now` boolean with default `false`
+  3. backfill legacy records using a documented mapping policy
+  4. preserve auditability of original values (raw legacy field retained or copied to an archival column)
+- Require a rollback plan for migration safety in production.
+
 ### 10) Gauge-specific messages inside `construction` and `demand`
 
 **Current state**
@@ -178,6 +208,26 @@ The current codebase is **partially aligned** with the target architecture but s
 **Refactor requirement**
 - Add search cache key and lock key strategy in `SearchService` with TTLs (~120s cache, ~10-20s lock).
 
+### 12.1) Quota/rate-limit consumption semantics in unified search flow
+
+**Current state**
+- Quota policy exists in current stack, but unified-search billing/quota semantics are not yet defined in this report.
+
+**Gap**
+- Missing deterministic rules for when credits are consumed across:
+  - `target=construction|demand|both`
+  - cache hit vs cache miss
+  - lock contention/retry responses
+  - blocked/denied requests
+
+**Refactor requirement**
+- Define and implement explicit quota rules in `SearchService`/`QuotaService`, for example:
+  1. deny path: consume 0 credits when request is blocked before compute
+  2. cache-hit path: consume 0 or discounted credits (policy decision must be explicit)
+  3. cache-miss compute path: consume according to target (`construction=1`, `demand=1`, `both=2` or bundled rate)
+  4. lock-contention path: consume 0 credits for retry/processing responses
+- Add observability fields on responses/logs so finance/policy can audit cache-vs-consumption behavior.
+
 ---
 
 ## Additional Structural Observations
@@ -192,12 +242,14 @@ The current codebase is **partially aligned** with the target architecture but s
 ## Recommended Next Refactoring Slice (Practical Order)
 
 1. **Introduce canonical schemas first** (`SearchRequest/Response`, `GaugeResult`, `UserReport*`, billing/auth DTOs).
-2. **Ship `POST /api/search` route + `SearchService` skeleton** with target branching (construction/demand/both) and stable response shape.
-3. **Implement Redis cache + in-flight lock for search** behind feature flag.
-4. **Add `/api/user-reports` + slim `UserReportService`** using three report kinds + `is_nearby_now`.
-5. **Create `/api/billing/unlock-intent` and `/api/auth/magic-link`**; move old flows behind temporary compatibility wrappers.
-6. **Migrate frontend calls** to `/api/search`, `/api/user-reports`, `/api/billing/unlock-intent`, `/api/auth/magic-link`.
-7. **Apply deprecation policy**: log old endpoints, then remove once traffic reaches zero.
+2. **Draft and execute DB migrations** (Alembic/SQL) for new `report_kind` enum + `is_nearby_now` boolean, including legacy backfill mappings and rollback notes.
+3. **Decide migration boundary strategy**: `/api/v2/*` versioned rollout vs in-place replacement with strict compatibility wrappers.
+4. **Ship `POST /api/search` route + `SearchService` skeleton** with target branching (construction/demand/both), stable response shape, and explicit quota-consumption semantics.
+5. **Implement Redis cache + in-flight lock for search** behind feature flag, including lock-timeout/failure behavior tests.
+6. **Add `/api/user-reports` + slim `UserReportService`** using three report kinds + `is_nearby_now`.
+7. **Create `/api/billing/unlock-intent` and `/api/auth/magic-link`**; move old flows behind temporary compatibility wrappers (or `/api/v2/*` cutover).
+8. **Migrate frontend calls** to canonical new routes and DTOs.
+9. **Apply deprecation policy**: log old endpoints, monitor usage for 14 days, then remove once traffic reaches zero.
 
 ---
 
@@ -211,5 +263,10 @@ The current codebase is **partially aligned** with the target architecture but s
 - [ ] `/api/billing/unlock-intent` and `/api/auth/magic-link` are cleanly separated.
 - [ ] Webhook route remains provider integration and not merged into auth.
 - [ ] Redis search result caching + in-flight dedup are implemented and tested.
+- [ ] Quota consumption behavior is explicitly defined and tested for cache-hit/miss, `target=both`, deny, and lock-contention paths.
+- [ ] DB migrations are applied and validated for report taxonomy + `is_nearby_now` (including legacy mapping/backfill verification).
+- [ ] Automated tests are added/updated:
+  - unit tests for `SearchService` orchestration
+  - DTO validation tests (request/response models)
+  - integration tests for Redis caching/locking behavior
 - [ ] Legacy routes have temporary wrappers + deprecation logging.
-
