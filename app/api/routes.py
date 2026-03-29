@@ -409,43 +409,60 @@ async def search(
     precompute_repo: PrecomputeRepository = Depends(get_precompute_repo),
     demand_service: DemandService = Depends(get_demand_service),
 ):
-    await protect_mutation(request)
+    try:
+        await protect_mutation(request)
 
-    anon_id = getattr(request.state, "anon_id", "unknown_anon")
-    user_id = getattr(request.state, "user_id", None)
-    tier = getattr(request.state, "tier", TierStatus.FREE)
-    entitlement_stale = getattr(request.state, "entitlement_stale", False)
-    area_code = AreaBucketer.get_area_code(data.lat, data.lon)
+        anon_id = getattr(request.state, "anon_id", "unknown_anon")
+        user_id = getattr(request.state, "user_id", None)
+        tier = getattr(request.state, "tier", TierStatus.FREE)
+        entitlement_stale = getattr(request.state, "entitlement_stale", False)
+        area_code = AreaBucketer.get_area_code(data.lat, data.lon)
 
-    gate_result = await run_gate(
-        request=request,
-        data_turnstile_token=data.turnstile_token,
-        policy_engine=policy_engine,
-        quota_repo=quota_repo,
-        anon_id=anon_id,
-        user_id=user_id,
-        tier=tier,
-        entitlement_stale=entitlement_stale,
-        area_code=area_code,
-    )
-
-    limit = PolicyEngine.FREE_TIER_DAILY_LIMIT if tier == TierStatus.FREE else PolicyEngine.PAID_TIER_DAILY_LIMIT
-    checks_today = max(0, limit - gate_result.remaining_after)
-    tier_str = "pro" if tier == TierStatus.PAID else "free"
-
-    service = SearchService(
-        SearchDependencies(
-            redis=getattr(request.app.state, "redis", None),
-            precompute_repo=precompute_repo,
-            demand_service=demand_service,
+        gate_result = await run_gate(
+            request=request,
+            data_turnstile_token=data.turnstile_token,
+            policy_engine=policy_engine,
+            quota_repo=quota_repo,
+            anon_id=anon_id,
+            user_id=user_id,
+            tier=tier,
+            entitlement_stale=entitlement_stale,
+            area_code=area_code,
         )
-    )
-    return await service.run(
-        request=data,
-        tier=tier_str,
-        quota_remaining=gate_result.remaining_after,
-        checks_today=checks_today,
-    )
+
+        limit = PolicyEngine.FREE_TIER_DAILY_LIMIT if tier == TierStatus.FREE else PolicyEngine.PAID_TIER_DAILY_LIMIT
+        checks_today = max(0, limit - gate_result.remaining_after)
+        tier_str = "pro" if tier == TierStatus.PAID else "free"
+
+        service = SearchService(
+            SearchDependencies(
+                redis=getattr(request.app.state, "redis", None),
+                precompute_repo=precompute_repo,
+                demand_service=demand_service,
+            )
+        )
+        return await service.run(
+            request=data,
+            tier=tier_str,
+            quota_remaining=gate_result.remaining_after,
+            checks_today=checks_today,
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception(
+            "search_route_unhandled_exception",
+            error=str(exc),
+            description="Unhandled exception while executing /api/search route.",
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=ErrorResponse(
+                error="SEARCH_ROUTE_FAILED",
+                detail="Search request failed due to an internal error.",
+                error_id=get_req_id(request),
+            ).model_dump()
+        )
 
 
 @router.post("/construction")
@@ -642,15 +659,31 @@ async def ugc_report_submit(
           }
         )).first()
         public_id = str(row.public_id)
-    except Exception:
+    except Exception as exc:
+      logger.exception(
+          "ugc_report_db_insert_failed",
+          error=str(exc),
+          description="Failed to insert UGC report row into database.",
+      )
       raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=ErrorResponse(error="STORAGE_UNAVAILABLE", detail="Database unavailable.").model_dump())
     if data.evidence_urls:
         try:
             await redis_cli.set(f"ugc:evidence:{public_id}", json.dumps(data.evidence_urls), ex=7 * 24 * 3600)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "ugc_report_evidence_cache_write_failed",
+                error=str(exc),
+                report_id=public_id,
+                description="Failed to cache UGC evidence URLs in Redis.",
+            )
     try:
         await redis_cli.set(dedup_redis_key, public_id, ex=7 * 24 * 3600)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning(
+            "ugc_report_dedup_cache_write_failed",
+            error=str(exc),
+            report_id=public_id,
+            dedup_key=dedup_redis_key,
+            description="Failed to persist UGC deduplication key in Redis.",
+        )
     return {"ok": True, "report_id": public_id, "duplicate": False}
