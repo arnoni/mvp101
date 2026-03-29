@@ -174,6 +174,27 @@ document.addEventListener("DOMContentLoaded", () => {
     };
   }
 
+  function getApiErrorCode(payload) {
+    if (!payload || typeof payload !== "object") return "";
+    if (typeof payload.error === "string") return payload.error;
+    if (payload.detail && typeof payload.detail === "object" && typeof payload.detail.error === "string") {
+      return payload.detail.error;
+    }
+    return "";
+  }
+
+  function ensureTurnstileScript() {
+    if (window.turnstile) return;
+    const existing = document.querySelector('script[data-turnstile-script="1"]');
+    if (existing) return;
+    const script = document.createElement("script");
+    script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+    script.async = true;
+    script.defer = true;
+    script.dataset.turnstileScript = "1";
+    document.head.appendChild(script);
+  }
+
   // 2. COORDINATE PARSING & HARD RESET
   function updateLocationInputState() {
     clearTimeout(state.debounce);
@@ -340,6 +361,18 @@ document.addEventListener("DOMContentLoaded", () => {
       
       let data;
       if (!res.ok) {
+        data = await res.json().catch(() => ({}));
+        const errorCode = getApiErrorCode(data);
+        if (errorCode === "CHALLENGE_REQUIRED" || errorCode === "INVALID_CHALLENGE") {
+          state.verification.required = true;
+          state.verification.passed = false;
+          state.verification.token = null;
+          state.construction.status = "blocked";
+          els.conMsg.textContent = "Verification required";
+          renderTurnstile();
+          updateButtons();
+          return;
+        }
         console.warn(`Construction API failed with status ${res.status}. Using fallback simulation.`);
         data = { score: 87, coord_key: state.coords.key, message: 'Simulated Analysis (Fallback)' };
       } else {
@@ -404,6 +437,18 @@ document.addEventListener("DOMContentLoaded", () => {
       
       let data;
       if (!res.ok) {
+        data = await res.json().catch(() => ({}));
+        const errorCode = getApiErrorCode(data);
+        if (errorCode === "CHALLENGE_REQUIRED" || errorCode === "INVALID_CHALLENGE") {
+          state.verification.required = true;
+          state.verification.passed = false;
+          state.verification.token = null;
+          state.demand.status = "blocked";
+          els.demMsg.textContent = "Verification required";
+          renderTurnstile();
+          updateButtons();
+          return;
+        }
         console.warn(`Demand API failed with status ${res.status}. Using fallback simulation.`);
         data = { score: 65, coord_key: state.coords.key, message: 'Demand analyzed (Fallback)' };
       } else {
@@ -436,9 +481,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function renderTurnstile() {
     els.turnstileSlot.classList.remove("hidden");
+    ensureTurnstileScript();
     
     // If turnstile isn't loaded yet, try again in 100ms
     if (!window.turnstile) {
+      els.conMsg.textContent = "Loading verification challenge…";
       setTimeout(renderTurnstile, 100);
       return;
     }
