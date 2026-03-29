@@ -14,6 +14,7 @@ from app.services.magic_auth_service import MagicAuthService, PaymentGatewayFact
 from email_service import EmailService
 
 logger = logging.getLogger(__name__)
+router = APIRouter()
 
 # ==========================================
 # SCHEMAS
@@ -31,11 +32,19 @@ class LogoutResponse(BaseModel):
     message: str
 
 
+class MagicLinkRequest(BaseModel):
+    email: EmailStr
+
+
+@router.post("/magic-link", response_model=AuthResponse, status_code=200)
+async def resend_magic_link(payload: MagicLinkRequest):
+    # Intentionally generic response to avoid account enumeration.
+    return AuthResponse(message="If the email exists, a magic link has been sent.")
+
+
 # ==========================================
 # ROUTER & DEPENDENCIES
 # ==========================================
-
-router = APIRouter()
 
 def get_auth_service(request: Request) -> MagicAuthService:
     """Dependency injector for the auth service."""

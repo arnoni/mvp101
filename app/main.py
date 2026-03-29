@@ -179,10 +179,12 @@ templates = Jinja2Templates(directory=templates_dir)
 from app.api.routes import router as api_router
 from app.api.auth import router as auth_router
 from app.api.webhooks import router as webhooks_router
+from app.api.billing import router as billing_router
 
 app.include_router(api_router, prefix="/api")
 app.include_router(auth_router, prefix="/api/auth")
 app.include_router(webhooks_router, prefix="/api/webhooks")
+app.include_router(billing_router, prefix="/api/billing")
 
 #
 
