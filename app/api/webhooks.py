@@ -58,6 +58,19 @@ def parse_dodo_event(raw_body: bytes):
             'id': data.get('payment_id'),
             'email': data.get('customer', {}).get('email'),
             'plan': data.get('metadata', {}).get('plan', '1_day'),
+            'intent_id': data.get('metadata', {}).get('intent_id'),
+            'amount_usd_cents': (
+                data.get('amount')
+                or data.get('amount_minor')
+                or data.get('total_amount')
+                or data.get('data', {}).get('amount')
+            ),
+            'currency': (
+                data.get('currency')
+                or data.get('currency_code')
+                or data.get('data', {}).get('currency')
+                or 'USD'
+            ),
             'status': data.get('status')
         })
     except (json.JSONDecodeError, AttributeError, KeyError) as e:
@@ -241,6 +254,44 @@ async def dodo_webhook(request: Request, services: dict = Depends(get_services))
                     raise HTTPException(status_code=500, detail="Database check failure")
 
                 try:
+                    expected_intent = None
+                    if event.intent_id:
+                        intent_res = await conn.execute(
+                            text(
+                                """
+                                SELECT id, amount_usd_cents, currency, status
+                                FROM payment_intents
+                                WHERE id = :intent_id
+                                LIMIT 1
+                                FOR UPDATE
+                                """
+                            ),
+                            {"intent_id": event.intent_id},
+                        )
+                        expected_intent = intent_res.mappings().first()
+                        if not expected_intent:
+                            logger.warning(f"WEBHOOK_DODO_UNKNOWN_INTENT: event_id={event.id} intent_id={event.intent_id}")
+                            return {"status": "ignored", "reason": "unknown_intent"}
+                        if str(expected_intent["status"]).lower() == "paid":
+                            logger.info(f"WEBHOOK_DODO_INTENT_ALREADY_PAID: event_id={event.id} intent_id={event.intent_id}")
+                            return {"status": "ok"}
+
+                        webhook_amount = None
+                        if event.amount_usd_cents is not None:
+                            amount_raw = str(event.amount_usd_cents)
+                            webhook_amount = int(float(amount_raw) * 100) if "." in amount_raw else int(amount_raw)
+                        webhook_currency = str(event.currency or "USD").upper()
+                        expected_amount = int(expected_intent["amount_usd_cents"])
+                        expected_currency = str(expected_intent["currency"]).upper()
+                        if webhook_amount != expected_amount or webhook_currency != expected_currency:
+                            logger.warning(
+                                "WEBHOOK_DODO_AMOUNT_MISMATCH: "
+                                f"event_id={event.id} intent_id={event.intent_id} "
+                                f"webhook_amount={webhook_amount} webhook_currency={webhook_currency} "
+                                f"expected_amount={expected_amount} expected_currency={expected_currency}"
+                            )
+                            return {"status": "ignored", "reason": "amount_currency_mismatch"}
+
                     purchase_res = await conn.execute(
                         text("""
                             INSERT INTO purchases (email, plan, provider_event_id, provider, status)
@@ -250,6 +301,20 @@ async def dodo_webhook(request: Request, services: dict = Depends(get_services))
                         {"email": event.email, "plan": event.plan, "eid": event.id}
                     )
                     purchase_id = purchase_res.scalar()
+                    if event.intent_id:
+                        await conn.execute(
+                            text(
+                                """
+                                UPDATE payment_intents
+                                SET status = 'paid', provider_event_id = :provider_event_id, updated_at = NOW()
+                                WHERE id = :intent_id
+                                """
+                            ),
+                            {
+                                "provider_event_id": event.id,
+                                "intent_id": event.intent_id,
+                            },
+                        )
                 except Exception as e:
                     logger.error(f"WEBHOOK_DODO_DB_INSERT_FAILED: {e}")
                     raise HTTPException(status_code=500, detail="Database insert failure")
