@@ -393,7 +393,7 @@
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
                 </span>
               </div>
-              <div class="plan-price">$4.99</div>
+              <div class="plan-price">{{ plan_prices.get('1_day', '$4.99') }}</div>
               <div class="plan-desc">{{ t.get('pass_1_day_desc', 'Full access for 24 hours') }}</div>
             </button>
 
@@ -405,7 +405,7 @@
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"></polyline></svg>
                 </span>
               </div>
-              <div class="plan-price">$9.99</div>
+              <div class="plan-price">{{ plan_prices.get('3_day', '$9.99') }}</div>
               <div class="plan-desc">{{ t.get('pass_3_day_desc', 'Full access for 72 hours') }}</div>
             </button>
           </div>
@@ -438,6 +438,7 @@
         </div>
 
         <div class="secondary-actions">
+          <div class="text-muted" id="resendTurnstileHint">{{ t.get('complete_security_resend', 'Complete a fresh security check to enable resend.') }}</div>
           <span class="text-muted">{{ t.get('already_paid', 'Already have an active pass?') }}</span>
           <button class="text-btn text-accent" type="button" id="resendLinkBtn">{{ t.get('resend_link', 'Resend Access Link') }}</button>
         </div>

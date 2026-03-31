@@ -131,6 +131,11 @@ def get_client_ip(request: Request) -> str:
     # Implements TSD FR-003: Rate Limiting (1 req/IP/24h)
     # This is a critical security/cost control point.
     
+    # Cloudflare canonical client IP header
+    cf_connecting_ip = request.headers.get("cf-connecting-ip")
+    if cf_connecting_ip:
+        return cf_connecting_ip.strip()
+
     # Check for common proxy headers
     x_forwarded_for = request.headers.get("x-forwarded-for")
     if x_forwarded_for:

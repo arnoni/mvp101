@@ -3,14 +3,17 @@ import secrets
 import json
 import logging
 import hashlib
+import httpx
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Request, Response, Depends
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, EmailStr
+from sqlalchemy import text
 
 from app.core.config import settings
 from app.services.magic_auth_service import MagicAuthService, PaymentGatewayFactory
+from app.utils.security import get_client_ip, verify_turnstile
 from email_service import EmailService
 
 logger = logging.getLogger(__name__)
@@ -34,12 +37,210 @@ class LogoutResponse(BaseModel):
 
 class MagicLinkRequest(BaseModel):
     email: EmailStr
+    turnstile_token: Optional[str] = None
+    intent_id: Optional[str] = None
+
+
+async def _fetch_dodo_checkout_status(checkout_id: str) -> dict | None:
+    if not settings.DODO_API_KEY:
+        return None
+    base_url = "https://api.dodopayments.com/v1" if settings.ENV == "production" else "https://test.dodopayments.com/v1"
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            res = await client.get(
+                f"{base_url}/checkouts/{checkout_id}",
+                headers={"Authorization": f"Bearer {settings.DODO_API_KEY}"},
+            )
+            if res.status_code >= 400:
+                return None
+            return res.json()
+    except Exception:
+        return None
 
 
 @router.post("/magic-link", response_model=AuthResponse, status_code=200)
-async def resend_magic_link(payload: MagicLinkRequest):
+async def resend_magic_link(payload: MagicLinkRequest, request: Request):
     # Intentionally generic response to avoid account enumeration.
-    return AuthResponse(message="If the email exists, a magic link has been sent.")
+    generic_response = AuthResponse(message="If the email exists, a magic link has been sent.")
+    redis_cli = getattr(request.app.state, "redis", None)
+    db_engine = getattr(request.app.state, "db_engine", None)
+    if not redis_cli or not db_engine:
+        return generic_response
+
+    email = payload.email.lower()
+    if not payload.turnstile_token:
+        return generic_response
+    ip = get_client_ip(request)
+    turnstile_ok = await verify_turnstile(payload.turnstile_token, client_ip=ip)
+    if not turnstile_ok:
+        return generic_response
+
+    cooldown_key = f"magic_resend:cooldown:{email}"
+    count_key = f"magic_resend:count:{email}:{ip}"
+
+    try:
+        if await redis_cli.get(cooldown_key):
+            return generic_response
+        count = await redis_cli.incr(count_key)
+        if count == 1:
+            await redis_cli.expire(count_key, 180)
+        if int(count) > 2:
+            await redis_cli.set(cooldown_key, "1", ex=180)
+            return generic_response
+    except Exception:
+        return generic_response
+
+    async with db_engine.connect() as conn:
+        purchase_result = await conn.execute(
+            text(
+                """
+                SELECT id, plan
+                FROM purchases
+                WHERE email = :email
+                  AND status IN ('paid', 'active')
+                ORDER BY created_at DESC
+                LIMIT 1
+                """
+            ),
+            {"email": email},
+        )
+        purchase = purchase_result.mappings().first()
+        pending_intent_sql = """
+            SELECT id, plan_code, provider_event_id
+            FROM payment_intents
+            WHERE email = :email
+              AND status IN ('initiated', 'pending')
+        """
+        params = {"email": email}
+        if payload.intent_id:
+            pending_intent_sql += " AND id = :intent_id ORDER BY created_at DESC LIMIT 1"
+            params["intent_id"] = payload.intent_id
+        else:
+            pending_intent_sql += " ORDER BY created_at DESC LIMIT 1"
+        pending_intent_result = await conn.execute(text(pending_intent_sql), params)
+        pending_intent = pending_intent_result.mappings().first()
+        if payload.intent_id and not pending_intent:
+            ownership_result = await conn.execute(
+                text(
+                    """
+                    SELECT email
+                    FROM payment_intents
+                    WHERE id = :intent_id
+                    LIMIT 1
+                    """
+                ),
+                {"intent_id": payload.intent_id},
+            )
+            ownership_row = ownership_result.mappings().first()
+            if ownership_row and str(ownership_row["email"]).lower() != email:
+                logger.warning(
+                    "AUTH_RESEND_INTENT_OWNERSHIP_MISMATCH: "
+                    f"requested_email={email} intent_id={payload.intent_id}"
+                )
+                return generic_response
+
+    if not purchase:
+        if pending_intent and pending_intent.get("provider_event_id"):
+            checkout_data = await _fetch_dodo_checkout_status(str(pending_intent["provider_event_id"]))
+            if checkout_data:
+                raw_status = str(
+                    checkout_data.get("status")
+                    or checkout_data.get("payment_status")
+                    or checkout_data.get("data", {}).get("status")
+                    or ""
+                ).lower()
+                if raw_status in {"paid", "succeeded", "completed"}:
+                    async with db_engine.begin() as conn:
+                        locked_intent_result = await conn.execute(
+                            text(
+                                """
+                                SELECT id, plan_code, provider_event_id, status
+                                FROM payment_intents
+                                WHERE id = :id
+                                FOR UPDATE
+                                """
+                            ),
+                            {"id": pending_intent["id"]},
+                        )
+                        locked_intent = locked_intent_result.mappings().first()
+                        if not locked_intent:
+                            return generic_response
+                        locked_status = str(locked_intent["status"]).lower()
+                        if locked_status not in {"initiated", "pending"}:
+                            return generic_response
+
+                        existing = await conn.execute(
+                            text(
+                                """
+                                SELECT id, plan
+                                FROM purchases
+                                WHERE provider_event_id = :provider_event_id AND provider = 'dodo'
+                                LIMIT 1
+                                """
+                            ),
+                            {"provider_event_id": str(pending_intent["provider_event_id"])},
+                        )
+                        existing_purchase = existing.mappings().first()
+                        if existing_purchase:
+                            purchase = {"id": existing_purchase["id"], "plan": existing_purchase["plan"]}
+                        else:
+                            inserted = await conn.execute(
+                                text(
+                                    """
+                                    INSERT INTO purchases (email, plan, provider_event_id, provider, status)
+                                    VALUES (:email, :plan, :provider_event_id, 'dodo', 'paid')
+                                    RETURNING id, plan
+                                    """
+                                ),
+                                {
+                                    "email": email,
+                                    "plan": locked_intent["plan_code"],
+                                    "provider_event_id": str(locked_intent["provider_event_id"]),
+                                },
+                            )
+                            row = inserted.mappings().first()
+                            if row:
+                                purchase = {"id": row["id"], "plan": row["plan"]}
+                        await conn.execute(
+                            text(
+                                """
+                                UPDATE payment_intents
+                                SET status = 'paid', updated_at = NOW()
+                                WHERE id = :id
+                                """
+                            ),
+                            {"id": pending_intent["id"]},
+                        )
+        if not purchase:
+            # Intent exists but is not yet paid; keep generic response without forcing cooldown escalation.
+            if pending_intent:
+                await redis_cli.set(cooldown_key, "1", ex=30)
+        return generic_response
+
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+    redis_payload = json.dumps({
+        "email": email,
+        "plan": purchase["plan"],
+        "purchase_id": str(purchase["id"]),
+    })
+    try:
+        await redis_cli.set(f"magic:{token_hash}", redis_payload, ex=600)
+    except Exception:
+        return generic_response
+
+    app_origin = settings.APP_ORIGIN or "http://localhost:8000"
+    magic_link = f"{app_origin}/api/auth/magic?token={raw_token}"
+    try:
+        email_service = EmailService()
+        await email_service.send_magic_link(
+            email=email,
+            magic_link=magic_link,
+            expire_minutes=10,
+        )
+    except Exception:
+        return generic_response
+    return generic_response
 
 
 # ==========================================

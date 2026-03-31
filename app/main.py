@@ -32,6 +32,7 @@ from app.services.precompute_repo import PrecomputeRepository
 from app.services.anomaly_service import AnomalyService
 from app.services.demand_service import DemandService
 from app.services.query_history_repository import QueryHistoryRepository
+from app.services.plan_catalog_service import get_active_plan_prices
 
 # Configure logging (Structlog)
 configure_logging()
@@ -268,6 +269,7 @@ async def root(request: Request, lang: str = "en"):
         status_text = tdict.get("status_active_many", "You’ve checked {n} places today").replace("{n}", str(checks_today))
         state = "active"
     tier_str = "pro" if tier == TierStatus.PAID else "free"
+    plan_prices = await get_active_plan_prices(getattr(request.app.state, "db_engine", None))
     
     context = {
         "request": request,
@@ -282,7 +284,8 @@ async def root(request: Request, lang: str = "en"):
         "initial_can_search": can_search,
         "initial_turnstile_required": turnstile_required,
         "initial_checks_today": checks_today,
-        "initial_tier": tier_str
+        "initial_tier": tier_str,
+        "plan_prices": plan_prices,
     }
     return templates.TemplateResponse("index.html", context)
 

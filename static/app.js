@@ -8,6 +8,7 @@ document.addEventListener("DOMContentLoaded", () => {
     demand: { status: "idle", coordKey: null, score: null },
     verification: { required: false, passed: false, token: null, widgetId: null },
     modal: { active: null, step: "intent", email: "", plan: "1_day" },
+    unlock: { email: "", plan: "1_day", resendCooldownUntil: 0, lastTurnstileToken: null, checkoutSubmitting: false },
     requests: { construction: null, demand: null },
     debounce: null
   };
@@ -1092,12 +1093,23 @@ const ModalSystem = (function() {
      * 4. Support/Purchase Modal
      */
     support: {
+      _resendTimer: null,
+      _tokenWatcher: null,
+      _turnstilePrewarmTriggered: false,
+
+      clearPendingCheckoutContext() {
+        sessionStorage.removeItem('last_payment_intent_id');
+        sessionStorage.removeItem('pending_checkout_email');
+        sessionStorage.removeItem('pending_checkout_started_at');
+      },
+
       init() {
         // Check for success redirect parameter on page load 
         const urlParams = new URLSearchParams(window.location.search);
         if (urlParams.get('magic_success') === '1') {
           this.handleSuccessfulLogin();
         }
+        const paymentState = urlParams.get('payment');
 
         const btn = document.getElementById('supportBtn');
         const proceedBtn = document.getElementById('proceedToPaymentBtn');
@@ -1126,6 +1138,106 @@ const ModalSystem = (function() {
         proceedBtn?.addEventListener('click', () => this.proceedToPayment());
         cancelBtn?.addEventListener('click', () => this.reset());
         resendBtn?.addEventListener('click', () => this.resendLink());
+        this.resumeResendCooldown();
+        this.syncResendButtonState();
+        if (!this._tokenWatcher) {
+          this._tokenWatcher = setInterval(() => this.syncResendButtonState(), 1000);
+        }
+        document.addEventListener('visibilitychange', () => {
+          if (document.hidden) return;
+          const msLeft = state.unlock.resendCooldownUntil - Date.now();
+          if (msLeft > 0 && msLeft <= 5000 && !this._turnstilePrewarmTriggered && window.turnstile) {
+            turnstile.reset();
+            this._turnstilePrewarmTriggered = true;
+          }
+          this.syncResendButtonState();
+        });
+
+        const pendingIntentId = sessionStorage.getItem('last_payment_intent_id');
+        const pendingEmail = sessionStorage.getItem('pending_checkout_email');
+        if (paymentState === 'cancel') {
+          this.clearPendingCheckoutContext();
+          sessionStorage.removeItem('resend_cooldown_until');
+          return;
+        }
+        if ((paymentState === 'success' || pendingIntentId) && pendingEmail) {
+          const emailInput = document.getElementById('purchaseEmail');
+          if (emailInput) emailInput.value = pendingEmail;
+          this.showStep(1);
+          core.open('supportModalLayer');
+          const existingCooldown = Number(sessionStorage.getItem('resend_cooldown_until') || '0');
+          if (existingCooldown <= Date.now()) {
+            this.startResendCooldown(180);
+          }
+        }
+      },
+
+      syncResendButtonState() {
+        const resendBtn = document.getElementById('resendLinkBtn');
+        const hintEl = document.getElementById('resendTurnstileHint');
+        if (!resendBtn) return;
+        const msLeft = state.unlock.resendCooldownUntil - Date.now();
+        if (msLeft > 0) return;
+
+        const token = document.querySelector('[name="cf-turnstile-response"]')?.value;
+        const hasFreshToken = !!token && token !== state.unlock.lastTurnstileToken;
+        resendBtn.disabled = !hasFreshToken;
+        if (!hasFreshToken) {
+          resendBtn.textContent = 'Securing...';
+        } else if (resendBtn.dataset.baseText) {
+          resendBtn.textContent = resendBtn.dataset.baseText;
+        }
+        if (hintEl) {
+          hintEl.textContent = hasFreshToken
+            ? 'Security check complete. You can resend now.'
+            : 'Complete a fresh security check to enable resend.';
+        }
+      },
+
+      startResendCooldown(seconds = 180) {
+        const resendBtn = document.getElementById('resendLinkBtn');
+        if (!resendBtn) return;
+        this._turnstilePrewarmTriggered = false;
+
+        const baseText = resendBtn.dataset.baseText || resendBtn.textContent.trim() || 'Resend Access Link';
+        resendBtn.dataset.baseText = baseText;
+        const cooldownUntil = Date.now() + (seconds * 1000);
+        state.unlock.resendCooldownUntil = cooldownUntil;
+        sessionStorage.setItem('resend_cooldown_until', String(cooldownUntil));
+
+        if (this._resendTimer) clearInterval(this._resendTimer);
+
+        const tick = () => {
+          const msLeft = state.unlock.resendCooldownUntil - Date.now();
+          if (msLeft <= 0) {
+            state.unlock.resendCooldownUntil = 0;
+            sessionStorage.removeItem('resend_cooldown_until');
+            if (this._resendTimer) {
+              clearInterval(this._resendTimer);
+              this._resendTimer = null;
+            }
+            this.syncResendButtonState();
+            return;
+          }
+          const secondsLeft = Math.ceil(msLeft / 1000);
+          if (secondsLeft <= 5 && !this._turnstilePrewarmTriggered && window.turnstile) {
+            turnstile.reset();
+            this._turnstilePrewarmTriggered = true;
+          }
+          resendBtn.disabled = true;
+          resendBtn.textContent = `Resend Access Link (${secondsLeft}s)`;
+        };
+
+        tick();
+        this._resendTimer = setInterval(tick, 1000);
+      },
+
+      resumeResendCooldown() {
+        const stored = Number(sessionStorage.getItem('resend_cooldown_until') || '0');
+        if (stored > Date.now()) {
+          const secondsLeft = Math.ceil((stored - Date.now()) / 1000);
+          this.startResendCooldown(secondsLeft);
+        }
       },
 
       handleSuccessfulLogin() {
@@ -1149,7 +1261,9 @@ const ModalSystem = (function() {
       async proceedToPayment() {
         const emailInput = document.getElementById('purchaseEmail');
         const errorEl = document.getElementById('purchaseEmailError');
+        const proceedBtn = document.getElementById('proceedToPaymentBtn');
         const email = emailInput.value.trim().toLowerCase(); // Always lower-case! 
+        if (state.unlock.checkoutSubmitting) return;
         
         // Turnstile token extraction
         const turnstileToken = document.querySelector('[name="cf-turnstile-response"]')?.value;
@@ -1165,6 +1279,12 @@ const ModalSystem = (function() {
 
         errorEl.textContent = '';
         state.unlock.email = email;
+        state.unlock.checkoutSubmitting = true;
+        if (proceedBtn) {
+          utils.setButtonLoading(proceedBtn, true);
+          const btnText = proceedBtn.querySelector('.btn-text');
+          if (btnText) btnText.textContent = 'Redirecting to secure checkout...';
+        }
         this.showStep(2); // Show processing spinner 
 
         try {
@@ -1174,8 +1294,20 @@ const ModalSystem = (function() {
             turnstile_token: turnstileToken
           });
 
+          if (data.intent_id) {
+            sessionStorage.setItem('last_payment_intent_id', data.intent_id);
+          }
+          sessionStorage.setItem('pending_checkout_email', email);
+          sessionStorage.setItem('pending_checkout_started_at', String(Date.now()));
+          state.unlock.lastTurnstileToken = turnstileToken;
           window.location.href = data.checkout_url;
         } catch (err) {
+          state.unlock.checkoutSubmitting = false;
+          if (proceedBtn) {
+            utils.setButtonLoading(proceedBtn, false);
+            const btnText = proceedBtn.querySelector('.btn-text');
+            if (btnText) btnText.textContent = 'Continue to Payment ➔';
+          }
           this.showStep(1);
           errorEl.textContent = err.message || 'Checkout failed. Please try again.';
           // Reset Turnstile on failure 
@@ -1194,8 +1326,10 @@ const ModalSystem = (function() {
           emailInput.focus();
           return;
         }
-        if (!turnstileToken) {
-          errorEl.textContent = 'Please complete the security check.';
+        if (!turnstileToken || turnstileToken === state.unlock.lastTurnstileToken) {
+          errorEl.textContent = 'Please complete a fresh security check before resend.';
+          if (window.turnstile) turnstile.reset();
+          this.syncResendButtonState();
           return;
         }
 
@@ -1205,12 +1339,16 @@ const ModalSystem = (function() {
         try {
           await utils.apiPost('/api/auth/magic-link', {
             email,
-            turnstile_token: turnstileToken
+            turnstile_token: turnstileToken,
+            intent_id: sessionStorage.getItem('last_payment_intent_id') || null
           });
           
           this.showStep(3); // Show Success Check-Email screen 
           document.getElementById('resendMessage').textContent = 
             `If ${email} has an active pass, we've sent a new access link.`;
+          state.unlock.lastTurnstileToken = turnstileToken;
+          if (window.turnstile) turnstile.reset();
+          this.startResendCooldown(180);
         } catch (err) {
           errorEl.textContent = err.message || 'Could not resend link.';
           if (window.turnstile) turnstile.reset();
@@ -1227,10 +1365,17 @@ const ModalSystem = (function() {
 
       reset() {
         this.showStep(1);
+        state.unlock.checkoutSubmitting = false;
         const emailInput = document.getElementById('purchaseEmail');
         if (emailInput) emailInput.value = '';
         const errorEl = document.getElementById('purchaseEmailError');
         if (errorEl) errorEl.textContent = '';
+        const proceedBtn = document.getElementById('proceedToPaymentBtn');
+        if (proceedBtn) {
+          utils.setButtonLoading(proceedBtn, false);
+          const btnText = proceedBtn.querySelector('.btn-text');
+          if (btnText) btnText.textContent = 'Continue to Payment ➔';
+        }
       }
     },
 

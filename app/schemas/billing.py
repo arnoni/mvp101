@@ -11,4 +11,5 @@ class UnlockIntentRequest(BaseModel):
 
 class UnlockIntentResponse(BaseModel):
     checkout_url: str
+    intent_id: str
     message: str = "Checkout initialized"
