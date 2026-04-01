@@ -27,6 +27,7 @@ class RequestContext(BaseModel):
     turnstile_token: Optional[str] = None
     user_id: Optional[str] = None
     entitlement_stale: bool = False
+    daily_limit: int = 3
 
 class PolicyDecision(BaseModel):
     verdict: PolicyVerdict
@@ -49,9 +50,6 @@ class PolicyEngine:
     """
     
     # Policy Constants
-    FREE_TIER_DAILY_LIMIT = 2
-    PAID_TIER_DAILY_LIMIT = 50
-    
     FREE_TIER_RESULTS = 1
     PAID_TIER_RESULTS = 5
     
@@ -64,7 +62,7 @@ class PolicyEngine:
         from app.core.keys import KeyBuilder
         
         # STRICT RULE: If tier is PAID and entitlement is not stale -> user_id
-        if tier == TierStatus.PAID and not entitlement_stale and user_id:
+        if tier in {TierStatus.PASS_1_DAY, TierStatus.PASS_3_DAY} and not entitlement_stale and user_id:
              return KeyBuilder.quota_rolling24h("paid", user_id)
         
         # Fallback to anon_id
@@ -78,11 +76,10 @@ class PolicyEngine:
         """
         
         # 1. Determine Limits based on Tier
-        limit = self.FREE_TIER_DAILY_LIMIT
+        limit = max(1, int(context.daily_limit))
         max_results = self.FREE_TIER_RESULTS
         
-        if context.paid_tier == TierStatus.PAID:
-            limit = self.PAID_TIER_DAILY_LIMIT
+        if context.paid_tier in {TierStatus.PASS_1_DAY, TierStatus.PASS_3_DAY}:
             max_results = self.PAID_TIER_RESULTS
             
         # 2. Check Quota
@@ -168,6 +165,7 @@ async def run_gate(
     anon_id: str,
     user_id: Optional[str],
     tier: TierStatus,
+    daily_limit: int,
     entitlement_stale: bool,
     area_code: str,
     force_turnstile_required: bool = False,
@@ -187,6 +185,7 @@ async def run_gate(
         turnstile_token=data_turnstile_token,
         user_id=user_id,
         entitlement_stale=entitlement_stale,
+        daily_limit=daily_limit,
     )
 
     if admin_bypass:
@@ -232,7 +231,7 @@ async def run_gate(
 
     quota_key = PolicyEngine.get_quota_key(user_id, anon_id, tier, entitlement_stale)
 
-    limit = PolicyEngine.FREE_TIER_DAILY_LIMIT if tier == TierStatus.FREE else PolicyEngine.PAID_TIER_DAILY_LIMIT
+    limit = max(1, int(daily_limit))
 
     try:
         allowed, remaining_after = await quota_repo.check_and_consume(quota_key, limit)

@@ -37,6 +37,14 @@ logger = structlog.get_logger(__name__)
 def get_req_id(request: Request) -> Optional[str]:
     return getattr(request.state, "request_id", None)
 
+
+def tier_to_client(tier: TierStatus) -> str:
+    if tier == TierStatus.PASS_3_DAY:
+        return "3_day"
+    if tier == TierStatus.PASS_1_DAY:
+        return "1_day"
+    return "free"
+
 # --- Dependencies ---
 
 # --- Dependencies ---
@@ -129,6 +137,9 @@ async def status(
         client_ip = get_client_ip(request)
         tier = getattr(request.state, "tier", TierStatus.FREE)
         entitlement_stale = getattr(request.state, "entitlement_stale", False)
+        daily_limit = int(getattr(request.state, "daily_limit", 3) or 3)
+        active_plan_code = getattr(request.state, "active_plan_code", None)
+        expires_at = getattr(request.state, "expires_at", None)
         admin_hdr = request.headers.get("X-Admin-Auth")
         admin_bypass = bool(settings.ADMIN_BYPASS_TOKEN and admin_hdr and admin_hdr == settings.ADMIN_BYPASS_TOKEN)
 
@@ -140,14 +151,13 @@ async def status(
             client_ip=client_ip,
             turnstile_token=None,
             user_id=user_id,
-            entitlement_stale=entitlement_stale
+            entitlement_stale=entitlement_stale,
+            daily_limit=daily_limit,
         )
 
         decision = PolicyDecision(verdict=PolicyVerdict.ALLOW, quota_remaining=999, max_results=5) if admin_bypass else await policy_engine.evaluate(context)
 
-        limit = PolicyEngine.FREE_TIER_DAILY_LIMIT
-        if tier == TierStatus.PAID:
-            limit = PolicyEngine.PAID_TIER_DAILY_LIMIT
+        limit = daily_limit
 
         can_search = True
         turnstile_required = False
@@ -176,14 +186,17 @@ async def status(
             status_text = t.get("status_active_many", "You’ve checked {n} places today").replace("{n}", str(checks_today))
             state = "active"
 
-        tier_str = "pro" if tier == TierStatus.PAID else "free"
+        tier_str = tier_to_client(tier)
 
         return StatusResponse(
             user_status=UserStatus(state=state, text=status_text),
             can_search=can_search,
             turnstile_required=turnstile_required,
             checks_today=checks_today,
-            tier=tier_str
+            tier=tier_str,
+            active_plan_code=active_plan_code,
+            daily_limit=daily_limit,
+            expires_at=expires_at,
         )
     except Exception as e:
         logger.error("status_endpoint_failed", error=str(e))
@@ -293,6 +306,7 @@ async def find_nearest(
             user_id=user_id,
             tier=tier,
             entitlement_stale=entitlement_stale,
+            daily_limit=daily_limit,
             area_code=area_code,
         )
         decision = gate_result.decision
@@ -319,7 +333,7 @@ async def find_nearest(
         
         # 8. Construct Response
         remaining_after = gate_result.remaining_after
-        limit = PolicyEngine.FREE_TIER_DAILY_LIMIT if tier == TierStatus.FREE else PolicyEngine.PAID_TIER_DAILY_LIMIT
+        limit = daily_limit
         checks_today = max(0, limit - remaining_after)
         
         lang = request.cookies.get("dd_lang") or "en"
@@ -337,7 +351,7 @@ async def find_nearest(
              status_text = t.get("status_active_many", "You’ve checked {n} places today").replace("{n}", str(checks_today))
              state = "active"
 
-        tier_str = "pro" if tier == TierStatus.PAID else "free"
+        tier_str = tier_to_client(tier)
         results_state = "found" if len(report_lines) > 0 else "empty"
         if not can_search: results_state = "never"
 
@@ -416,6 +430,7 @@ async def search(
         user_id = getattr(request.state, "user_id", None)
         tier = getattr(request.state, "tier", TierStatus.FREE)
         entitlement_stale = getattr(request.state, "entitlement_stale", False)
+        daily_limit = int(getattr(request.state, "daily_limit", 3) or 3)
         area_code = AreaBucketer.get_area_code(data.lat, data.lon)
 
         gate_result = await run_gate(
@@ -427,12 +442,13 @@ async def search(
             user_id=user_id,
             tier=tier,
             entitlement_stale=entitlement_stale,
+            daily_limit=daily_limit,
             area_code=area_code,
         )
 
-        limit = PolicyEngine.FREE_TIER_DAILY_LIMIT if tier == TierStatus.FREE else PolicyEngine.PAID_TIER_DAILY_LIMIT
+        limit = daily_limit
         checks_today = max(0, limit - gate_result.remaining_after)
-        tier_str = "pro" if tier == TierStatus.PAID else "free"
+        tier_str = tier_to_client(tier)
 
         service = SearchService(
             SearchDependencies(
@@ -540,6 +556,7 @@ async def ugc_report_submit(
     user_id = getattr(request.state, "user_id", None)
     tier = getattr(request.state, "tier", TierStatus.FREE)
     entitlement_stale = getattr(request.state, "entitlement_stale", False)
+    daily_limit = int(getattr(request.state, "daily_limit", 3) or 3)
     if not is_inside_da_nang_bbox(data.lat, data.lon):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -567,6 +584,7 @@ async def ugc_report_submit(
     user_id = getattr(request.state, "user_id", None)
     tier = getattr(request.state, "tier", TierStatus.FREE)
     entitlement_stale = getattr(request.state, "entitlement_stale", False)
+    daily_limit = int(getattr(request.state, "daily_limit", 3) or 3)
     area_code = AreaBucketer.get_area_code(data.lat, data.lon)
     gate_result = await run_gate(
         request=request,
@@ -577,6 +595,7 @@ async def ugc_report_submit(
         user_id=user_id,
         tier=tier,
         entitlement_stale=entitlement_stale,
+        daily_limit=daily_limit,
         area_code=area_code,
         force_turnstile_required=True,
         disallow_admin_bypass=True,
@@ -647,7 +666,7 @@ async def ugc_report_submit(
             "public_id": public_id,
             "reporter_anon_id": anon_id,
             "reporter_user_id": user_id,
-            "reporter_tier": "pro" if tier == TierStatus.PAID else "free",
+            "reporter_tier": tier_to_client(tier),
             "title": data.title,
             "description": data.description,
             "category": data.category,

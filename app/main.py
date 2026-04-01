@@ -239,6 +239,7 @@ async def root(request: Request, lang: str = "en"):
     
     anon_id = getattr(request.state, "anon_id", "unknown_anon")
     tier = getattr(request.state, "tier", TierStatus.FREE)
+    daily_limit = int(getattr(request.state, "daily_limit", 3) or 3)
     client_ip = request.client.host if request.client else None
     area_code = "global"
     policy_engine = PolicyEngine(request.app.state.quota_repo)
@@ -247,10 +248,11 @@ async def root(request: Request, lang: str = "en"):
         paid_tier=tier,
         area_code=area_code,
         client_ip=client_ip or "",
-        turnstile_token=None
+        turnstile_token=None,
+        daily_limit=daily_limit,
     )
     decision = await policy_engine.evaluate(context_eval)
-    limit = PolicyEngine.FREE_TIER_DAILY_LIMIT if tier == TierStatus.FREE else PolicyEngine.PAID_TIER_DAILY_LIMIT
+    limit = daily_limit
     can_search = decision.verdict != PolicyVerdict.BLOCK
     turnstile_required = decision.verdict == PolicyVerdict.CHALLENGE_REQUIRED
     quota_remaining = decision.quota_remaining
@@ -268,7 +270,7 @@ async def root(request: Request, lang: str = "en"):
     else:
         status_text = tdict.get("status_active_many", "You’ve checked {n} places today").replace("{n}", str(checks_today))
         state = "active"
-    tier_str = "pro" if tier == TierStatus.PAID else "free"
+    tier_str = tier_to_client(tier)
     plan_prices = await get_active_plan_prices(getattr(request.app.state, "db_engine", None))
     
     context = {
@@ -384,3 +386,10 @@ async def global_exception_handler(request: Request, exc: Exception):
             }
         }
     )
+def tier_to_client(tier):
+    from app.services.entitlement_service import TierStatus
+    if tier == TierStatus.PASS_3_DAY:
+        return "3_day"
+    if tier == TierStatus.PASS_1_DAY:
+        return "1_day"
+    return "free"

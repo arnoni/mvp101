@@ -274,8 +274,8 @@ class MagicAuthService:
                 try:
                     user_result = await conn.execute(
                         text("""
-                            INSERT INTO users (email, created_at) 
-                            VALUES (:email, NOW()) 
+                            INSERT INTO users (email, ab_cohort, created_at) 
+                            VALUES (:email, CASE WHEN random() < 0.5 THEN 'A' ELSE 'B' END, NOW()) 
                             ON CONFLICT (email) DO UPDATE SET last_login = NOW()
                             RETURNING id
                         """),
