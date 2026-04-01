@@ -17,6 +17,10 @@ async def run_migrations():
 
     # Create async engine
     url = settings.DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
+    if "?" in url:
+        url = url.split("?")[0]
+    # asyncpg requires ssl=require instead of sslmode=require and does not support channel_binding
+    url += "?ssl=require"
     engine = create_async_engine(url, echo=True)
 
     sql_statements = [
@@ -74,14 +78,7 @@ async def run_migrations():
             updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
         );
         """,
-        """
-        CREATE INDEX IF NOT EXISTS idx_precompute_size_computed 
-        ON cell_poi_precompute(cell_size_m, computed_at);
-        """,
-        """
-        CREATE INDEX IF NOT EXISTS idx_precompute_etag 
-        ON cell_poi_precompute(etag);
-        """,
+
         """
         CREATE TABLE IF NOT EXISTS webhook_events (
             provider TEXT NOT NULL,
@@ -194,8 +191,7 @@ async def run_migrations():
         "ALTER TABLE payment_intents ADD COLUMN IF NOT EXISTS provider_intent_id TEXT;",
         "ALTER TABLE payment_intents ADD COLUMN IF NOT EXISTS currency TEXT NOT NULL DEFAULT 'USD';",
         "ALTER TABLE payment_intents ADD COLUMN IF NOT EXISTS plan_code TEXT REFERENCES public.billing_plans(code);",
-        "UPDATE payment_intents SET amount_cents = amount_usd_cents WHERE amount_cents IS NULL AND amount_usd_cents IS NOT NULL;",
-        "UPDATE payment_intents SET provider_intent_id = provider_event_id WHERE provider_intent_id IS NULL AND provider_event_id IS NOT NULL;",
+        
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_payment_intents_provider_intent_id ON payment_intents(provider_intent_id) WHERE provider_intent_id IS NOT NULL;",
         """
         CREATE INDEX IF NOT EXISTS idx_payment_intents_user_created_at
@@ -217,15 +213,21 @@ async def run_migrations():
         "CREATE INDEX IF NOT EXISTS idx_user_passes_user_id ON user_passes USING BTREE (user_id);",
     ]
 
-    async with engine.begin() as conn:
-        for statement in sql_statements:
-            try:
-                print(f"Executing: {statement[:50]}...")
-                await conn.execute(text(statement))
-            except Exception as e:
-                print(f"Error executing statement: {e}")
-                # Don't strictly fail, as some might already exist or conflict slightly
-                # But for CREATE IF NOT EXISTS it should be fine.
+    try:
+        async with engine.begin() as conn:
+            for statement in sql_statements:
+                try:
+                    print(f"Executing: {statement[:50]}...")
+                    await conn.execute(text(statement))
+                except Exception as e:
+                    print(f"\nSQL Execution Failed!")
+                    print(f"Statement: {statement}")
+                    print(f"Error: {e}")
+                    await conn.rollback()
+                    sys.exit(1)
+    except Exception as e:
+        print(f"Transaction failed: {e}")
+        sys.exit(1)
 
     print("Migrations complete.")
     await engine.dispose()
