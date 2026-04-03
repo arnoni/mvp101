@@ -6,7 +6,7 @@ document.addEventListener("DOMContentLoaded", () => {
     input: { kind: "empty", original: "", preview: "", parsed: null, error: "", touched: false },
     construction: { status: "idle", coordKey: null, score: null },
     demand: { status: "idle", coordKey: null, score: null },
-    verification: { required: false, passed: false, token: null, widgetId: null },
+    verification: { required: false, passed: false, token: null, widgetId: null, renderAttempts: 0 },
     modal: { active: null, step: "intent", email: "", plan: "1_day" },
     unlock: { email: "", plan: "1_day", resendCooldownUntil: 0, lastTurnstileToken: null, checkoutSubmitting: false },
     requests: { construction: null, demand: null },
@@ -230,7 +230,7 @@ document.addEventListener("DOMContentLoaded", () => {
         
         state.construction = { status: "idle", coordKey: null, score: null };
         state.demand = { status: "idle", coordKey: null, score: null };
-        state.verification = { required: false, passed: false, token: null }; 
+        state.verification = { required: false, passed: false, token: null, widgetId: null, renderAttempts: 0 }; 
         
         animateGauge(els.conBand, els.conNeedle, null);
         animateGauge(els.demBand, els.demNeedle, null);
@@ -483,13 +483,27 @@ document.addEventListener("DOMContentLoaded", () => {
   function renderTurnstile() {
     els.turnstileSlot.classList.remove("hidden");
     ensureTurnstileScript();
+
+    const sitekey = (document.body.dataset.turnstileSitekey || "").trim();
+    if (!sitekey || ["none", "null", "undefined"].includes(sitekey.toLowerCase())) {
+      console.error("Turnstile site key is missing or invalid.");
+      els.conMsg.textContent = "Verification unavailable: site key missing.";
+      return;
+    }
     
     // If turnstile isn't loaded yet, try again in 100ms
     if (!window.turnstile) {
+      state.verification.renderAttempts = (state.verification.renderAttempts || 0) + 1;
+      if (state.verification.renderAttempts > 50) {
+        console.error("Turnstile script failed to load after multiple attempts.");
+        els.conMsg.textContent = "Unable to load verification challenge. Please refresh and try again.";
+        return;
+      }
       els.conMsg.textContent = "Loading verification challenge…";
       setTimeout(renderTurnstile, 100);
       return;
     }
+    state.verification.renderAttempts = 0;
 
     // If already rendered and container not empty, don't re-render
     if (state.verification.widgetId && els.turnstileContainer.innerHTML !== "") return;
@@ -497,28 +511,36 @@ document.addEventListener("DOMContentLoaded", () => {
     // Clear container just in case
     els.turnstileContainer.innerHTML = "";
     
-    state.verification.widgetId = window.turnstile.render('#turnstileContainer', {
-      sitekey: document.body.dataset.turnstileSitekey,
-      theme: 'dark',
-      callback: (token) => {
-        console.log("Turnstile verified");
-        state.verification.passed = true;
-        state.verification.token = token;
-        state.verification.required = false;
-        els.turnstileSlot.classList.add("hidden");
-        updateButtons();
-        fetchConstruction(); // Auto-retry
-      },
-      'error-callback': (err) => {
-        console.error("Turnstile Error:", err);
-        els.conMsg.textContent = "Verification failed. Please refresh.";
-      },
-      'expired-callback': () => {
-        state.verification.passed = false;
-        state.verification.token = null;
-        renderTurnstile(); // Re-render if expired
-      }
-    });
+    try {
+      state.verification.widgetId = window.turnstile.render('#turnstileContainer', {
+        sitekey,
+        theme: 'dark',
+        callback: (token) => {
+          console.log("Turnstile verified");
+          state.verification.passed = true;
+          state.verification.token = token;
+          state.verification.required = false;
+          els.turnstileSlot.classList.add("hidden");
+          updateButtons();
+          fetchConstruction(); // Auto-retry
+        },
+        'error-callback': (err) => {
+          console.error("Turnstile Error:", err);
+          state.verification.widgetId = null;
+          els.conMsg.textContent = "Verification failed. Please refresh.";
+        },
+        'expired-callback': () => {
+          state.verification.passed = false;
+          state.verification.token = null;
+          state.verification.widgetId = null;
+          renderTurnstile(); // Re-render if expired
+        }
+      });
+    } catch (err) {
+      console.error("Turnstile render failed:", err);
+      state.verification.widgetId = null;
+      els.conMsg.textContent = "Unable to render verification challenge. Please refresh.";
+    }
   }
 
 
