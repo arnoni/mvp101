@@ -42,7 +42,7 @@ async def require_paid(
         )
         
     # 403: User is logged in but not paid (and verification is fresh)
-    if tier != TierStatus.PAID:
+    if tier not in {TierStatus.PASS_1_DAY, TierStatus.PASS_3_DAY}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Paid subscription required."

@@ -4,7 +4,6 @@ import json
 import logging
 import hashlib
 import httpx
-from datetime import datetime, timedelta, timezone
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Request, Response, Depends
 from fastapi.responses import RedirectResponse
@@ -39,6 +38,13 @@ class MagicLinkRequest(BaseModel):
     email: EmailStr
     turnstile_token: Optional[str] = None
     intent_id: Optional[str] = None
+
+
+def _pass_duration_days(plan_code: str | None) -> int:
+    code = (plan_code or "").lower()
+    if code.startswith("3_day"):
+        return 3
+    return 1
 
 
 async def _fetch_dodo_checkout_status(checkout_id: str) -> dict | None:
@@ -90,25 +96,29 @@ async def resend_magic_link(payload: MagicLinkRequest, request: Request):
     except Exception:
         return generic_response
 
+    active_pass = None
     async with db_engine.connect() as conn:
-        purchase_result = await conn.execute(
+        active_pass_result = await conn.execute(
             text(
                 """
-                SELECT id, plan
-                FROM purchases
-                WHERE email = :email
-                  AND status IN ('paid', 'active')
-                ORDER BY created_at DESC
+                SELECT up.id, up.plan_code, up.expires_at, u.id AS user_id
+                FROM user_passes up
+                JOIN users u ON u.id = up.user_id
+                WHERE u.email = :email
+                  AND up.status = 'active'
+                  AND up.expires_at > NOW()
+                ORDER BY up.expires_at DESC
                 LIMIT 1
                 """
             ),
             {"email": email},
         )
-        purchase = purchase_result.mappings().first()
+        active_pass = active_pass_result.mappings().first()
         pending_intent_sql = """
-            SELECT id, plan_code, provider_event_id
-            FROM payment_intents
-            WHERE email = :email
+            SELECT pi.id, pi.user_id, pi.plan_code, pi.provider_intent_id, pi.status
+            FROM payment_intents pi
+            JOIN users u ON u.id = pi.user_id
+            WHERE u.email = :email
               AND status IN ('initiated', 'pending')
         """
         params = {"email": email}
@@ -123,9 +133,10 @@ async def resend_magic_link(payload: MagicLinkRequest, request: Request):
             ownership_result = await conn.execute(
                 text(
                     """
-                    SELECT email
-                    FROM payment_intents
-                    WHERE id = :intent_id
+                    SELECT u.email
+                    FROM payment_intents pi
+                    JOIN users u ON u.id = pi.user_id
+                    WHERE pi.id = :intent_id
                     LIMIT 1
                     """
                 ),
@@ -139,9 +150,9 @@ async def resend_magic_link(payload: MagicLinkRequest, request: Request):
                 )
                 return generic_response
 
-    if not purchase:
-        if pending_intent and pending_intent.get("provider_event_id"):
-            checkout_data = await _fetch_dodo_checkout_status(str(pending_intent["provider_event_id"]))
+    if not active_pass:
+        if pending_intent and pending_intent.get("provider_intent_id"):
+            checkout_data = await _fetch_dodo_checkout_status(str(pending_intent["provider_intent_id"]))
             if checkout_data:
                 raw_status = str(
                     checkout_data.get("status")
@@ -154,7 +165,7 @@ async def resend_magic_link(payload: MagicLinkRequest, request: Request):
                         locked_intent_result = await conn.execute(
                             text(
                                 """
-                                SELECT id, plan_code, provider_event_id, status
+                                SELECT id, plan_code, provider_intent_id, status
                                 FROM payment_intents
                                 WHERE id = :id
                                 FOR UPDATE
@@ -169,38 +180,68 @@ async def resend_magic_link(payload: MagicLinkRequest, request: Request):
                         if locked_status not in {"initiated", "pending"}:
                             return generic_response
 
-                        existing = await conn.execute(
+                        duration_days_result = await conn.execute(
                             text(
                                 """
-                                SELECT id, plan
-                                FROM purchases
-                                WHERE provider_event_id = :provider_event_id AND provider = 'dodo'
+                                SELECT duration_days
+                                FROM billing_plans
+                                WHERE code = :code
                                 LIMIT 1
                                 """
                             ),
-                            {"provider_event_id": str(pending_intent["provider_event_id"])},
+                            {"code": locked_intent["plan_code"]},
                         )
-                        existing_purchase = existing.mappings().first()
-                        if existing_purchase:
-                            purchase = {"id": existing_purchase["id"], "plan": existing_purchase["plan"]}
-                        else:
-                            inserted = await conn.execute(
-                                text(
-                                    """
-                                    INSERT INTO purchases (email, plan, provider_event_id, provider, status)
-                                    VALUES (:email, :plan, :provider_event_id, 'dodo', 'paid')
-                                    RETURNING id, plan
-                                    """
-                                ),
-                                {
-                                    "email": email,
-                                    "plan": locked_intent["plan_code"],
-                                    "provider_event_id": str(locked_intent["provider_event_id"]),
-                                },
-                            )
-                            row = inserted.mappings().first()
-                            if row:
-                                purchase = {"id": row["id"], "plan": row["plan"]}
+                        duration_days = duration_days_result.scalar() or _pass_duration_days(locked_intent["plan_code"])
+                        inserted_pass = await conn.execute(
+                            text(
+                                """
+                                INSERT INTO user_passes (
+                                    user_id,
+                                    plan_code,
+                                    provider_payment_id,
+                                    amount_paid_cents,
+                                    status,
+                                    expires_at
+                                )
+                                VALUES (
+                                    :user_id,
+                                    :plan_code,
+                                    :provider_payment_id,
+                                    (
+                                        SELECT amount_cents
+                                        FROM payment_intents
+                                        WHERE id = :intent_id
+                                    ),
+                                    'active',
+                                    (
+                                        GREATEST(
+                                            COALESCE(
+                                                (
+                                                    SELECT MAX(expires_at)
+                                                    FROM user_passes
+                                                    WHERE user_id = :user_id
+                                                      AND status = 'active'
+                                                ),
+                                                NOW()
+                                            ),
+                                            NOW()
+                                        ) + (:duration_days * INTERVAL '1 day')
+                                    )
+                                )
+                                ON CONFLICT (provider_payment_id) DO UPDATE
+                                SET updated_at = NOW()
+                                RETURNING id, plan_code, expires_at, user_id
+                                """
+                            ),
+                            {
+                                "user_id": locked_intent["user_id"],
+                                "plan_code": locked_intent["plan_code"],
+                                "provider_payment_id": str(locked_intent["provider_intent_id"]),
+                                "intent_id": locked_intent["id"],
+                                "duration_days": int(duration_days),
+                            },
+                        )
+                        active_pass = inserted_pass.mappings().first()
                         await conn.execute(
                             text(
                                 """
@@ -211,7 +252,7 @@ async def resend_magic_link(payload: MagicLinkRequest, request: Request):
                             ),
                             {"id": pending_intent["id"]},
                         )
-        if not purchase:
+        if not active_pass:
             # Intent exists but is not yet paid; keep generic response without forcing cooldown escalation.
             if pending_intent:
                 await redis_cli.set(cooldown_key, "1", ex=30)
@@ -220,9 +261,7 @@ async def resend_magic_link(payload: MagicLinkRequest, request: Request):
     raw_token = secrets.token_urlsafe(32)
     token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
     redis_payload = json.dumps({
-        "email": email,
-        "plan": purchase["plan"],
-        "purchase_id": str(purchase["id"]),
+        "user_id": str(active_pass["user_id"]),
     })
     try:
         await redis_cli.set(f"magic:{token_hash}", redis_payload, ex=600)
@@ -292,10 +331,51 @@ async def login(
         if payload.email.lower() == "dilldrillteam@gmail.com":
             logger.info("🧪 [dilldrillteamtest] Bypassing webhook for test email. Pre-validating in Redis.")
             token_hash = hashlib.sha256(token.encode()).hexdigest()
+            async with service.db.begin() as conn:
+                user_row = await conn.execute(
+                    text(
+                        """
+                        INSERT INTO users (email, ab_cohort)
+                        VALUES (:email, CASE WHEN random() < 0.5 THEN 'A' ELSE 'B' END)
+                        ON CONFLICT (email) DO UPDATE SET updated_at = NOW(), last_login = NOW()
+                        RETURNING id
+                        """
+                    ),
+                    {"email": payload.email.lower()},
+                )
+                user_id = user_row.scalar()
+                pass_row = await conn.execute(
+                    text(
+                        """
+                        INSERT INTO user_passes (
+                            user_id,
+                            plan_code,
+                            provider_payment_id,
+                            amount_paid_cents,
+                            status,
+                            expires_at
+                        )
+                        VALUES (
+                            :user_id,
+                            '1_day_test_a',
+                            :provider_payment_id,
+                            499,
+                            'active',
+                            NOW() + INTERVAL '1 day'
+                        )
+                        ON CONFLICT (provider_payment_id) DO UPDATE
+                        SET updated_at = NOW()
+                        RETURNING id, user_id
+                        """
+                    ),
+                    {
+                        "user_id": user_id,
+                        "provider_payment_id": f"sim_backdoor_test_{int(time.time())}",
+                    },
+                )
+                pass_payload = pass_row.mappings().first()
             redis_payload = json.dumps({
-                "email": payload.email.lower(),
-                "plan": "1_day",
-                "purchase_id": "sim_backdoor_test"
+                "user_id": str(pass_payload["user_id"])
             })
             # Use the same Redis key structure as the webhook
             await service.redis.set(f"magic:{token_hash}", redis_payload, ex=1800)
@@ -357,35 +437,45 @@ async def magic_landing(
         # Parse the data safely stored during the webhook phase
         try:
             payload = json.loads(payload_str)
-            email = payload.get("email")
-            plan = payload.get("plan")
-            purchase_id = payload.get("purchase_id")
+            user_id = payload.get("user_id")
         except (json.JSONDecodeError, AttributeError) as e:
             logger.error(f"AUTH_MAGIC_PAYLOAD_PARSE_FAILED: {e}")
             return RedirectResponse(url=f"{app_origin}/?error=system_error&code=AUTH_MAGIC_INVALID_PAYLOAD", status_code=303)
             
-        if not email or not purchase_id:
-            logger.error(f"AUTH_MAGIC_INCOMPLETE_PAYLOAD: email={email}, purchase_id={purchase_id}")
+        if not user_id:
+            logger.error(f"AUTH_MAGIC_INCOMPLETE_PAYLOAD: user_id={user_id}")
             return RedirectResponse(url=f"{app_origin}/?error=system_error&code=AUTH_MAGIC_INCOMPLETE_DATA", status_code=303)
 
-        # 3. Activate Pass & Get Expiry (Updates DB to mark pass active starting NOW)
+        # 3. Ensure user exists and stamp login; pass checks happen in downstream guards.
         try:
             async with db.begin() as conn:
-                # Mark purchase as active and calculate expiry based on plan
-                days = 1 if plan == "1_day" else 3
-                expiry = datetime.now(timezone.utc) + timedelta(days=days)
-                
-                await conn.execute(
-                    text("UPDATE purchases SET status = 'active', activated_at = NOW(), expires_at = :exp WHERE id = :pid"),
-                    {"exp": expiry, "pid": purchase_id}
-                )
-                
-                # Ensure user exists and get ID
                 user_res = await conn.execute(
-                    text("INSERT INTO users (email) VALUES (:email) ON CONFLICT (email) DO UPDATE SET last_login = NOW() RETURNING id"),
-                    {"email": email}
+                    text(
+                        """
+                        SELECT id, email
+                        FROM users
+                        WHERE id = :user_id
+                        LIMIT 1
+                        """
+                    ),
+                    {"user_id": user_id}
                 )
-                user_id = user_res.scalar()
+                user_row = user_res.mappings().first()
+                if not user_row:
+                    logger.warning("AUTH_MAGIC_USER_MISMATCH")
+                    return RedirectResponse(url=f"{app_origin}/?error=invalid_link", status_code=303)
+                user_id = user_row["id"]
+                email = user_row["email"]
+                await conn.execute(
+                    text(
+                        """
+                        UPDATE users
+                        SET last_login = NOW(), updated_at = NOW()
+                        WHERE id = :user_id
+                        """
+                    ),
+                    {"user_id": user_id},
+                )
         except Exception as e:
             logger.error(f"AUTH_MAGIC_DB_ACTIVATION_FAILED: {e}")
             return RedirectResponse(url=f"{app_origin}/?error=system_error&code=AUTH_MAGIC_DB_ERROR", status_code=303)

@@ -81,18 +81,31 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
     intent_id = str(uuid.uuid4())
     try:
         async with db_engine.begin() as conn:
+            user_row = await conn.execute(
+                text(
+                    """
+                    INSERT INTO users (email, ab_cohort)
+                    VALUES (:email, CASE WHEN random() < 0.5 THEN 'A' ELSE 'B' END)
+                    ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email
+                    RETURNING id
+                    """
+                ),
+                {"email": payload.email.lower()},
+            )
+            user_id = user_row.scalar()
             await conn.execute(
                 text(
                     """
-                    INSERT INTO payment_intents (id, email, plan_code, amount_usd_cents, currency, status)
-                    VALUES (:id, :email, :plan_code, :amount_usd_cents, :currency, 'initiated')
+                    INSERT INTO payment_intents (id, user_id, plan_code, amount_cents, provider_intent_id, currency, status)
+                    VALUES (:id, :user_id, :plan_code, :amount_cents, :provider_intent_id, :currency, 'initiated')
                     """
                 ),
                 {
                     "id": intent_id,
-                    "email": payload.email.lower(),
+                    "user_id": user_id,
                     "plan_code": plan.code,
-                    "amount_usd_cents": plan.amount_usd_cents,
+                    "amount_cents": plan.amount_usd_cents,
+                    "provider_intent_id": intent_id,
                     "currency": plan.currency,
                 },
             )
@@ -109,13 +122,13 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
                 text(
                     """
                     UPDATE payment_intents
-                    SET status = 'pending', provider_event_id = :provider_event_id, updated_at = NOW()
+                    SET status = 'pending', provider_intent_id = :provider_intent_id, updated_at = NOW()
                     WHERE id = :id
                     """
                 ),
                 {
                     "id": intent_id,
-                    "provider_event_id": checkout_id,
+                    "provider_intent_id": checkout_id or intent_id,
                 },
             )
     except Exception:

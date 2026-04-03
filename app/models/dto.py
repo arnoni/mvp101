@@ -109,3 +109,6 @@ class StatusResponse(BaseModel):
     turnstile_required: bool
     checks_today: int
     tier: Optional[str] = None
+    active_plan_code: Optional[str] = None
+    daily_limit: Optional[int] = None
+    expires_at: Optional[int] = None

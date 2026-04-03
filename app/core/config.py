@@ -80,6 +80,7 @@ class Settings(BaseSettings):
     LEMON_SQUEEZY_API_KEY: Optional[str] = Field(None, description="Lemon Squeezy API Key")
     PADDLE_API_KEY: Optional[str] = Field(None, description="Paddle API Key")
     DODO_API_KEY: Optional[str] = Field(None, description="Dodo Payments API Key")
+    DODO_WEBHOOK_SECRET: Optional[str] = Field(None, description="Dodo webhook HMAC secret")
     
     # Quota (rolling windows, single-digit caps)
     QUOTA_FREE_ROLLING60_SOFT: int = 1
