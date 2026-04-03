@@ -115,7 +115,7 @@ async def dodo_webhook(request: Request, services: dict = Depends(get_services))
                     return {"status": "ignored", "reason": "amount_currency_mismatch"}
 
                 duration_res = await conn.execute(
-                    text("SELECT duration_days FROM billing_plans WHERE code = :code LIMIT 1"),
+                    text("SELECT duration_days, daily_limit FROM billing_plans WHERE code = :code LIMIT 1"),
                     {"code": intent["plan_code"]},
                 )
                 duration_row = duration_res.mappings().first()
