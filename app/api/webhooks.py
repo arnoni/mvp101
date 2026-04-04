@@ -84,7 +84,7 @@ async def dodo_webhook(request: Request, services: dict = Depends(get_services))
 
         try:
             async with db.begin() as conn:
-                already = await conn.execute(text("SELECT 1 FROM processed_events WHERE event_id = :eid"), {"eid": event.id})
+                already = await conn.execute(text("SELECT 1 FROM webhook_events WHERE event_id = :eid"), {"eid": event.id})
                 if already.fetchone():
                     return {"status": "ok"}
 
@@ -181,7 +181,7 @@ async def dodo_webhook(request: Request, services: dict = Depends(get_services))
                     ),
                     {"provider_intent_id": event.id, "intent_id": event.intent_id},
                 )
-                await conn.execute(text("INSERT INTO processed_events (event_id) VALUES (:eid)"), {"eid": event.id})
+                await conn.execute(text("INSERT INTO webhook_events (event_id) VALUES (:eid)"), {"eid": event.id})
 
                 tier = TierStatus.PASS_3_DAY if duration_days >= 3 else TierStatus.PASS_1_DAY
                 expires_at_ts = int(issued_pass["expires_at"].timestamp()) if issued_pass.get("expires_at") else None
@@ -201,7 +201,13 @@ async def dodo_webhook(request: Request, services: dict = Depends(get_services))
                     "user_id": str(issued_pass["user_id"]),
                 }
             )
-            await redis.set(f"magic:{token_hash}", redis_payload, ex=1800)
+            print(f"About to call redis.set() for magic link: {token_hash[:8]}")
+            import asyncio
+            await asyncio.wait_for(
+                redis.set(f"magic:{token_hash}", redis_payload, ex=1800),
+                timeout=10,
+            )
+            print(f"redis.set() finished for magic link: {token_hash[:8]}")
             app_origin = settings.APP_ORIGIN or "http://localhost:8000"
             magic_url = f"{app_origin}/api/auth/magic?token={raw_token}"
             await email_service.send_magic_link(email=event.email, magic_link=magic_url, expire_minutes=30)

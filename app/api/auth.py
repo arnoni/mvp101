@@ -487,7 +487,6 @@ async def magic_landing(
         session_data = {
             "user_id": user_id,
             "email": email,
-            "plan": plan,
             "auth_time": int(time.time()),
             "csrf_token": secrets.token_hex(16)
         }

@@ -179,4 +179,10 @@ class EntitlementService:
             "expires_at": expires_at,
             "verified_at": int(time.time()),
         }
-        await redis_cli.set(key, json.dumps(payload), ex=ttl_seconds)
+        print(f"About to call redis.set() for key: {key}")
+        import asyncio
+        await asyncio.wait_for(
+            redis_cli.set(key, json.dumps(payload), ex=ttl_seconds),
+            timeout=10,
+        )
+        print(f"redis.set() finished for key: {key}")
