@@ -195,7 +195,7 @@ def discover_sql_artifacts(conn: psycopg.Connection, tracker: CleanupTracker) ->
             tracker.provider_payment_ids.update(r[0] for r in cur.fetchall())
 
         for event_id in list(tracker.webhook_event_ids):
-            cur.execute("SELECT event_id FROM webhook_events WHERE event_id = %s", (event_id,))
+            cur.execute("SELECT event_id FROM webhook_events WHERE provider = 'dodo' AND event_id = %s", (event_id,))
             if cur.fetchone():
                 tracker.webhook_event_ids.add(event_id)
 
@@ -212,7 +212,7 @@ def cleanup_sql(conn: psycopg.Connection, tracker: CleanupTracker, dry_run: bool
             if tracker.webhook_event_ids:
                 ids = tuple(tracker.webhook_event_ids)
                 if not dry_run:
-                    cur.execute("DELETE FROM webhook_events WHERE event_id = ANY(%s)", (list(ids),))
+                    cur.execute("DELETE FROM webhook_events WHERE provider = 'dodo' AND event_id = ANY(%s)", (list(ids),))
                 tracker.sql_actions.append(f"webhook_events event_ids={list(ids)}")
 
             if tracker.provider_payment_ids:

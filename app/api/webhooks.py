@@ -84,7 +84,10 @@ async def dodo_webhook(request: Request, services: dict = Depends(get_services))
 
         try:
             async with db.begin() as conn:
-                already = await conn.execute(text("SELECT 1 FROM webhook_events WHERE event_id = :eid"), {"eid": event.id})
+                already = await conn.execute(
+                    text("SELECT 1 FROM webhook_events WHERE provider = 'dodo' AND event_id = :eid"),
+                    {"eid": event.id}
+                )
                 if already.fetchone():
                     return {"status": "ok"}
 
@@ -182,8 +185,9 @@ async def dodo_webhook(request: Request, services: dict = Depends(get_services))
                     {"provider_intent_id": event.id, "intent_id": event.intent_id},
                 )
                 await conn.execute(
-                    text("INSERT INTO webhook_events (provider, event_id, payload) VALUES ('dodo', :eid, :payload)"),
+                    text("INSERT INTO webhook_events (provider, event_id, payload) VALUES (:provider, :eid, :payload) ON CONFLICT DO NOTHING"),
                     {
+                        "provider": "dodo",
                         "eid": event.id,
                         "payload": raw_body.decode("utf-8")
                     }
