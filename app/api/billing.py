@@ -66,6 +66,13 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
     await protect_mutation(request)
     if not payload.turnstile_token:
         raise HTTPException(status_code=400, detail="Turnstile token required")
+    
+    # Check for Smoke Test Bypass
+    is_smoke_test = (
+        settings.SMOKE_TURNSTILE_TOKEN 
+        and payload.turnstile_token == settings.SMOKE_TURNSTILE_TOKEN
+    )
+    
     is_valid_turnstile = await verify_turnstile(payload.turnstile_token, client_ip=get_client_ip(request))
     if not is_valid_turnstile:
         raise HTTPException(status_code=403, detail="Turnstile verification failed")
@@ -93,11 +100,16 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
                 {"email": payload.email.lower()},
             )
             user_id = user_row.scalar()
+            
+            provider_intent_id = intent_id
+            if is_smoke_test:
+                provider_intent_id = f"smoke_intent_{uuid.uuid4().hex[:8]}"
+
             await conn.execute(
                 text(
                     """
                     INSERT INTO payment_intents (id, user_id, plan_code, amount_cents, provider_intent_id, currency, status)
-                    VALUES (:id, :user_id, :plan_code, :amount_cents, :provider_intent_id, :currency, 'initiated')
+                    VALUES (:id, :user_id, :plan_code, :amount_cents, :provider_intent_id, :currency, :status)
                     """
                 ),
                 {
@@ -105,9 +117,17 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
                     "user_id": user_id,
                     "plan_code": plan.code,
                     "amount_cents": plan.amount_usd_cents,
-                    "provider_intent_id": intent_id,
+                    "provider_intent_id": provider_intent_id,
                     "currency": plan.currency,
+                    "status": "pending" if is_smoke_test else "initiated"
                 },
+            )
+
+        if is_smoke_test:
+            # SMOKE BYPASS: Skip Dodo API network call
+            return UnlockIntentResponse(
+                checkout_url="https://dodo.mock/checkout",
+                intent_id=intent_id
             )
 
         checkout_url, checkout_id = await _create_dodo_checkout(
