@@ -181,7 +181,13 @@ async def dodo_webhook(request: Request, services: dict = Depends(get_services))
                     ),
                     {"provider_intent_id": event.id, "intent_id": event.intent_id},
                 )
-                await conn.execute(text("INSERT INTO webhook_events (event_id) VALUES (:eid)"), {"eid": event.id})
+                await conn.execute(
+                    text("INSERT INTO webhook_events (provider, event_id, payload) VALUES ('dodo', :eid, :payload)"),
+                    {
+                        "eid": event.id,
+                        "payload": raw_body.decode("utf-8")
+                    }
+                )
 
                 tier = TierStatus.PASS_3_DAY if duration_days >= 3 else TierStatus.PASS_1_DAY
                 expires_at_ts = int(issued_pass["expires_at"].timestamp()) if issued_pass.get("expires_at") else None
