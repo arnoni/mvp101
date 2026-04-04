@@ -42,6 +42,11 @@ async def verify_turnstile(token: str, anon_id: str | None = None, client_ip: st
     Verifies the Cloudflare Turnstile token against the Cloudflare API.
     Implements TSD Section 6: Turnstile verification.
     """
+    # 0. SMOKE TEST BYPASS: If token matches secret smoke token, skip verification
+    if settings.SMOKE_TURNSTILE_TOKEN and token == settings.SMOKE_TURNSTILE_TOKEN:
+        logger.info("SMOKE TEST BYPASS: Valid smoke token detected. Skipping Turnstile verification.")
+        return True
+
     cache_key = None
     if anon_id:
         cache_key = f"turnstile_ok:{anon_id}"

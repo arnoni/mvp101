@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     REDIS_URL: Optional[str] = Field(None, description="Redis URL for quota/session enforcement")
     UPSTASH_REDIS_REST_URL: Optional[str] = Field(None, description="Upstash Redis REST URL")
     UPSTASH_REDIS_REST_TOKEN: Optional[str] = Field(None, description="Upstash Redis REST Token")
+    SMOKE_TURNSTILE_TOKEN: Optional[str] = Field(None, description="Secure bypass token for Turnstile during smoke tests")
     ENV: str = Field("development", description="Application environment (e.g., production, development)")
     SENTRY_DSN: Optional[str] = Field(None, description="Sentry DSN for error reporting")
     RELEASE: Optional[str] = Field(None, description="Application release version for Sentry")
