@@ -77,9 +77,14 @@ def env_bool(name: str, default: bool) -> bool:
 
 
 def build_config() -> SmokeConfig:
-    base_url = os.getenv("APP_ORIGIN", DEFAULT_BASE_URL).strip().rstrip("/")
-    if not base_url.startswith("https://"):
-        raise RuntimeError(f"APP_ORIGIN must be HTTPS. Got: {base_url}")
+    # Prioritize APP_BASE_URL, then fall back to APP_ORIGIN, then DEFAULT_BASE_URL
+    base_url_raw = os.getenv("APP_BASE_URL") or os.getenv("APP_ORIGIN") or DEFAULT_BASE_URL
+    
+    # Sanitize: if it's a comma-separated list (common in Vercel APP_ORIGIN), take the first one
+    base_url = base_url_raw.split(",")[0].strip().rstrip("/")
+    
+    if not base_url.startswith("https://") and "localhost" not in base_url:
+        raise RuntimeError(f"APP_BASE_URL/APP_ORIGIN must be HTTPS or localhost. Got: {base_url}")
 
     return SmokeConfig(
         base_url=base_url,
@@ -103,7 +108,7 @@ def require_env(name: str) -> str:
 
 def print_startup_summary(cfg: SmokeConfig, tracker: CleanupTracker) -> None:
     print("\n=== Production Smoke Test Startup Summary ===")
-    print(f"Target APP_ORIGIN: {cfg.base_url}")
+    print(f"Target APP_BASE_URL: {cfg.base_url}")
     print("Target environment: production app over live HTTPS")
     print(f"ALLOW_PRODUCTION_MUTATIONS: {cfg.allow_mutations}")
     print(f"ALLOW_DODO_TEST_MODE_ON_PRODUCTION: {cfg.allow_dodo_test_mode_on_production}")
