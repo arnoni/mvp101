@@ -185,7 +185,7 @@ async def dodo_webhook(request: Request, services: dict = Depends(get_services))
                     {"provider_intent_id": event.id, "intent_id": event.intent_id},
                 )
                 await conn.execute(
-                    text("INSERT INTO webhook_events (provider, event_id, payload) VALUES (:provider, :eid, :payload) ON CONFLICT DO NOTHING"),
+                    text("INSERT INTO webhook_events (provider, event_id, status, payload) VALUES (:provider, :eid, 'processed', :payload) ON CONFLICT DO NOTHING"),
                     {
                         "provider": "dodo",
                         "eid": event.id,
