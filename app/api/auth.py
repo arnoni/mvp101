@@ -428,7 +428,7 @@ async def magic_landing(
             payload_str = await redis.getdel(f"magic:{token_hash}")
         except Exception as e:
             logger.error(f"AUTH_MAGIC_REDIS_GETDEL_FAILED: {e}")
-            return RedirectResponse(url=f"{app_origin}/?error=system_error&code=AUTH_MAGIC_REDIS_ERROR", status_code=303)
+            return RedirectResponse(url=f"{app_origin}/?error=system_error&code=AUTH_MAGIC_ERROR", status_code=303)
         
         if not payload_str:
             logger.warning(f"AUTH_MAGIC_INVALID_LINK: Attempted use of invalid, expired, or already-consumed magic link. Hash: {token_hash[:8]}")

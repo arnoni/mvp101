@@ -143,29 +143,40 @@ def request_json(
         "Origin": cfg.app_origin,
         "Referer": cfg.app_referer,
         "Accept": "application/json, text/plain;q=0.9, */*;q=0.8",
+        "User-Agent": "DillDrillSmokeTest/1.0",
     }
     if extra_headers:
         headers.update(extra_headers)
 
-    response = client.request(
-        method=method,
-        url=full_url,
-        json=json_body,
-        content=data,
-        headers=headers,
-        timeout=cfg.timeout_seconds,
-        follow_redirects=False,
-    )
+    start_time = time.time()
+    try:
+        response = client.request(
+            method=method,
+            url=full_url,
+            json=json_body,
+            content=data,
+            headers=headers,
+            timeout=cfg.timeout_seconds,
+            follow_redirects=False,
+        )
+        duration = time.time() - start_time
 
-    body: dict[str, Any] | None = None
-    content_type = response.headers.get("content-type", "")
-    if "application/json" in content_type:
-        try:
-            body = response.json()
-        except Exception:
-            body = None
+        body: dict[str, Any] | None = None
+        content_type = response.headers.get("content-type", "")
+        if "application/json" in content_type:
+            try:
+                body = response.json()
+            except Exception:
+                body = None
 
-    return response, body
+        print(f"DEBUG: {method} {full_url} -> {response.status_code} ({duration:.2f}s)")
+        if response.status_code >= 400:
+            print(f"DEBUG: Error body: {response.text[:500]}")
+
+        return response, body
+    except Exception as exc:
+        print(f"[FAIL] Network request {method} {full_url} crashed: {exc}")
+        raise
 
 
 def db_conn() -> psycopg.Connection:

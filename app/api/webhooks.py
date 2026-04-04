@@ -89,9 +89,11 @@ async def dodo_webhook(request: Request, services: dict = Depends(get_services))
                     {"eid": event.id}
                 )
                 if already.fetchone():
+                    logger.info(f"WEBHOOK_DODO_DUPLICATE: Event {event.id} already processed.")
                     return {"status": "ok"}
 
                 if not event.intent_id:
+                    logger.warning(f"WEBHOOK_DODO_MISSING_INTENT: Event {event.id} has no intent_id in metadata.")
                     return {"status": "ignored", "reason": "missing_intent"}
 
                 intent_res = await conn.execute(
@@ -108,13 +110,16 @@ async def dodo_webhook(request: Request, services: dict = Depends(get_services))
                 )
                 intent = intent_res.mappings().first()
                 if not intent:
+                    logger.error(f"WEBHOOK_DODO_UNKNOWN_INTENT: Intent {event.intent_id} not found in DB.")
                     return {"status": "ignored", "reason": "unknown_intent"}
                 if str(intent["status"]).lower() == "paid":
+                    logger.info(f"WEBHOOK_DODO_ALREADY_PAID: Intent {event.intent_id} is already marked as paid.")
                     return {"status": "ok"}
 
                 webhook_amount = int(float(str(event.amount_cents)) * 100) if "." in str(event.amount_cents) else int(event.amount_cents)
                 webhook_currency = str(event.currency or "USD").upper()
                 if webhook_amount != int(intent["amount_cents"]) or webhook_currency != str(intent["currency"]).upper():
+                    logger.error(f"WEBHOOK_DODO_MISMATCH: Amount/Currency mismatch. Webhook: {webhook_amount} {webhook_currency}, Intent: {intent['amount_cents']} {intent['currency']}")
                     return {"status": "ignored", "reason": "amount_currency_mismatch"}
 
                 duration_res = await conn.execute(
@@ -123,56 +128,61 @@ async def dodo_webhook(request: Request, services: dict = Depends(get_services))
                 )
                 duration_row = duration_res.mappings().first()
                 if not duration_row:
+                    logger.error(f"WEBHOOK_DODO_UNKNOWN_PLAN: Plan {intent['plan_code']} not found in billing_plans.")
                     return {"status": "ignored", "reason": "unknown_plan"}
                 duration_days = int(duration_row["duration_days"])
                 daily_limit = int(duration_row["daily_limit"])
 
-                issued_pass_res = await conn.execute(
-                    text(
-                        """
-                        INSERT INTO user_passes (
-                            user_id,
-                            plan_code,
-                            provider_payment_id,
-                            amount_paid_cents,
-                            status,
-                            expires_at
-                        )
-                        VALUES (
-                            :user_id,
-                            :plan_code,
-                            :provider_payment_id,
-                            :amount_paid_cents,
-                            'active',
-                            (
-                                GREATEST(
-                                    COALESCE(
-                                        (
-                                            SELECT MAX(expires_at)
-                                            FROM user_passes
-                                            WHERE user_id = :user_id
-                                              AND status = 'active'
+                try:
+                    issued_pass_res = await conn.execute(
+                        text(
+                            """
+                            INSERT INTO user_passes (
+                                user_id,
+                                plan_code,
+                                provider_payment_id,
+                                amount_paid_cents,
+                                status,
+                                expires_at
+                            )
+                            VALUES (
+                                :user_id,
+                                :plan_code,
+                                :provider_payment_id,
+                                :amount_paid_cents,
+                                'active',
+                                (
+                                    GREATEST(
+                                        COALESCE(
+                                            (
+                                                SELECT MAX(expires_at)
+                                                FROM user_passes
+                                                WHERE user_id = :user_id
+                                                  AND status = 'active'
+                                            ),
+                                            NOW()
                                         ),
                                         NOW()
-                                    ),
-                                    NOW()
-                                ) + (:duration_days * INTERVAL '1 day')
+                                    ) + (:duration_days * INTERVAL '1 day')
+                                )
                             )
-                        )
-                        ON CONFLICT (provider_payment_id) DO UPDATE
-                        SET updated_at = NOW()
-                        RETURNING id, plan_code, user_id, expires_at
-                        """
-                    ),
-                    {
-                        "user_id": intent["user_id"],
-                        "plan_code": intent["plan_code"],
-                        "provider_payment_id": event.id,
-                        "amount_paid_cents": int(intent["amount_cents"]),
-                        "duration_days": duration_days,
-                    },
-                )
-                issued_pass = issued_pass_res.mappings().first()
+                            ON CONFLICT (provider_payment_id) DO UPDATE
+                            SET updated_at = NOW()
+                            RETURNING id, plan_code, user_id, expires_at
+                            """
+                        ),
+                        {
+                            "user_id": intent["user_id"],
+                            "plan_code": intent["plan_code"],
+                            "provider_payment_id": event.id,
+                            "amount_paid_cents": int(intent["amount_cents"]),
+                            "duration_days": duration_days,
+                        },
+                    )
+                    issued_pass = issued_pass_res.mappings().first()
+                except Exception as db_exc:
+                    logger.error(f"WEBHOOK_DODO_PASS_INSERT_FAILED: {db_exc}")
+                    raise
 
                 await conn.execute(
                     text(
@@ -195,14 +205,18 @@ async def dodo_webhook(request: Request, services: dict = Depends(get_services))
 
                 tier = TierStatus.PASS_3_DAY if duration_days >= 3 else TierStatus.PASS_1_DAY
                 expires_at_ts = int(issued_pass["expires_at"].timestamp()) if issued_pass.get("expires_at") else None
-                await EntitlementService.cache_entitlement(
-                    user_id=str(issued_pass["user_id"]),
-                    tier=tier,
-                    redis_cli=redis,
-                    active_plan_code=str(issued_pass["plan_code"]),
-                    daily_limit=daily_limit,
-                    expires_at=expires_at_ts,
-                )
+                try:
+                    await EntitlementService.cache_entitlement(
+                        user_id=str(issued_pass["user_id"]),
+                        tier=tier,
+                        redis_cli=redis,
+                        active_plan_code=str(issued_pass["plan_code"]),
+                        daily_limit=daily_limit,
+                        expires_at=expires_at_ts,
+                    )
+                except Exception as redis_exc:
+                    logger.warning(f"WEBHOOK_DODO_CACHE_FAILED: {redis_exc}")
+                    # Don't fail the whole transaction for a cache write failure
 
             raw_token = secrets.token_urlsafe(32)
             token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
@@ -213,14 +227,27 @@ async def dodo_webhook(request: Request, services: dict = Depends(get_services))
             )
             print(f"About to call redis.set() for magic link: {token_hash[:8]}")
             import asyncio
-            await asyncio.wait_for(
-                redis.set(f"magic:{token_hash}", redis_payload, ex=1800),
-                timeout=10,
-            )
-            print(f"redis.set() finished for magic link: {token_hash[:8]}")
+            try:
+                await asyncio.wait_for(
+                    redis.set(f"magic:{token_hash}", redis_payload, ex=1800),
+                    timeout=10,
+                )
+                print(f"redis.set() finished for magic link: {token_hash[:8]}")
+            except asyncio.TimeoutError:
+                logger.error(f"WEBHOOK_DODO_REDIS_TIMEOUT: Redis set timed out for token {token_hash[:8]}")
+                raise
+            except Exception as redis_exc:
+                logger.error(f"WEBHOOK_DODO_REDIS_ERROR: {redis_exc}")
+                raise
+
             app_origin = settings.APP_ORIGIN or "http://localhost:8000"
             magic_url = f"{app_origin}/api/auth/magic?token={raw_token}"
-            await email_service.send_magic_link(email=event.email, magic_link=magic_url, expire_minutes=30)
+            try:
+                await email_service.send_magic_link(email=event.email, magic_link=magic_url, expire_minutes=30)
+            except Exception as email_exc:
+                logger.error(f"WEBHOOK_DODO_EMAIL_FAILED: Failed to send magic link to {event.email}: {email_exc}")
+                # We still return 200 to Dodo because the payment is recorded and pass is active.
+                # User might need to use 'resend magic link' if it fails here.
         finally:
             await redis.delete(lock_key)
 
