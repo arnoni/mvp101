@@ -119,14 +119,14 @@ async def resend_magic_link(payload: MagicLinkRequest, request: Request):
             FROM payment_intents pi
             JOIN users u ON u.id = pi.user_id
             WHERE u.email = :email
-              AND status IN ('initiated', 'pending')
+              AND pi.status IN ('initiated', 'pending')
         """
         params = {"email": email}
         if payload.intent_id:
-            pending_intent_sql += " AND id = :intent_id ORDER BY created_at DESC LIMIT 1"
+            pending_intent_sql += " AND pi.id = :intent_id ORDER BY pi.created_at DESC LIMIT 1"
             params["intent_id"] = payload.intent_id
         else:
-            pending_intent_sql += " ORDER BY created_at DESC LIMIT 1"
+            pending_intent_sql += " ORDER BY pi.created_at DESC LIMIT 1"
         pending_intent_result = await conn.execute(text(pending_intent_sql), params)
         pending_intent = pending_intent_result.mappings().first()
         if payload.intent_id and not pending_intent:
