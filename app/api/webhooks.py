@@ -11,6 +11,8 @@ from app.core.config import settings
 from app.services.entitlement_service import EntitlementService, TierStatus
 from email_service import EmailService
 
+from app.utils.url import resolve_checkout_base
+
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
@@ -240,7 +242,7 @@ async def dodo_webhook(request: Request, services: dict = Depends(get_services))
                 logger.error(f"WEBHOOK_DODO_REDIS_ERROR: {redis_exc}")
                 raise
 
-            app_origin = settings.APP_ORIGIN or "http://localhost:8000"
+            app_origin = resolve_checkout_base(settings.APP_ORIGIN).rstrip("/")
             magic_url = f"{app_origin}/api/auth/magic?token={raw_token}"
             try:
                 await email_service.send_magic_link(email=event.email, magic_link=magic_url, expire_minutes=30)

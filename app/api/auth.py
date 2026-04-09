@@ -414,7 +414,7 @@ async def magic_landing(
     """
     Consumes the magic link clicked from the user's email.
     """
-    app_origin = settings.APP_ORIGIN or "http://localhost:8000"
+    app_origin = resolve_checkout_base(settings.APP_ORIGIN).rstrip("/")
     redis = service.redis
     db = service.db
     
@@ -428,7 +428,7 @@ async def magic_landing(
             payload_str = await redis.getdel(f"magic:{token_hash}")
         except Exception as e:
             logger.error(f"AUTH_MAGIC_REDIS_GETDEL_FAILED: {e}")
-            return RedirectResponse(url=f"{app_origin}/?error=system_error&code=AUTH_MAGIC_ERROR", status_code=303)
+            return RedirectResponse(url=f"{app_origin}/?error=system_error&code=AUTH_MAGIC_REDIS_ERROR&msg={str(e)[:50]}", status_code=303)
         
         if not payload_str:
             logger.warning(f"AUTH_MAGIC_INVALID_LINK: Attempted use of invalid, expired, or already-consumed magic link. Hash: {token_hash[:8]}")
@@ -437,13 +437,13 @@ async def magic_landing(
         # Parse the data safely stored during the webhook phase
         try:
             payload = json.loads(payload_str)
-            user_id = payload.get("user_id")
+            user_id_from_token = payload.get("user_id")
         except (json.JSONDecodeError, AttributeError) as e:
             logger.error(f"AUTH_MAGIC_PAYLOAD_PARSE_FAILED: {e}")
             return RedirectResponse(url=f"{app_origin}/?error=system_error&code=AUTH_MAGIC_INVALID_PAYLOAD", status_code=303)
             
-        if not user_id:
-            logger.error(f"AUTH_MAGIC_INCOMPLETE_PAYLOAD: user_id={user_id}")
+        if not user_id_from_token:
+            logger.error(f"AUTH_MAGIC_INCOMPLETE_PAYLOAD: user_id={user_id_from_token}")
             return RedirectResponse(url=f"{app_origin}/?error=system_error&code=AUTH_MAGIC_INCOMPLETE_DATA", status_code=303)
 
         # 3. Ensure user exists and stamp login; pass checks happen in downstream guards.
@@ -458,14 +458,17 @@ async def magic_landing(
                         LIMIT 1
                         """
                     ),
-                    {"user_id": user_id}
+                    {"user_id": user_id_from_token}
                 )
                 user_row = user_res.mappings().first()
                 if not user_row:
-                    logger.warning("AUTH_MAGIC_USER_MISMATCH")
+                    logger.warning(f"AUTH_MAGIC_USER_MISMATCH: User {user_id_from_token} not found")
                     return RedirectResponse(url=f"{app_origin}/?error=invalid_link", status_code=303)
-                user_id = user_row["id"]
+                
+                # Crucial: Ensure user_id is a string for JSON serialization later
+                user_id = str(user_row["id"])
                 email = user_row["email"]
+                
                 await conn.execute(
                     text(
                         """
@@ -478,14 +481,14 @@ async def magic_landing(
                 )
         except Exception as e:
             logger.error(f"AUTH_MAGIC_DB_ACTIVATION_FAILED: {e}")
-            return RedirectResponse(url=f"{app_origin}/?error=system_error&code=AUTH_MAGIC_DB_ERROR", status_code=303)
+            return RedirectResponse(url=f"{app_origin}/?error=system_error&code=AUTH_MAGIC_DB_ERROR&msg={str(e)[:50]}", status_code=303)
 
         # 4. Create durable session identifier for the browser
         session_id = secrets.token_urlsafe(32)
         session_ttl = 86400 * 3  # 3 days
         
         session_data = {
-            "user_id": user_id,
+            "user_id": user_id, # This is now definitely a string
             "email": email,
             "auth_time": int(time.time()),
             "csrf_token": secrets.token_hex(16)
@@ -493,10 +496,14 @@ async def magic_landing(
         
         from app.core.keys import KeyBuilder
         try:
-            await redis.set(KeyBuilder.session(session_id), json.dumps(session_data), ex=session_ttl)
+            payload_json = json.dumps(session_data)
+            await redis.set(KeyBuilder.session(session_id), payload_json, ex=session_ttl)
+        except TypeError as te:
+            logger.error(f"AUTH_MAGIC_SESSION_SERIALIZATION_FAILED: {te} | data={session_data}")
+            return RedirectResponse(url=f"{app_origin}/?error=system_error&code=AUTH_MAGIC_SERIALIZATION_ERROR", status_code=303)
         except Exception as e:
             logger.error(f"AUTH_MAGIC_SESSION_STORE_FAILED: {e}")
-            return RedirectResponse(url=f"{app_origin}/?error=system_error&code=AUTH_MAGIC_SESSION_ERROR", status_code=303)
+            return RedirectResponse(url=f"{app_origin}/?error=system_error&code=AUTH_MAGIC_SESSION_ERROR&msg={str(e)[:50]}", status_code=303)
 
         # 5. Redirect to UI with success state and secure HttpOnly cookie
         redirect_response = RedirectResponse(url=f"{app_origin}/?magic_success=1", status_code=303)

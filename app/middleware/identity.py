@@ -47,7 +47,8 @@ class IdentityMiddleware(BaseHTTPMiddleware):
                         
                         return await call_next(request)
 
-                except Exception:
+                except Exception as e:
+                    logger.error(f"IDENTITY_SESSION_CORRUPT: {e}", session_id=session_cookie)
                     pass # Corrupt session, fall through
 
         # 2. Try to resolve Anon (Free)

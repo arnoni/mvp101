@@ -17,7 +17,7 @@ class QuotaRepository:
 
     async def get_usage(self, key: str) -> int:
         if not self.redis_client:
-            raise RuntimeError("redis_unavailable")
+            raise RuntimeError("QUOTA_REDIS_UNAVAILABLE")
         try:
             val = await self.redis_client.get(key)
             if val is None:
@@ -25,23 +25,23 @@ class QuotaRepository:
             try:
                 return int(val)
             except Exception:
-                logger.error("quota_parse_error", key=key, raw_value=str(val))
+                logger.error("QUOTA_PARSE_ERROR", key=key, raw_value=str(val))
                 return 0
         except Exception as e:
-            logger.error("quota_get_usage_error", error=str(e), key=key)
-            raise RuntimeError("redis_unavailable")
+            logger.error("QUOTA_GET_USAGE_ERROR", error=str(e), key=key)
+            raise RuntimeError("QUOTA_REDIS_UNAVAILABLE")
 
     async def increment(self, key: str, ttl: int = 86400) -> int:
         if not self.redis_client:
-            raise RuntimeError("redis_unavailable")
+            raise RuntimeError("QUOTA_REDIS_UNAVAILABLE")
         try:
             val = await self.redis_client.incr(key)
             if val == 1:
                 await self.redis_client.expire(key, ttl)
             return int(val) if val is not None else 1
         except Exception as e:
-            logger.error("quota_increment_error", error=str(e), key=key)
-            raise RuntimeError("redis_unavailable")
+            logger.error("QUOTA_INCREMENT_ERROR", error=str(e), key=key)
+            raise RuntimeError("QUOTA_REDIS_UNAVAILABLE")
 
     async def check_available(self, key: str, max_limit: int) -> bool:
         usage = await self.get_usage(key)
@@ -53,7 +53,7 @@ class QuotaRepository:
         Uses a Lua script to ensure racing requests cannot exceed the limit.
         """
         if not self.redis_client:
-            raise RuntimeError("redis_unavailable")
+            raise RuntimeError("QUOTA_REDIS_UNAVAILABLE")
         script = """
         local key = KEYS[1]
         local limit = tonumber(ARGV[1])
@@ -74,11 +74,11 @@ class QuotaRepository:
             # upstash_redis eval: eval(script, keys, args)
             result = await self.redis_client.eval(script, [key], [daily_limit, ttl])
             if not result or not isinstance(result, list):
-                logger.error("quota_lua_invalid_result", result=result, key=key)
-                raise RuntimeError("redis_unavailable")
+                logger.error("QUOTA_LUA_INVALID_RESULT", result=result, key=key)
+                raise RuntimeError("QUOTA_REDIS_UNAVAILABLE")
             allowed = bool(result[0] == 1)
             remaining = int(result[1])
             return allowed, remaining
         except Exception as e:
-            logger.error("quota_lua_error", error=str(e), key=key)
-            raise RuntimeError("redis_unavailable")
+            logger.error("QUOTA_LUA_ERROR", error=str(e), key=key)
+            raise RuntimeError("QUOTA_REDIS_UNAVAILABLE")

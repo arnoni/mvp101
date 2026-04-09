@@ -75,10 +75,13 @@ class EntitlementService:
                         is_stale=is_stale,
                         raw_data=payload,
                     )
-            except Exception:
+            except Exception as e:
+                logger.error(f"ENTITLEMENT_REDIS_GET_FAILED: {e}", user_id=user_id)
+                # Fall through to DB
                 pass
 
         if not db_engine:
+            logger.warning("ENTITLEMENT_DB_ENGINE_MISSING", user_id=user_id)
             return EntitlementResult(tier=TierStatus.FREE, daily_limit=3, is_stale=True)
 
         try:
@@ -153,7 +156,8 @@ class EntitlementService:
                     ttl_seconds=ttl_seconds,
                 )
                 return result
-        except Exception:
+        except Exception as e:
+            logger.error(f"ENTITLEMENT_DB_QUERY_FAILED: {e}", user_id=user_id)
             return EntitlementResult(tier=TierStatus.FREE, daily_limit=3, is_stale=True)
 
     @staticmethod
@@ -167,7 +171,11 @@ class EntitlementService:
         expires_at: Optional[int],
         ttl_seconds: int = 600,
     ):
-        if not user_id or not redis_cli:
+        if not user_id:
+            logger.error("ENTITLEMENT_CACHE_MISSING_USER_ID")
+            return
+        if not redis_cli:
+            logger.debug("ENTITLEMENT_CACHE_REDIS_UNAVAILABLE", user_id=user_id)
             return
 
         key = KeyBuilder.entitlement_status(user_id)
@@ -181,8 +189,13 @@ class EntitlementService:
         }
         print(f"About to call redis.set() for key: {key}")
         import asyncio
-        await asyncio.wait_for(
-            redis_cli.set(key, json.dumps(payload), ex=ttl_seconds),
-            timeout=10,
-        )
-        print(f"redis.set() finished for key: {key}")
+        try:
+            await asyncio.wait_for(
+                redis_cli.set(key, json.dumps(payload), ex=ttl_seconds),
+                timeout=10,
+            )
+            print(f"redis.set() finished for key: {key}")
+        except asyncio.TimeoutError:
+            logger.error(f"ENTITLEMENT_CACHE_REDIS_TIMEOUT: {key}")
+        except Exception as e:
+            logger.error(f"ENTITLEMENT_CACHE_REDIS_ERROR: {e}", key=key)
