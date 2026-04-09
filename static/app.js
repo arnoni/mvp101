@@ -41,11 +41,50 @@ document.addEventListener("DOMContentLoaded", () => {
     awaitingEmailDisplay: document.getElementById("awaitingEmailDisplay")
   };
 
-  // Success Toast Check (from redirect)
-  if (new URLSearchParams(window.location.search).get("magic_success")) {
+  // Success redirect handling: force a server round-trip so template tier data is refreshed.
+  const urlParams = new URLSearchParams(window.location.search);
+  if (urlParams.get("magic_success") === "1") {
+    window.location.replace(`${window.location.pathname}?activated=1`);
+    return;
+  }
+
+  if (urlParams.get("activated") === "1") {
     state.access.demandAllowed = true;
     window.history.replaceState({}, document.title, window.location.pathname);
-    alert("Pass Activated Successfully! Demand is unlocked."); // Replace with sleek toast in prod
+    if (window.ModalSystem?.notify) {
+      window.ModalSystem.notify("🎉 Pass Activated! You now have full access.", "success");
+    } else {
+      const toast = document.createElement("div");
+      toast.textContent = "🎉 Pass Activated! You now have full access.";
+      toast.setAttribute("role", "status");
+      toast.setAttribute("aria-live", "polite");
+      Object.assign(toast.style, {
+        position: "fixed",
+        top: "16px",
+        left: "50%",
+        transform: "translateX(-50%)",
+        zIndex: "9999",
+        maxWidth: "min(92vw, 560px)",
+        background: "rgba(10, 25, 47, 0.96)",
+        color: "#ecf2ff",
+        border: "1px solid rgba(112, 169, 255, 0.35)",
+        borderRadius: "12px",
+        padding: "12px 16px",
+        boxShadow: "0 10px 30px rgba(0, 0, 0, 0.35)",
+        fontSize: "15px",
+        fontWeight: "600",
+        opacity: "0",
+        transition: "opacity 220ms ease"
+      });
+      document.body.appendChild(toast);
+      requestAnimationFrame(() => {
+        toast.style.opacity = "1";
+      });
+      window.setTimeout(() => {
+        toast.style.opacity = "0";
+        window.setTimeout(() => toast.remove(), 240);
+      }, 3000);
+    }
   }
 
   function normalizeInput(raw) {
@@ -690,6 +729,40 @@ const ModalSystem = (function() {
       }
       
       return data;
+    },
+
+    notify(message, type = 'info') {
+      const toast = document.createElement('div');
+      toast.className = `dd-toast dd-toast--${type}`;
+      toast.setAttribute('role', 'status');
+      toast.setAttribute('aria-live', 'polite');
+      toast.textContent = message;
+      Object.assign(toast.style, {
+        position: 'fixed',
+        top: '16px',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        zIndex: '9999',
+        maxWidth: 'min(92vw, 560px)',
+        background: type === 'error' ? 'rgba(120, 16, 16, 0.96)' : 'rgba(10, 25, 47, 0.96)',
+        color: '#ecf2ff',
+        border: type === 'error' ? '1px solid rgba(255, 124, 124, 0.45)' : '1px solid rgba(112, 169, 255, 0.35)',
+        borderRadius: '12px',
+        padding: '12px 16px',
+        boxShadow: '0 10px 30px rgba(0, 0, 0, 0.35)',
+        fontSize: '15px',
+        fontWeight: '600',
+        opacity: '0',
+        transition: 'opacity 220ms ease'
+      });
+      document.body.appendChild(toast);
+      requestAnimationFrame(() => {
+        toast.style.opacity = '1';
+      });
+      window.setTimeout(() => {
+        toast.style.opacity = '0';
+        window.setTimeout(() => toast.remove(), 240);
+      }, 3000);
     }
   };
 
@@ -886,6 +959,12 @@ const ModalSystem = (function() {
             modal.triggerElement = btn;
           }
         });
+      });
+
+      window.addEventListener('app:notify', (event) => {
+        const detail = event?.detail || {};
+        if (!detail.message) return;
+        utils.notify(detail.message, detail.type || 'info');
       });
     }
   };
@@ -1140,6 +1219,7 @@ const ModalSystem = (function() {
         const urlParams = new URLSearchParams(window.location.search);
         if (urlParams.get('magic_success') === '1') {
           this.handleSuccessfulLogin();
+          return;
         }
         const paymentState = urlParams.get('payment');
 
@@ -1283,21 +1363,7 @@ const ModalSystem = (function() {
       },
 
       handleSuccessfulLogin() {
-        // Clean the URL so the user doesn't copy/paste it or refresh and trigger it again 
-        window.history.replaceState({}, document.title, window.location.pathname);
-        
-        // Show feedback
-        window.dispatchEvent(new CustomEvent('app:notify', { 
-          detail: { message: '🎉 Pass Activated! You now have full access.', type: 'success' } 
-        }));
-        
-        // Fetch updated session state
-        if (window.core && window.core.fetchUserEntitlements) {
-          window.core.fetchUserEntitlements();
-        } else {
-          // Fallback if core isn't exposed or structured this way
-          window.location.reload();
-        }
+        window.location.replace(`${window.location.pathname}?activated=1`);
       },
 
       async proceedToPayment() {
@@ -1574,6 +1640,10 @@ const ModalSystem = (function() {
     
     updateAccess(tier, demandAllowed) {
       modals.user.updateStatus(tier, demandAllowed);
+    },
+
+    notify(message, type = 'info') {
+      utils.notify(message, type);
     }
   };
 })();
