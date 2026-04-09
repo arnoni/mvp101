@@ -683,7 +683,7 @@ const ModalSystem = (function() {
           } else if (Array.isArray(data.detail) && data.detail.length > 0 && data.detail[0].msg) {
             errMsg = data.detail[0].msg;
           } else if (typeof data.detail === 'object') {
-            errMsg = data.detail.error || data.detail.detail || data.detail.message || JSON.stringify(data.detail);
+            errMsg = data.detail.message || data.detail.detail || data.detail.error || JSON.stringify(data.detail);
           }
         }
         throw new Error(errMsg);
