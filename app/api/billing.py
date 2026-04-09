@@ -82,10 +82,6 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
     if not db_engine:
         raise HTTPException(status_code=503, detail="Database is not configured")
 
-    plan = await get_plan_by_code(db_engine, payload.plan)
-    if not plan:
-        raise HTTPException(status_code=400, detail="Invalid or inactive plan")
-
     intent_id = str(uuid.uuid4())
     try:
         async with db_engine.begin() as conn:
@@ -95,13 +91,41 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
                     INSERT INTO users (email, ab_cohort)
                     VALUES (:email, CASE WHEN random() < 0.5 THEN 'A' ELSE 'B' END)
                     ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email
-                    RETURNING id
+                    RETURNING id, ab_cohort
                     """
                 ),
                 {"email": payload.email.lower()},
             )
-            user_id = user_row.scalar()
+            user_record = user_row.mappings().first()
+            user_id = user_record["id"]
+            ab_cohort = user_record["ab_cohort"]
             
+            resolved_plan_code = f"{payload.plan}_test_{ab_cohort.lower()}"
+            
+            plan_result = await conn.execute(
+                text(
+                    """
+                    SELECT code, amount_usd_cents, currency, dodo_product_id, display_price
+                    FROM billing_plans
+                    WHERE code = :code AND is_active = true
+                    LIMIT 1
+                    """
+                ),
+                {"code": resolved_plan_code},
+            )
+            plan_row = plan_result.mappings().first()
+            if not plan_row:
+                raise HTTPException(status_code=400, detail="Invalid or inactive plan")
+                
+            from app.services.plan_catalog_service import PlanConfig
+            plan = PlanConfig(
+                code=plan_row["code"],
+                amount_usd_cents=int(plan_row["amount_usd_cents"]),
+                currency=plan_row["currency"],
+                dodo_product_id=plan_row.get("dodo_product_id"),
+                display_price=plan_row["display_price"],
+            )
+
             provider_intent_id = intent_id
             if is_smoke_test or is_test_account:
                 provider_intent_id = f"smoke_intent_{uuid.uuid4().hex[:8]}"
