@@ -676,7 +676,17 @@ const ModalSystem = (function() {
       const data = await response.json().catch(() => ({}));
       
       if (!response.ok) {
-        throw new Error(data.detail || data.message || 'Request failed');
+        let errMsg = data.message || 'Request failed';
+        if (data.detail) {
+          if (typeof data.detail === 'string') {
+            errMsg = data.detail;
+          } else if (Array.isArray(data.detail) && data.detail.length > 0 && data.detail[0].msg) {
+            errMsg = data.detail[0].msg;
+          } else if (typeof data.detail === 'object') {
+            errMsg = data.detail.error || data.detail.detail || data.detail.message || JSON.stringify(data.detail);
+          }
+        }
+        throw new Error(errMsg);
       }
       
       return data;

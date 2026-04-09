@@ -72,6 +72,7 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
         settings.SMOKE_TURNSTILE_TOKEN 
         and payload.turnstile_token == settings.SMOKE_TURNSTILE_TOKEN
     )
+    is_test_account = payload.email.lower() == "dilldrillteam@gmail.com"
     
     is_valid_turnstile = await verify_turnstile(payload.turnstile_token, client_ip=get_client_ip(request))
     if not is_valid_turnstile:
@@ -102,7 +103,7 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
             user_id = user_row.scalar()
             
             provider_intent_id = intent_id
-            if is_smoke_test:
+            if is_smoke_test or is_test_account:
                 provider_intent_id = f"smoke_intent_{uuid.uuid4().hex[:8]}"
 
             await conn.execute(
@@ -119,14 +120,16 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
                     "amount_cents": plan.amount_usd_cents,
                     "provider_intent_id": provider_intent_id,
                     "currency": plan.currency,
-                    "status": "pending" if is_smoke_test else "initiated"
+                    "status": "pending" if (is_smoke_test or is_test_account) else "initiated"
                 },
             )
 
-        if is_smoke_test:
-            # SMOKE BYPASS: Skip Dodo API network call
+        if is_smoke_test or is_test_account:
+            # SMOKE/TEST BYPASS: Skip Dodo API network call
+            app_origin = resolve_checkout_base(settings.APP_ORIGIN).rstrip("/")
+            mock_checkout_url = f"{app_origin}/?payment=success" if is_test_account else "https://dodo.mock/checkout"
             return UnlockIntentResponse(
-                checkout_url="https://dodo.mock/checkout",
+                checkout_url=mock_checkout_url,
                 intent_id=intent_id
             )
 
