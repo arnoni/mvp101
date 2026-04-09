@@ -13,6 +13,7 @@ from sqlalchemy import text
 from app.core.config import settings
 from app.services.magic_auth_service import MagicAuthService, PaymentGatewayFactory
 from app.utils.security import get_client_ip, verify_turnstile
+from app.utils.url import resolve_checkout_base
 from email_service import EmailService
 
 logger = logging.getLogger(__name__)
