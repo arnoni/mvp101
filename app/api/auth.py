@@ -11,6 +11,7 @@ from pydantic import BaseModel, EmailStr
 from sqlalchemy import text
 
 from app.core.config import settings
+from app.core.keys import KeyBuilder
 from app.services.magic_auth_service import MagicAuthService, PaymentGatewayFactory
 from app.utils.security import get_client_ip, verify_turnstile
 from app.utils.url import resolve_checkout_base
@@ -495,7 +496,6 @@ async def magic_landing(
             "csrf_token": secrets.token_hex(16)
         }
         
-        from app.core.keys import KeyBuilder
         try:
             payload_json = json.dumps(session_data)
             await redis.set(KeyBuilder.session(session_id), payload_json, ex=session_ttl)
@@ -518,6 +518,13 @@ async def magic_landing(
             max_age=session_ttl,
             path="/"
         )
+
+        try:
+            entitlement_key = KeyBuilder.entitlement_status(user_id)
+            await redis.delete(entitlement_key)
+            logger.info(f"AUTH_CACHE_BUST: Cleared entitlement cache for user {user_id}")
+        except Exception as cache_err:
+            logger.warning(f"AUTH_CACHE_BUST_FAILED: user={user_id} err={cache_err}")
         
         logger.info(f"AUTH_SUCCESS: ✅ Auth successful for {email} via atomic magic link")
         return redirect_response

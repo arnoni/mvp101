@@ -3,6 +3,8 @@ import json
 import secrets
 import hashlib
 import logging
+from datetime import datetime, timedelta, timezone
+import re
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
@@ -152,6 +154,89 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
                     "status": "pending" if (is_smoke_test or is_test_account) else "initiated"
                 },
             )
+
+            if is_test_account:
+                if not re.fullmatch(r"(1_day|3_day)_test_[ab]", plan.code):
+                    logger.error(
+                        "🧪 [dilldrillteamtest] Unexpected plan code for test bypass: "
+                        f"{plan.code}"
+                    )
+                    raise HTTPException(status_code=400, detail="Invalid test plan configuration")
+
+                duration_days_result = await conn.execute(
+                    text(
+                        """
+                        SELECT duration_days
+                        FROM billing_plans
+                        WHERE code = :code
+                        LIMIT 1
+                        """
+                    ),
+                    {"code": plan.code},
+                )
+                duration_days = int(duration_days_result.scalar() or 1)
+
+                current_expiry_result = await conn.execute(
+                    text(
+                        """
+                        SELECT MAX(expires_at) AS max_expires_at
+                        FROM user_passes
+                        WHERE user_id = :user_id
+                          AND status = 'active'
+                        """
+                    ),
+                    {"user_id": user_id},
+                )
+                current_expiry = current_expiry_result.scalar()
+                now_utc = datetime.now(timezone.utc)
+                if current_expiry is None:
+                    base_time = now_utc
+                else:
+                    if current_expiry.tzinfo is None:
+                        current_expiry = current_expiry.replace(tzinfo=timezone.utc)
+                    base_time = max(current_expiry, now_utc)
+                expires_at_utc = base_time + timedelta(days=duration_days)
+
+                await conn.execute(
+                    text(
+                        """
+                        INSERT INTO user_passes (
+                            user_id,
+                            plan_code,
+                            provider_payment_id,
+                            amount_paid_cents,
+                            status,
+                            expires_at
+                        )
+                        VALUES (
+                            :user_id,
+                            :plan_code,
+                            :provider_payment_id,
+                            :amount_paid_cents,
+                            'active',
+                            :expires_at_utc
+                        )
+                        ON CONFLICT (provider_payment_id) DO UPDATE
+                        SET
+                            plan_code = EXCLUDED.plan_code,
+                            amount_paid_cents = EXCLUDED.amount_paid_cents,
+                            status = 'active',
+                            expires_at = EXCLUDED.expires_at,
+                            updated_at = NOW()
+                        """
+                    ),
+                    {
+                        "user_id": user_id,
+                        "plan_code": plan.code,
+                        "provider_payment_id": provider_intent_id,
+                        "amount_paid_cents": plan.amount_usd_cents,
+                        "expires_at_utc": expires_at_utc,
+                    },
+                )
+                logger.info(
+                    "🧪 [dilldrillteamtest] Created/updated active user_passes row "
+                    f"for test account {payload.email.lower()} plan={plan.code}"
+                )
 
         if is_smoke_test or is_test_account:
             logger.info(f"🧪 [dilldrillteamtest] Detected test account or smoke test: {payload.email}")
