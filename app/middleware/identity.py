@@ -1,11 +1,14 @@
 import json
 import uuid
+import logging
 import sentry_sdk
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 from app.core.config import settings
 from app.core.keys import KeyBuilder
+
+logger = logging.getLogger(__name__)
 
 class IdentityMiddleware(BaseHTTPMiddleware):
     """

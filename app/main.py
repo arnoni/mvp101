@@ -246,7 +246,8 @@ async def root(request: Request, lang: str = "en"):
         if cookie_lang:
             lang = cookie_lang
     
-    anon_id = getattr(request.state, "anon_id", "unknown_anon")
+    # Extract safely: if missing or explicitly None, fallback to "unknown_anon"
+    anon_id = getattr(request.state, "anon_id", None) or "unknown_anon"
     tier = getattr(request.state, "tier", TierStatus.FREE)
     daily_limit = int(getattr(request.state, "daily_limit", 3) or 3)
     client_ip = request.client.host if request.client else None
