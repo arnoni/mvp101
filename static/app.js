@@ -1195,7 +1195,17 @@ const ModalSystem = (function() {
         if ((paymentState === 'success' || pendingIntentId) && pendingEmail) {
           const emailInput = document.getElementById('purchaseEmail');
           if (emailInput) emailInput.value = pendingEmail;
-          this.showStep(1);
+          
+          if (paymentState === 'success') {
+            // If payment succeeded (including test account), show "Check Email" screen (Step 3)
+            this.showStep(3);
+            const msg = document.getElementById('resendMessage');
+            if (msg) msg.textContent = `Check ${pendingEmail} for your access link. It should arrive shortly.`;
+          } else {
+            // If we just have a pending intent but no success param yet, keep Step 1 open
+            this.showStep(1);
+          }
+          
           core.open('supportModalLayer');
           const existingCooldown = Number(sessionStorage.getItem('resend_cooldown_until') || '0');
           if (existingCooldown <= Date.now()) {
@@ -1291,24 +1301,31 @@ const ModalSystem = (function() {
       },
 
       async proceedToPayment() {
+        console.log("DEBUG: proceedToPayment() started");
         const emailInput = document.getElementById('purchaseEmail');
         const errorEl = document.getElementById('purchaseEmailError');
         const proceedBtn = document.getElementById('proceedToPaymentBtn');
         const email = emailInput.value.trim().toLowerCase(); // Always lower-case! 
-        if (state.unlock.checkoutSubmitting) return;
+        if (state.unlock.checkoutSubmitting) {
+          console.warn("DEBUG: proceedToPayment() already submitting");
+          return;
+        }
         
         // Turnstile token extraction
         const turnstileToken = document.querySelector('[name="cf-turnstile-response"]')?.value;
 
         if (!utils.isValidEmail(email)) {
+          console.warn("DEBUG: Invalid email entered:", email);
           errorEl.textContent = 'Please enter a valid email address.';
           return;
         }
         if (!turnstileToken) {
+          console.warn("DEBUG: Turnstile token missing");
           errorEl.textContent = 'Please complete the security check.';
           return;
         }
 
+        console.log("DEBUG: Attempting to create unlock intent for:", email);
         errorEl.textContent = '';
         state.unlock.email = email;
         state.unlock.checkoutSubmitting = true;
@@ -1326,14 +1343,18 @@ const ModalSystem = (function() {
             turnstile_token: turnstileToken
           });
 
+          console.log("DEBUG: Intent created successfully:", data);
           if (data.intent_id) {
             sessionStorage.setItem('last_payment_intent_id', data.intent_id);
           }
           sessionStorage.setItem('pending_checkout_email', email);
           sessionStorage.setItem('pending_checkout_started_at', String(Date.now()));
           state.unlock.lastTurnstileToken = turnstileToken;
+          
+          console.log("DEBUG: Redirecting to checkout_url:", data.checkout_url);
           window.location.href = data.checkout_url;
         } catch (err) {
+          console.error("DEBUG: proceedToPayment() error:", err);
           state.unlock.checkoutSubmitting = false;
           if (proceedBtn) {
             utils.setButtonLoading(proceedBtn, false);

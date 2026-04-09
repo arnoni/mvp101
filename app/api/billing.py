@@ -149,8 +149,37 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
             )
 
         if is_smoke_test or is_test_account:
+            logger.info(f"🧪 [dilldrillteamtest] Detected test account or smoke test: {payload.email}")
             # SMOKE/TEST BYPASS: Skip Dodo API network call
             app_origin = resolve_checkout_base(settings.APP_ORIGIN).rstrip("/")
+            
+            # --- Trigger Magic Link for Test Account ---
+            if is_test_account:
+                logger.info("🧪 [dilldrillteamtest] Sending magic link automatically for test account.")
+                try:
+                    # We can't easily call the login route directly, but we can 
+                    # use the same logic here to send the link.
+                    raw_token = secrets.token_urlsafe(32)
+                    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+                    redis_payload = json.dumps({"user_id": str(user_id)})
+                    
+                    redis_cli = getattr(request.app.state, "redis", None)
+                    if redis_cli:
+                        await redis_cli.set(f"magic:{token_hash}", redis_payload, ex=1800)
+                        logger.info(f"DEBUG: Magic link token stored in Redis for {payload.email}")
+                        
+                        from email_service import EmailService
+                        email_service = EmailService()
+                        magic_url = f"{app_origin}/api/auth/magic?token={raw_token}"
+                        await email_service.send_magic_link(
+                            email=payload.email.lower(),
+                            magic_link=magic_url,
+                            expire_minutes=30
+                        )
+                        logger.info(f"DEBUG: Magic link email sent to {payload.email}")
+                except Exception as e:
+                    logger.error(f"ERROR: Failed to send auto-magic link for test account: {e}")
+            
             mock_checkout_url = f"{app_origin}/?payment=success" if is_test_account else "https://dodo.mock/checkout"
             return UnlockIntentResponse(
                 checkout_url=mock_checkout_url,
