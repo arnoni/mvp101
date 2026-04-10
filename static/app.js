@@ -54,7 +54,7 @@ document.addEventListener("DOMContentLoaded", () => {
     verification: { required: false, passed: false, token: null, widgetId: null, renderAttempts: 0 },
     modal: { active: null, step: "intent", email: "", plan: "1_day" },
     unlock: { email: "", plan: "1_day", resendCooldownUntil: 0, lastTurnstileToken: null, checkoutSubmitting: false },
-    requests: { construction: null, demand: null },
+    requests: { construction: null, demand: null, parsePreview: null },
     debounce: null
   };
 
@@ -90,8 +90,31 @@ document.addEventListener("DOMContentLoaded", () => {
     demandGo: els.demBtn?.dataset.labelGo || document.body.dataset.labelGo || (els.demBtn?.textContent || "").trim(),
     demandUnlock: els.demBtn?.dataset.labelUnlock || document.body.dataset.labelUnlock || (els.demBtn?.textContent || "").trim(),
     demandReady: els.demMsg?.dataset.labelReady || document.body.dataset.labelReady || (els.demMsg?.textContent || "").trim(),
-    demandLocked: els.demMsg?.dataset.labelLocked || document.body.dataset.labelPaidRequired || (els.demMsg?.textContent || "").trim()
+    demandLocked: els.demMsg?.dataset.labelLocked || document.body.dataset.labelPaidRequired || (els.demMsg?.textContent || "").trim(),
+    parsedAs: document.body.dataset.labelParsedAs || "Parsed as:",
+    parsingLink: document.body.dataset.labelParsingLink || "Parsing link..."
   };
+
+  async function parseLocationPreview(raw, signal) {
+    const response = await fetch("/api/parse-location", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ location_input: raw }),
+      signal
+    });
+    if (!response.ok) {
+      throw new Error("Could not parse this Google Maps link.");
+    }
+    const payload = await response.json();
+    if (!payload?.ok || !payload?.normalized) {
+      throw new Error(payload?.message || "Could not parse this Google Maps link.");
+    }
+    return {
+      lat: Number(payload.normalized.latitude),
+      lng: Number(payload.normalized.longitude),
+      normalizedText: payload.normalized.display
+    };
+  }
 
   AccessState.readDomAccess();
   AccessState.subscribe(() => {
@@ -189,6 +212,8 @@ document.addEventListener("DOMContentLoaded", () => {
         const url = new URL(raw);
         const host = url.hostname.toLowerCase();
         if (host === "maps.app.goo.gl") return "google_maps_short_url";
+        if (host === "goo.gl" && (url.pathname === "/maps" || url.pathname.startsWith("/maps/"))) return "google_maps_short_url";
+        if (host === "g.page" && url.pathname && url.pathname !== "/") return "google_maps_short_url";
         if ((host === "google.com" || host.endsWith(".google.com")) && url.pathname.includes("/maps")) return "google_maps_url";
         if (host === "maps.google.com") return "google_maps_url";
         return "invalid";
@@ -317,20 +342,40 @@ document.addEventListener("DOMContentLoaded", () => {
   // 2. COORDINATE PARSING & HARD RESET
   function updateLocationInputState() {
     clearTimeout(state.debounce);
-    state.debounce = setTimeout(() => {
+    if (state.requests.parsePreview) {
+      state.requests.parsePreview.abort();
+      state.requests.parsePreview = null;
+    }
+    state.debounce = setTimeout(async () => {
       const raw = normalizeInput(els.location.value);
       const kind = classifyLocationInput(raw);
       let parsed = null;
       let error = "";
       let preview = "";
+      let parseController = null;
       try {
         if (kind === "decimal_pair") parsed = parseDecimalPair(raw);
         else if (kind === "degree_pair") parsed = parseDegreePair(raw);
         else if (kind === "google_maps_url") parsed = parseGoogleMapsLongUrl(raw);
-        else if (kind === "google_maps_short_url") preview = "Google Maps short link detected";
+        else if (kind === "google_maps_short_url") {
+          parseController = new AbortController();
+          state.requests.parsePreview = parseController;
+          preview = labels.parsingLink;
+          state.input = { kind, original: raw, preview, parsed: null, error: "", touched: state.input.touched };
+          els.preview.textContent = preview;
+          els.preview.classList.toggle("hidden", !preview);
+          els.err.textContent = "";
+          updateButtons();
+          parsed = await parseLocationPreview(raw, parseController.signal);
+        }
         else if (kind === "invalid") error = "Unsupported input. Use coordinates or Google Maps link.";
       } catch (e) {
+        if (e?.name === "AbortError") return;
         error = e.message || "Invalid location input.";
+      } finally {
+        if (state.requests.parsePreview === parseController) {
+          state.requests.parsePreview = null;
+        }
       }
 
       const valid = Boolean(parsed || kind === "google_maps_short_url");
@@ -338,7 +383,7 @@ document.addEventListener("DOMContentLoaded", () => {
       const lng = parsed ? parsed.lng : null;
       const newKey = parsed ? `${lat.toFixed(4)},${lng.toFixed(4)}` : null;
       if (parsed) {
-        preview = parsed.note ? `${parsed.note} Parsed as: ${parsed.normalizedText}` : `Parsed as: ${parsed.normalizedText}`;
+        preview = parsed.note ? `${parsed.note} ${labels.parsedAs} ${parsed.normalizedText}` : `${labels.parsedAs} ${parsed.normalizedText}`;
       }
 
       // Hard Reset: If coordinates change, invalidate ALL previous data to prevent ghost states

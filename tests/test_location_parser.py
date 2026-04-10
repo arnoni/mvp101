@@ -85,3 +85,26 @@ def test_short_url_resolution_timeout(monkeypatch):
     monkeypatch.setattr("app.services.location_parser.httpx.Client", lambda **_: RaisingClient())
     with pytest.raises(ShortUrlResolutionError):
         resolve_google_maps_short_url("https://maps.app.goo.gl/MXmuC4XEuLnUY5rR8")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://goo.gl/maps/abc123",
+        "https://g.page/some-place",
+    ],
+)
+def test_parse_google_supported_short_hosts(url, monkeypatch):
+    monkeypatch.setattr(
+        "app.services.location_parser.resolve_google_maps_short_url",
+        lambda _: "https://www.google.com/maps/place/x/@16.0544,108.2022,17z",
+    )
+    parsed = parse_google_maps_url(url)
+    assert parsed.input_kind == "google_maps_short_url"
+    assert parsed.latitude == pytest.approx(16.0544)
+    assert parsed.longitude == pytest.approx(108.2022)
+
+
+def test_parse_google_invalid_goo_gl_short_path_rejected():
+    with pytest.raises(UnsupportedLocationInputError):
+        parse_google_maps_url("https://goo.gl/not-maps")

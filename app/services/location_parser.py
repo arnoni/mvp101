@@ -10,7 +10,7 @@ import httpx
 MAX_LOCATION_INPUT_LEN = 2048
 INPUT_KIND = Literal["decimal_pair", "degree_pair", "google_maps_url", "google_maps_short_url"]
 _GOOGLE_HOST_SUFFIXES = ("google.com", "maps.google.com")
-_SHORT_HOSTS = {"maps.app.goo.gl"}
+_SHORT_HOSTS = {"maps.app.goo.gl", "goo.gl", "g.page"}
 
 
 @dataclass(frozen=True)
@@ -158,6 +158,15 @@ def _is_supported_google_host(host: str) -> bool:
     return host == "google.com" or host.endswith(".google.com") or host in _GOOGLE_HOST_SUFFIXES
 
 
+def _is_supported_short_path(host: str, path: str) -> bool:
+    normalized_path = path or "/"
+    if host == "goo.gl":
+        return normalized_path == "/maps" or normalized_path.startswith("/maps/")
+    if host == "g.page":
+        return normalized_path != "/"
+    return True
+
+
 def _extract_pair(value: str | None) -> tuple[float, float] | None:
     if not value:
         return None
@@ -218,6 +227,8 @@ def parse_google_maps_url(raw: str) -> ParsedLocationInput:
         raise UnsupportedLocationInputError("Only Google Maps URLs are supported.")
 
     if host in _SHORT_HOSTS:
+        if not _is_supported_short_path(host, parsed.path):
+            raise UnsupportedLocationInputError("Only Google Maps short URLs are supported.")
         resolved = resolve_google_maps_short_url(normalized)
         lat, lng, method = extract_lat_lng_from_google_maps_url(resolved)
         return ParsedLocationInput(
