@@ -894,6 +894,10 @@ const ModalSystem = (function() {
   // ==========================================
   
   const core = {
+    isDialogElement(modal) {
+      return typeof HTMLDialogElement !== 'undefined' && modal instanceof HTMLDialogElement;
+    },
+
     /**
      * Initialize modal system
      */
@@ -926,7 +930,7 @@ const ModalSystem = (function() {
       const modal = document.getElementById(modalId);
       if (!modal) {
         console.warn(`Modal #${modalId} not found`);
-        return;
+        return null;
       }
 
       // Close currently active modal if exists (unless stacking is enabled)
@@ -934,11 +938,18 @@ const ModalSystem = (function() {
         this.close(state.modals.active, { silent: true });
       }
 
-      // Show modal using native dialog API or fallback
-      if (modal.showModal && !modal.classList.contains('bottom-sheet')) {
-        modal.showModal();
-      } else {
-        modal.classList.add('open');
+      try {
+        // Show modal using native dialog API or fallback
+        if (this.isDialogElement(modal) && !modal.classList.contains('bottom-sheet')) {
+          if (!modal.open) {
+            modal.showModal();
+          }
+        } else {
+          modal.classList.add('open');
+        }
+      } catch (err) {
+        console.error(`Failed to open modal #${modalId}:`, err);
+        return null;
       }
       
       modal.setAttribute('aria-hidden', 'false');
@@ -965,13 +976,20 @@ const ModalSystem = (function() {
      */
     close(modalId, options = {}) {
       const modal = document.getElementById(modalId || state.modals.active);
-      if (!modal) return;
+      if (!modal) return null;
 
-      // Use native close or fallback
-      if (modal.close && !modal.classList.contains('bottom-sheet')) {
-        modal.close();
-      } else {
-        modal.classList.remove('open');
+      try {
+        // Use native close or fallback
+        if (this.isDialogElement(modal) && !modal.classList.contains('bottom-sheet')) {
+          if (modal.open) {
+            modal.close();
+          }
+        } else {
+          modal.classList.remove('open');
+        }
+      } catch (err) {
+        console.error(`Failed to close modal #${modal.id}:`, err);
+        return null;
       }
       
       modal.setAttribute('aria-hidden', 'true');
@@ -1013,6 +1031,9 @@ const ModalSystem = (function() {
      * Trap focus within modal for accessibility
      */
     trapFocus(modal) {
+      if (modal.dataset.focusTrapBound === 'true') return;
+      modal.dataset.focusTrapBound = 'true';
+
       const focusableElements = modal.querySelectorAll(
         'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
       );
@@ -1048,7 +1069,7 @@ const ModalSystem = (function() {
     bindGlobalEvents() {
       // Close buttons
       document.querySelectorAll('[data-close]').forEach(btn => {
-        btn.addEventListener('click', (e) => {
+        btn.addEventListener('click', () => {
           const modalId = btn.dataset.close;
           this.close(modalId);
         });
@@ -1075,7 +1096,7 @@ const ModalSystem = (function() {
 
       // Store trigger element for focus return
       document.querySelectorAll('[data-open-modal]').forEach(btn => {
-        btn.addEventListener('click', (e) => {
+        btn.addEventListener('click', () => {
           const modalId = btn.dataset.openModal;
           const modal = document.getElementById(modalId);
           if (modal) {
@@ -1174,7 +1195,10 @@ const ModalSystem = (function() {
           
           this.syncCoords();
           this.reset();
-          core.open('reportModalLayer');
+          const opened = core.open('reportModalLayer');
+          if (!opened) {
+            this.showError('Could not open report modal. Please refresh and try again.');
+          }
         });
 
         // Report type selection
@@ -1213,6 +1237,13 @@ const ModalSystem = (function() {
       async submit() {
         const btn = document.getElementById('reportSubmitBtn');
         const errorEl = document.getElementById('reportError');
+        const formState = document.getElementById('reportFormState');
+        const successState = document.getElementById('reportSuccessState');
+        if (!btn || !errorEl || !formState || !successState) {
+          console.error('Report modal is missing required elements.');
+          this.showError('Report form is temporarily unavailable.');
+          return;
+        }
         
         errorEl.textContent = '';
         utils.setButtonLoading(btn, true);
@@ -1227,8 +1258,8 @@ const ModalSystem = (function() {
           });
 
           // Show success state
-          document.getElementById('reportFormState').classList.add('hidden');
-          document.getElementById('reportSuccessState').classList.remove('hidden');
+          formState.classList.add('hidden');
+          successState.classList.remove('hidden');
           
           // Reset after delay
           setTimeout(() => {
@@ -1245,11 +1276,15 @@ const ModalSystem = (function() {
       reset() {
         document.getElementById('reportFormState')?.classList.remove('hidden');
         document.getElementById('reportSuccessState')?.classList.add('hidden');
-        document.getElementById('reportNote').value = '';
+        const note = document.getElementById('reportNote');
+        if (note) note.value = '';
         const nearby = document.getElementById('reportNearbyNow');
         if (nearby) nearby.checked = false;
-        document.getElementById('reportCharCount').textContent = '0/180';
-        document.getElementById('reportError').textContent = '';
+        const charCount = document.getElementById('reportCharCount');
+        if (charCount) charCount.textContent = '0/180';
+        const errorEl = document.getElementById('reportError');
+        if (errorEl) errorEl.textContent = '';
+        state.report.note = '';
         
         // Reset to first option
         const firstType = document.querySelector('[data-report-type="active_construction"]');
@@ -1259,7 +1294,12 @@ const ModalSystem = (function() {
       },
 
       showError(msg) {
-        // Could show a toast or alert
+        const errorEl = document.getElementById('reportError');
+        if (errorEl) {
+          errorEl.textContent = msg;
+          return;
+        }
+        utils.notify(msg, 'error');
         console.error(msg);
       }
     },
