@@ -279,71 +279,99 @@
 </dialog>
 
 <!-- 2. SUBMIT A REPORT MODAL -->
-<dialog class="modal-layer" id="reportModalLayer" aria-labelledby="reportModalTitle">
-  <div class="modal">
-    <div class="modal-head">
-      <h2 class="modal-title" id="reportModalTitle">{{ t.get('submit_report', 'Submit Report') }}</h2>
-      <button class="modal-close" type="button" data-close="reportModalLayer" aria-label="{{ t.get('close', 'Close') }}">✕</button>
+<dialog class="modal-layer report-sheet-layer" id="reportModalLayer" aria-labelledby="reportModalTitle">
+  <div class="modal report-sheet" role="document">
+
+    <!-- HEADER -->
+    <div class="report-sheet__head">
+      <div class="report-sheet__headings">
+        <h2 class="report-sheet__title" id="reportModalTitle">
+          {{ t.get('submit_report', 'Submit Report') }}
+        </h2>
+        <p class="report-sheet__subtitle">
+          Help others avoid noisy surprises.
+        </p>
+      </div>
+      <button class="report-sheet__close" type="button" data-close="reportModalLayer" aria-label="Close">✕</button>
     </div>
-    <div class="modal-body">
-      <!-- Form State -->
-      <div class="modal-stack" id="reportFormState">
-        <div class="option-card location-card">
-          <div class="option-title">📍 {{ t.get('location', 'Location') }}</div>
-          <div class="option-meta" id="reportCoordsDisplay">{{ t.get('coordinates_not_set', 'Coordinates not set') }}</div>
+
+    <div class="report-sheet__body">
+      <!-- FORM STATE -->
+      <div class="modal-stack report-content" id="reportFormState">
+
+        <!-- LOCATION -->
+        <div class="report-card location-card">
+          <div class="report-card__label">📍 {{ t.get('location', 'Location') }}</div>
+          <div class="report-card__value" id="reportCoordsDisplay">
+            {{ t.get('coordinates_not_set', 'Coordinates not set') }}
+          </div>
         </div>
 
-        <div class="field-group">
-          <label class="field-label">{{ t.get('report_type', 'Report Type') }}</label>
-          <div class="chip-grid" id="reportTypeGrid" role="radiogroup" aria-label="{{ t.get('report_type', 'Report Type') }}">
-            <button type="button" class="chip active" data-report-type="active_construction" role="radio" aria-checked="true">
+        <!-- REPORT TYPE -->
+        <div class="report-card">
+          <div class="report-card__label">{{ t.get('report_type', 'Report Type') }}</div>
+          <div class="report-type-grid" id="reportTypeGrid" role="radiogroup">
+            <button type="button" class="report-pill active" data-report-type="active_construction" role="radio" aria-checked="true">
               {{ t.get('active_construction', 'Active Construction') }}
             </button>
-            <button type="button" class="chip" data-report-type="maybe_construction" role="radio" aria-checked="false">
+            <button type="button" class="report-pill" data-report-type="maybe_construction" role="radio" aria-checked="false">
               {{ t.get('maybe_construction', 'Maybe Construction') }}
             </button>
-            <button type="button" class="chip" data-report-type="construction_ended" role="radio" aria-checked="false">
+            <button type="button" class="report-pill" data-report-type="construction_ended" role="radio" aria-checked="false">
               {{ t.get('construction_ended', 'Construction Ended') }}
             </button>
           </div>
         </div>
 
-        <label class="field">
-          <span class="field-label">{{ t.get('additional_notes', 'Additional Notes') }} <span class="optional">({{ t.get('optional', 'optional') }})</span></span>
-          <textarea class="modal-textarea" id="reportNote" rows="3" maxlength="180" 
-                    placeholder="{{ t.get('report_placeholder', 'Describe what you observed...') }}"></textarea>
-          <span class="char-count" id="reportCharCount">0/180</span>
+        <!-- NOTES -->
+        <div class="report-card">
+          <div class="report-card__label">
+            {{ t.get('additional_notes', 'Additional Notes') }}
+            <span class="optional">({{ t.get('optional', 'optional') }})</span>
+          </div>
+          <textarea
+            class="report-textarea"
+            id="reportNote"
+            rows="3"
+            maxlength="180"
+            placeholder="{{ t.get('report_placeholder', 'Describe what you observed...') }}"
+          ></textarea>
+          <div class="report-meta">
+            <span id="reportCharCount">0/180</span>
+          </div>
+        </div>
+
+        <!-- CHECKBOX (Working Custom Toggle) -->
+        <label class="report-toggle">
+          <input type="checkbox" id="reportNearbyNow">
+          <span class="toggle-ui"></span>
+          <span class="toggle-label">{{ t.get('is_nearby_now', 'I am nearby right now') }}</span>
         </label>
 
-        
+        <!-- ERROR -->
+        <div class="report-error" id="reportError" role="alert"></div>
 
-        <label class="field checkbox-field">
-          <input type="checkbox" id="reportNearbyNow" />
-          <span class="field-label">{{ t.get('is_nearby_now', 'I am nearby right now') }}</span>
-        </label>
-
-        <div class="inline-error" id="reportError" role="alert" aria-live="polite"></div>
-
-        <div class="button-group">
-          <button class="modal-primary" type="button" id="reportSubmitBtn">
+        <!-- ACTIONS -->
+        <div class="report-actions">
+          <button class="report-submit" type="button" id="reportSubmitBtn">
             <span class="btn-text">{{ t.get('submit_report_btn', 'Submit Report') }}</span>
             <span class="btn-spinner hidden">⟳</span>
           </button>
-          <button class="modal-secondary" type="button" data-close="reportModalLayer">{{ t.get('cancel', 'Cancel') }}</button>
+          <button class="report-cancel" type="button" data-close="reportModalLayer">
+            {{ t.get('cancel', 'Cancel') }}
+          </button>
         </div>
       </div>
 
-      <!-- Success State -->
-      <div class="modal-stack hidden" id="reportSuccessState">
+      <!-- SUCCESS STATE -->
+      <div class="modal-stack hidden report-success" id="reportSuccessState">
         <div class="success-animation">
           <div class="success-icon">✓</div>
         </div>
-        <div class="option-card text-center">
-          <div class="option-title">{{ t.get('report_received', 'Report Received!') }}</div>
-          <div class="option-meta">{{ t.get('report_success_msg', 'Thank you for helping keep the community map accurate.') }}</div>
-        </div>
-        <button class="modal-secondary" type="button" data-close="reportModalLayer">{{ t.get('done', 'Done') }}</button>
+        <h3 class="success-title">{{ t.get('report_received', 'Report Received!') }}</h3>
+        <p class="success-msg">{{ t.get('report_success_msg', 'Thank you for helping keep the community map accurate.') }}</p>
       </div>
+
     </div>
   </div>
 </dialog>

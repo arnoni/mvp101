@@ -1564,3 +1564,233 @@ button:disabled {
     animation: none !important;
   }
 }
+
+/* --- DIALOG & SHEET BASE --- */
+.report-sheet-layer {
+  border: none;
+  background: rgba(0, 0, 0, 0.6); /* Backdrop dimming */
+  backdrop-filter: blur(4px);
+}
+
+.report-sheet {
+  width: min(100%, 460px);
+  margin: auto;
+  background: linear-gradient(180deg, #112a46, #091a2e); /* Matches main UI navy */
+  border-radius: 24px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-family: inherit;
+  box-shadow: 0 24px 48px rgba(0,0,0,0.4);
+
+  /* NEW: Prevent modal from overflowing screen height */
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* --- HEADER --- */
+.report-sheet__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 24px 24px 16px;
+}
+
+.report-sheet__title {
+  font-size: 22px;
+  font-weight: 700;
+  margin: 0 0 4px 0;
+}
+
+.report-sheet__subtitle {
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.6);
+  margin: 0;
+}
+
+.report-sheet__close {
+  background: rgba(255, 255, 255, 0.06);
+  border: none;
+  color: #fff;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s;
+}
+.report-sheet__close:hover { background: rgba(255, 255, 255, 0.15); }
+
+/* --- BODY & CARDS --- */
+.report-sheet__body {
+  padding: 0 24px 24px;
+
+  /* NEW: Allow scrolling inside the modal on small phones */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+/* NEW: Custom scrollbar for webkit browsers to match the dark theme */
+.report-sheet__body::-webkit-scrollbar {
+  width: 6px;
+}
+.report-sheet__body::-webkit-scrollbar-track {
+  background: transparent;
+}
+.report-sheet__body::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 10px;
+}
+.report-content { display: flex; flex-direction: column; gap: 16px; }
+
+.report-card {
+  padding: 16px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.report-card__label {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.8);
+  margin-bottom: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.report-card__value { font-size: 15px; font-weight: 500; }
+.optional { opacity: 0.5; font-weight: 400; text-transform: none; }
+
+/* --- PILLS (Report Type) --- */
+.report-type-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.report-pill {
+  flex: 1 1 calc(50% - 8px);
+  padding: 12px 16px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.02);
+  color: rgba(255,255,255, 0.8);
+  cursor: pointer;
+  font-weight: 500;
+  font-size: 14px;
+  transition: all 0.2s ease;
+}
+
+.report-pill:hover { background: rgba(255, 255, 255, 0.06); }
+
+.report-pill.active {
+  background: rgba(255, 255, 255, 0.1);
+  border-color: #ff5e00; /* Subtle orange tie-in */
+  color: #fff;
+  box-shadow: inset 0 0 0 1px #ff5e00;
+}
+
+/* --- TEXTAREA --- */
+.report-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 16px;
+  border-radius: 12px;
+  background: #f4f7fb;
+  color: #1a1a1a;
+  border: 2px solid transparent;
+  font-family: inherit;
+  font-size: 15px;
+  resize: none;
+  transition: border-color 0.2s;
+}
+.report-textarea:focus { outline: none; border-color: #ff5e00; }
+.report-meta { text-align: right; font-size: 12px; color: rgba(255,255,255,0.4); margin-top: 6px; }
+
+/* --- CUSTOM TOGGLE SWITCH --- */
+.report-toggle {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  cursor: pointer;
+  padding: 4px 0;
+}
+.report-toggle input {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+.toggle-ui {
+  width: 44px;
+  height: 24px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 20px;
+  position: relative;
+  transition: background 0.3s;
+  flex-shrink: 0;
+}
+.toggle-ui::after {
+  content: "";
+  width: 18px;
+  height: 18px;
+  background: white;
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  border-radius: 50%;
+  transition: transform 0.3s cubic-bezier(0.4, 0.0, 0.2, 1);
+}
+.report-toggle input:checked + .toggle-ui { background: #ff5e00; } /* Main orange */
+.report-toggle input:checked + .toggle-ui::after { transform: translateX(20px); }
+.toggle-label { font-size: 15px; font-weight: 500; }
+
+/* --- BUTTONS --- */
+.report-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+
+.report-submit {
+  background: linear-gradient(90deg, #ff6b00, #ff4d00);
+  padding: 16px;
+  border-radius: 999px; /* Pill shape matching main UI */
+  color: white;
+  font-size: 16px;
+  font-weight: 700;
+  border: none;
+  cursor: pointer;
+  box-shadow: 0 4px 20px rgba(255, 94, 0, 0.3); /* The orange glow */
+  transition: transform 0.1s, box-shadow 0.2s;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+.report-submit:active { transform: scale(0.98); box-shadow: 0 2px 10px rgba(255, 94, 0, 0.3); }
+
+.report-cancel {
+  background: transparent;
+  padding: 14px;
+  border: none;
+  color: rgba(255,255,255,0.5);
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 0.2s;
+}
+.report-cancel:hover { color: #fff; }
+
+.report-error { color: #ff6b6b; font-size: 14px; text-align: center; }
+
+/* --- SUCCESS STATE --- */
+.report-success { text-align: center; padding: 40px 20px; }
+.success-icon {
+  width: 64px;
+  height: 64px;
+  background: #ff5e00;
+  color: white;
+  font-size: 32px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0 auto 24px;
+}
+.success-title { font-size: 24px; margin: 0 0 8px; font-weight: 700; }
+.success-msg { color: rgba(255,255,255,0.7); font-size: 15px; line-height: 1.5; margin: 0; }
+.hidden { display: none !important; }
