@@ -132,7 +132,9 @@ TRANSLATIONS = {
         "important_notes_desc": "DillDrill is an independent international research project and informational tool. Results may be partial, delayed, inferred, or unavailable depending on data coverage and access tier. Always verify independently.",
         "support_legal": "Support & Contact",
         "open_faq": "Open FAQ",
-        "coordinates_not_set": "Coordinates not set"
+        "coordinates_not_set": "Coordinates not set",
+        "parsed_as": "Parsed as:",
+        "parsing_link": "Parsing link..."
     },
     "es": {
         "title": "DillDrill",
@@ -264,7 +266,9 @@ TRANSLATIONS = {
         "important_notes_desc": "DillDrill es un proyecto de investigación internacional independiente y una herramienta informativa. Los resultados pueden ser parciales, retrasados, inferidos o no estar disponibles dependiendo de la cobertura de datos y el nivel de acceso. Verifique siempre de forma independiente.",
         "support_legal": "Soporte y Contacto",
         "open_faq": "Abrir FAQ",
-        "coordinates_not_set": "Coordenadas no establecidas"
+        "coordinates_not_set": "Coordenadas no establecidas",
+        "parsed_as": "Interpretado como:",
+        "parsing_link": "Analizando enlace..."
     },
     "ru": {
         "title": "DillDrill",
@@ -396,7 +400,9 @@ TRANSLATIONS = {
         "important_notes_desc": "DillDrill — это независимый международный исследовательский проект и информационный инструмент. Результаты могут быть неполными, задержанными, предполагаемыми или недоступными в зависимости от покрытия данных и уровня доступа. Всегда проверяйте самостоятельно.",
         "support_legal": "Поддержка и контакты",
         "open_faq": "Открыть FAQ",
-        "coordinates_not_set": "Координаты не заданы"
+        "coordinates_not_set": "Координаты не заданы",
+        "parsed_as": "Распознано как:",
+        "parsing_link": "Разбор ссылки..."
     },
     "ko": {
         "title": "DillDrill",
@@ -528,7 +534,9 @@ TRANSLATIONS = {
         "important_notes_desc": "DillDrill은 독립적인 국제 연구 프로젝트이자 정보 제공 도구입니다. 데이터 범위 및 액세스 등급에 따라 결과가 부분적이거나, 지연되거나, 추론되거나, 제공되지 않을 수 있습니다. 항상 직접 확인하시기 바랍니다.",
         "support_legal": "지원 및 문의",
         "open_faq": "FAQ 열기",
-        "coordinates_not_set": "좌표가 설정되지 않음"
+        "coordinates_not_set": "좌표가 설정되지 않음",
+        "parsed_as": "해석 결과:",
+        "parsing_link": "링크를 분석하는 중..."
     },
     "fr": {
         "title": "DillDrill",
@@ -660,7 +668,9 @@ TRANSLATIONS = {
         "important_notes_desc": "DillDrill est un projet de recherche international indépendant et un outil informatif. Les résultats peuvent être partiels, retardés, déduits ou indisponibles selon la couverture des données et le niveau d'accès. Vérifiez toujours de manière indépendante.",
         "support_legal": "Support & Contact",
         "open_faq": "Ouvrir la FAQ",
-        "coordinates_not_set": "Coordonnées non définies"
+        "coordinates_not_set": "Coordonnées non définies",
+        "parsed_as": "Interprété comme :",
+        "parsing_link": "Analyse du lien..."
     },
     "de": {
         "title": "DillDrill",
@@ -792,7 +802,9 @@ TRANSLATIONS = {
         "important_notes_desc": "DillDrill ist ein unabhängiges internationales Forschungsprojekt und Informationstool. Die Ergebnisse können je nach Datenabdeckung und Zugangsstufe lückenhaft, verzögert, abgeleitet oder nicht verfügbar sein. Überprüfen Sie diese stets unabhängig.",
         "support_legal": "Support & Contact",
         "open_faq": "FAQ öffnen",
-        "coordinates_not_set": "Koordinaten nicht festgelegt"
+        "coordinates_not_set": "Koordinaten nicht festgelegt",
+        "parsed_as": "Erkannt als:",
+        "parsing_link": "Link wird analysiert..."
     },
     "zh": {
         "title": "DillDrill",
@@ -924,7 +936,9 @@ TRANSLATIONS = {
         "important_notes_desc": "DillDrill 是一个独立的国际研究项目和信息工具。结果可能是部分的、延迟的、推断的或不可用的，具体取决于数据覆盖范围和访问等级。请始终独立验证。",
         "support_legal": "支持与联系",
         "open_faq": "打开常见问题解答",
-        "coordinates_not_set": "坐标未设置"
+        "coordinates_not_set": "坐标未设置",
+        "parsed_as": "解析为：",
+        "parsing_link": "正在解析链接..."
     },
     "ja": {
         "title": "DillDrill",
@@ -1056,7 +1070,9 @@ TRANSLATIONS = {
         "important_notes_desc": "DillDrill は独立した国際的なリサーチプロジェクトであり、情報提供ツールです。結果は、データカバレッジやアクセスティアに応じて、一部のみ、遅延、推測、または利用不可の場合があります。常に独自に確認してください。",
         "support_legal": "サポート・お問い合わせ",
         "open_faq": "FAQ を開く",
-        "coordinates_not_set": "座標未設定"
+        "coordinates_not_set": "座標未設定",
+        "parsed_as": "解析結果:",
+        "parsing_link": "リンクを解析中..."
     }
 }
 
