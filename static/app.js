@@ -1187,14 +1187,9 @@ const ModalSystem = (function() {
 
         // Open handler
         btn?.addEventListener('click', () => {
-          if (!state.coords.valid) {
-            this.showError('Enter valid coordinates first.');
-            // Optional: highlight coord inputs
-            return;
-          }
-          
-          this.syncCoords();
           this.reset();
+          this.syncCoords();
+          this.updateSubmitState();
           const opened = core.open('reportModalLayer');
           if (!opened) {
             this.showError('Could not open report modal. Please refresh and try again.');
@@ -1229,9 +1224,20 @@ const ModalSystem = (function() {
 
       syncCoords() {
         const display = document.getElementById('reportCoordsDisplay');
-        if (display && state.coords.valid) {
+        if (!display) return;
+        if (state.coords.valid) {
           display.textContent = utils.formatCoords(state.coords.lat, state.coords.lng);
+        } else {
+          display.textContent = 'Coordinates not set';
         }
+      },
+
+      updateSubmitState() {
+        const btn = document.getElementById('reportSubmitBtn');
+        if (!btn) return;
+        const disabled = !state.coords.valid;
+        btn.disabled = disabled;
+        btn.setAttribute('aria-disabled', disabled ? 'true' : 'false');
       },
 
       async submit() {
@@ -1285,6 +1291,7 @@ const ModalSystem = (function() {
         const errorEl = document.getElementById('reportError');
         if (errorEl) errorEl.textContent = '';
         state.report.note = '';
+        this.updateSubmitState();
         
         // Reset to first option
         const firstType = document.querySelector('[data-report-type="active_construction"]');
@@ -1837,6 +1844,8 @@ const ModalSystem = (function() {
       state.coords.lng = lng;
       state.coords.valid = true;
       state.coords.key = `${lat.toFixed(4)},${lng.toFixed(4)}`;
+      modals.report.syncCoords();
+      modals.report.updateSubmitState();
     },
     
     clearCoords() {
@@ -1844,6 +1853,8 @@ const ModalSystem = (function() {
       state.coords.lng = null;
       state.coords.valid = false;
       state.coords.key = null;
+      modals.report.syncCoords();
+      modals.report.updateSubmitState();
     },
     
     updateAccess(tier, demandAllowed) {
