@@ -1273,27 +1273,46 @@ const ModalSystem = (function() {
         const nativeBtn = document.getElementById('nativeShareBtn');
         const copyLinkBtn = document.getElementById('copyLinkBtn');
         const copyAllBtn = document.getElementById('copyAllBtn');
+        const textarea = document.getElementById('shareText');
+        const counter = document.getElementById('shareCharCount');
 
         btn?.addEventListener('click', () => {
-          document.getElementById('shareError').textContent = '';
+          const errorEl = document.getElementById('shareError');
+          if (errorEl) errorEl.textContent = '';
+          this.updateCharCount();
           core.open('shareModalLayer');
         });
 
         nativeBtn?.addEventListener('click', () => this.shareNative());
         copyLinkBtn?.addEventListener('click', () => this.copyLink());
         copyAllBtn?.addEventListener('click', () => this.copyAll());
+
+        if (textarea && counter) {
+          textarea.addEventListener('input', () => this.updateCharCount());
+          this.updateCharCount();
+        }
+      },
+
+      updateCharCount() {
+        const textarea = document.getElementById('shareText');
+        const counter = document.getElementById('shareCharCount');
+        if (!textarea || !counter) return;
+        counter.textContent = `${textarea.value.length} / 220`;
       },
 
       getShareData() {
         return {
           title: 'DillDrill Construction Check',
-          text: document.getElementById('shareText').value,
+          text: document.getElementById('shareText').value.trim(),
           url: document.getElementById('shareUrlBox').textContent.trim()
         };
       },
 
       async shareNative() {
         const data = this.getShareData();
+        const errorEl = document.getElementById('shareError');
+
+        if (errorEl) errorEl.textContent = '';
         
         if (navigator.share) {
           try {
@@ -1303,10 +1322,10 @@ const ModalSystem = (function() {
           } catch (err) {
             if (err.name !== 'AbortError') {
               console.error('Share failed:', err);
+              if (errorEl) errorEl.textContent = 'Could not open sharing options.';
             }
           }
         } else {
-          // Fallback to copy all
           await this.copyAll();
         }
       },
@@ -1318,18 +1337,21 @@ const ModalSystem = (function() {
 
       async copyAll() {
         const { text, url } = this.getShareData();
-        await this.copyToClipboard(`${text} ${url}`, 'Copied to clipboard!');
+        const content = text ? `${text}\n\n${url}` : url;
+        await this.copyToClipboard(content, 'Copied to clipboard!');
       },
 
       async copyToClipboard(content, successMsg) {
         const errorEl = document.getElementById('shareError');
+
+        if (errorEl) errorEl.textContent = '';
         
         try {
           await navigator.clipboard.writeText(content);
           core.close('shareModalLayer');
           this.showFeedback(successMsg);
         } catch (err) {
-          errorEl.textContent = 'Could not copy. Please copy manually.';
+          if (errorEl) errorEl.textContent = 'Could not copy. Please copy manually.';
         }
       },
 
