@@ -1228,6 +1228,247 @@ button:disabled {
   border: 1px solid #f59e0b;
 }
 
+/* ===== SHARE SHEET ===== */
+.share-sheet-layer::backdrop {
+  background: rgba(4, 15, 33, 0.7);
+  backdrop-filter: blur(4px);
+}
+
+.share-sheet {
+  width: min(100%, 480px);
+  background: #0f2240;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 24px;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+  color: #ffffff;
+  font-family: inherit;
+}
+
+.share-sheet__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding: 24px 24px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  gap: 16px;
+}
+
+.share-sheet__title {
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: #ffffff;
+}
+
+.share-sheet__subtitle {
+  margin: 4px 0 0;
+  font-size: 14px;
+  color: rgba(255, 255, 255, 0.6);
+}
+
+.share-sheet__close {
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  color: rgba(255, 255, 255, 0.7);
+  cursor: pointer;
+  padding: 0;
+  transition: color 0.2s ease, background 0.2s ease, transform 0.2s ease;
+}
+
+.share-sheet__close:hover {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.08);
+  transform: translateY(-1px);
+}
+
+.share-sheet__body {
+  padding: 24px;
+}
+
+.share-content {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.share-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.share-card__label {
+  font-size: 13px;
+  font-weight: 600;
+  color: rgba(255, 255, 255, 0.82);
+  padding-left: 4px;
+}
+
+.share-textarea,
+.share-input-group {
+  width: 100%;
+  background: #f4f7fb;
+  border: none;
+  border-radius: 16px;
+  color: #0f2240;
+}
+
+.share-textarea {
+  min-height: 80px;
+  padding: 16px;
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1.5;
+  resize: none;
+}
+
+.share-textarea:focus {
+  outline: 2px solid #ff6b00;
+  outline-offset: 2px;
+}
+
+.share-meta {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  color: rgba(255, 255, 255, 0.5);
+}
+
+.share-card__hint {
+  color: rgba(255, 255, 255, 0.58);
+}
+
+.share-input-group {
+  display: flex;
+  align-items: center;
+  padding: 8px 8px 8px 16px;
+}
+
+.share-input-group:focus-within {
+  outline: 2px solid #ff6b00;
+  outline-offset: 2px;
+}
+
+.share-url-box {
+  flex: 1;
+  font-size: 15px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  padding-right: 12px;
+}
+
+.share-icon-btn {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 12px;
+  background: #e2e8f0;
+  color: #0f2240;
+  cursor: pointer;
+  transition: background 0.2s ease, transform 0.1s ease;
+}
+
+.share-icon-btn:hover {
+  background: #cbd5e1;
+}
+
+.share-icon-btn:active {
+  transform: scale(0.95);
+}
+
+.share-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.share-sheet .btn-primary,
+.share-sheet .btn-secondary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  width: 100%;
+  padding: 16px;
+  border-radius: 999px;
+  font-size: 16px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease;
+  border: none;
+}
+
+.share-sheet .btn-primary {
+  background: linear-gradient(90deg, #ff6b00 0%, #ff4d00 100%);
+  color: #ffffff;
+  box-shadow: 0 4px 20px rgba(255, 89, 0, 0.4);
+}
+
+.share-sheet .btn-primary:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 24px rgba(255, 89, 0, 0.5);
+}
+
+.share-sheet .btn-secondary {
+  background: transparent;
+  color: rgba(255, 255, 255, 0.8);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.share-sheet .btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: #ffffff;
+}
+
+.share-sheet .btn-icon {
+  flex: 0 0 auto;
+}
+
+.share-feedback {
+  text-align: center;
+  font-size: 14px;
+  color: #ff6b00;
+  min-height: 20px;
+}
+
+@media (max-width: 480px) {
+  .share-sheet {
+    width: 100%;
+    border-radius: 24px 24px 0 0;
+    margin-top: auto;
+    border: none;
+  }
+
+  .share-sheet__head {
+    padding: 20px 16px 14px;
+  }
+
+  .share-sheet__body {
+    padding: 16px;
+  }
+
+  .share-content {
+    gap: 16px;
+  }
+
+  .share-meta {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
 .about-footer {
   margin-top: 24px;
   padding-top: 24px;

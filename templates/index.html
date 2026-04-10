@@ -349,40 +349,72 @@
 </dialog>
 
 <!-- 3. SHARE THE APP MODAL -->
-<dialog class="modal-layer" id="shareModalLayer" aria-labelledby="shareModalTitle">
-  <div class="modal">
-    <div class="modal-head">
-      <h2 class="modal-title" id="shareModalTitle">{{ t.get('share_dilldrill', 'Share DillDrill') }}</h2>
-      <button class="modal-close" type="button" data-close="shareModalLayer" aria-label="{{ t.get('close', 'Close') }}">✕</button>
+<dialog class="modal-layer share-sheet-layer" id="shareModalLayer" aria-labelledby="shareModalTitle">
+  <div class="modal share-sheet" role="document">
+    <div class="share-sheet__head">
+      <div>
+        <h2 class="share-sheet__title" id="shareModalTitle">{{ t.get('share_dilldrill', 'Share DillDrill') }}</h2>
+        <p class="share-sheet__subtitle">{{ t.get('share_subtitle', 'Help someone avoid a noisy surprise before they sign.') }}</p>
+      </div>
+      <button class="share-sheet__close" type="button" data-close="shareModalLayer" aria-label="{{ t.get('close', 'Close') }}">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <line x1="18" y1="6" x2="6" y2="18"></line>
+          <line x1="6" y1="6" x2="18" y2="18"></line>
+        </svg>
+      </button>
     </div>
-    <div class="modal-body">
-      <div class="modal-stack">
-        <label class="field">
-          <span class="field-label">{{ t.get('share_message', 'Share Message') }}</span>
-          <textarea class="modal-textarea" id="shareText" rows="2">{{ t.get('share_default_text', 'Check construction activity near any location with DillDrill.') }}</textarea>
+
+    <div class="share-sheet__body">
+      <div class="share-content">
+        <label class="share-card" for="shareText">
+          <span class="share-card__label">{{ t.get('share_message', 'Share Message') }}</span>
+          <textarea
+            class="share-textarea"
+            id="shareText"
+            rows="3"
+            maxlength="220"
+          >{{ t.get('share_default_text', 'Check construction now, sleep better later. Try DillDrill:') }}</textarea>
+          <div class="share-meta">
+            <span class="share-card__hint">{{ t.get('share_message_hint', 'Edit the message before sharing if you want.') }}</span>
+            <span id="shareCharCount">0 / 220</span>
+          </div>
         </label>
 
-        <div class="field">
-          <span class="field-label">{{ t.get('link', 'Link') }}</span>
-          <div class="copy-field">
-            <div class="readbox" id="shareUrlBox">{{ share_url|default('https://dilldrill.com') }}</div>
-            <button class="icon-btn" type="button" id="copyLinkBtn" aria-label="{{ t.get('copy_link', 'Copy link') }}">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <div class="share-card">
+          <span class="share-card__label">{{ t.get('link', 'Link') }}</span>
+          <div class="share-input-group">
+            <div class="share-url-box" id="shareUrlBox">{{ share_url|default('https://dilldrill.com') }}</div>
+            <button class="share-icon-btn" type="button" id="copyLinkBtn" aria-label="{{ t.get('copy_link', 'Copy link') }}" title="{{ t.get('copy_link', 'Copy link') }}">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
+                <path d="M5 15H4a2 2 0 0 1 2 2V4a2 2 0 0 1 2 2h9a2 2 0 0 1 2 2v1"></path>
               </svg>
             </button>
           </div>
         </div>
 
-        <div class="share-grid">
-          <button class="modal-primary share-native" type="button" id="nativeShareBtn">
-            <span>📤 {{ t.get('share_now', 'Share Now') }}</span>
+        <div class="share-actions">
+          <button class="btn-primary" type="button" id="nativeShareBtn">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="btn-icon" aria-hidden="true">
+              <circle cx="18" cy="5" r="3"></circle>
+              <circle cx="6" cy="12" r="3"></circle>
+              <circle cx="18" cy="19" r="3"></circle>
+              <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"></line>
+              <line x1="15.41" y1="6.51" x2="8.59" y2="10.49"></line>
+            </svg>
+            <span>{{ t.get('share_now', 'Share Now') }}</span>
           </button>
-          <button class="modal-secondary" type="button" id="copyAllBtn">{{ t.get('copy_all', 'Copy Text + Link') }}</button>
+
+          <button class="btn-secondary" type="button" id="copyAllBtn">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="btn-icon" aria-hidden="true">
+              <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1 2 2H6a2 2 0 0 1 2 2V6a2 2 0 0 1 2 2h2"></path>
+              <rect x="8" y="2" width="8" height="4" rx="1" ry="1"></rect>
+            </svg>
+            <span>{{ t.get('copy_all', 'Copy Text + Link') }}</span>
+          </button>
         </div>
 
-        <div class="inline-error" id="shareError" role="alert" aria-live="polite"></div>
+        <div class="share-feedback" id="shareError" role="alert" aria-live="polite"></div>
       </div>
     </div>
   </div>
