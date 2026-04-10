@@ -297,6 +297,8 @@ async def root(request: Request, lang: str = "en"):
         "initial_turnstile_required": turnstile_required,
         "initial_checks_today": checks_today,
         "initial_tier": tier_str,
+        "tier": tier_str,
+        "demand_allowed": tier in {TierStatus.PASS_1_DAY, TierStatus.PASS_3_DAY},
         "plan_prices": plan_prices,
     }
     return templates.TemplateResponse("index.html", context)
