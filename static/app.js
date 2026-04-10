@@ -776,6 +776,11 @@ const ModalSystem = (function() {
   // ==========================================
   
   const utils = {
+    newErrorId(prefix = 'ERR') {
+      const stamp = Date.now().toString(36).toUpperCase();
+      const rand = Math.random().toString(36).slice(2, 8).toUpperCase();
+      return `${prefix}-${stamp}-${rand}`;
+    },
     /**
      * Validate email format
      */
@@ -828,17 +833,29 @@ const ModalSystem = (function() {
      * API POST helper with error handling
      */
     async apiPost(url, body) {
-      const response = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        credentials: 'same-origin',
-        body: JSON.stringify(body)
-      });
-      
+      let response;
+      const clientErrorId = utils.newErrorId('CLIENT');
+      try {
+        response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify(body)
+        });
+      } catch (networkErr) {
+        const err = new Error(`Network request failed. Error ID: ${clientErrorId}`);
+        err.code = 'NETWORK_REQUEST_FAILED';
+        err.errorId = clientErrorId;
+        err.cause = networkErr;
+        throw err;
+      }
+
       const data = await response.json().catch(() => ({}));
       
       if (!response.ok) {
         let errMsg = data.message || 'Request failed';
+        let errCode = 'REQUEST_FAILED';
+        let errId = clientErrorId;
         if (data.detail) {
           if (typeof data.detail === 'string') {
             errMsg = data.detail;
@@ -846,9 +863,16 @@ const ModalSystem = (function() {
             errMsg = data.detail[0].msg;
           } else if (typeof data.detail === 'object') {
             errMsg = data.detail.message || data.detail.detail || data.detail.error || JSON.stringify(data.detail);
+            errCode = data.detail.error || errCode;
+            errId = data.detail.error_id || errId;
           }
         }
-        throw new Error(errMsg);
+        const err = new Error(errMsg);
+        err.status = response.status;
+        err.code = errCode;
+        err.errorId = errId;
+        err.payload = data;
+        throw err;
       }
       
       return data;
@@ -1178,6 +1202,13 @@ const ModalSystem = (function() {
      * 2. Report Modal
      */
     report: {
+      formatTrackedError(err, phase = 'REPORT_FLOW_FAILED') {
+        const errorId = err?.errorId || utils.newErrorId('REPORT');
+        const errorCode = err?.code || phase;
+        const message = err?.message || 'Report flow failed.';
+        return `${message} (Code: ${errorCode}, Error ID: ${errorId})`;
+      },
+
       init() {
         const btn = document.getElementById('reportBtn');
         const submitBtn = document.getElementById('reportSubmitBtn');
@@ -1192,7 +1223,7 @@ const ModalSystem = (function() {
           this.updateSubmitState();
           const opened = core.open('reportModalLayer');
           if (!opened) {
-            this.showError('Could not open report modal. Please refresh and try again.');
+            this.showError(this.formatTrackedError(new Error('Could not open report modal. Please refresh and try again.'), 'REPORT_MODAL_OPEN_FAILED'));
           }
         });
 
@@ -1246,8 +1277,28 @@ const ModalSystem = (function() {
         const formState = document.getElementById('reportFormState');
         const successState = document.getElementById('reportSuccessState');
         if (!btn || !errorEl || !formState || !successState) {
-          console.error('Report modal is missing required elements.');
-          this.showError('Report form is temporarily unavailable.');
+          const err = new Error('Report form is temporarily unavailable.');
+          err.code = 'REPORT_MODAL_MISSING_ELEMENTS';
+          err.errorId = utils.newErrorId('REPORT');
+          console.error('Report modal is missing required elements.', { errorId: err.errorId });
+          this.showError(this.formatTrackedError(err, 'REPORT_MODAL_MISSING_ELEMENTS'));
+          return;
+        }
+
+        if (!state.coords.valid) {
+          const err = new Error('Coordinates are missing. Please search for a location and try again.');
+          err.code = 'REPORT_COORDS_INVALID';
+          err.errorId = utils.newErrorId('REPORT');
+          this.showError(this.formatTrackedError(err, 'REPORT_COORDS_INVALID'));
+          return;
+        }
+
+        const note = (state.report.note || '').trim();
+        if (note.length > 0 && note.length < 10) {
+          const err = new Error('Description is too short. Please add more detail.');
+          err.code = 'REPORT_DESCRIPTION_TOO_SHORT';
+          err.errorId = utils.newErrorId('REPORT');
+          this.showError(this.formatTrackedError(err, 'REPORT_DESCRIPTION_TOO_SHORT'));
           return;
         }
         
@@ -1273,7 +1324,13 @@ const ModalSystem = (function() {
           }, 3000);
 
         } catch (err) {
-          errorEl.textContent = err.message || 'Failed to submit report. Please try again.';
+          console.error('Report submit failed', {
+            code: err?.code,
+            errorId: err?.errorId,
+            message: err?.message,
+            payload: err?.payload
+          });
+          errorEl.textContent = this.formatTrackedError(err, 'REPORT_SUBMIT_FAILED');
         } finally {
           utils.setButtonLoading(btn, false);
         }

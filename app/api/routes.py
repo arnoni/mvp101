@@ -3,6 +3,8 @@ import structlog
 from typing import Optional
 from urllib.parse import quote, unquote
 from pydantic import BaseModel, Field
+from pydantic import ValidationError
+import uuid
 
 from app.core.config import settings
 from app.models.dto import FindNearestRequest, FindNearestResponse, ErrorResponse, StatusResponse, UserStatus
@@ -93,9 +95,12 @@ def _map_user_report_to_ugc(data: UserReportRequest) -> UGCReportRequest:
         "construction_ended": "Construction appears ended",
     }
     category = category_map.get(data.report_kind.value, "active_construction")
+    fallback_title = title_map[data.report_kind.value]
+    note = (data.note or "").strip()
+    description = note or fallback_title
     return UGCReportRequest(
-        title=title_map[data.report_kind.value],
-        description=(data.note or title_map[data.report_kind.value]),
+        title=fallback_title,
+        description=description,
         lat=data.lat,
         lon=data.lon,
         category=category,
@@ -516,9 +521,56 @@ async def user_report_submit(
     quota_repo: QuotaRepository = Depends(get_quota_repo),
     policy_engine: PolicyEngine = Depends(get_policy_engine),
 ):
-    ugc_data = _map_user_report_to_ugc(data)
-    result = await ugc_report_submit(request=request, data=ugc_data, quota_repo=quota_repo, policy_engine=policy_engine)
-    return UserReportResponse(ok=result["ok"], report_id=result["report_id"], duplicate=result.get("duplicate", False))
+    request_id = get_req_id(request)
+    try:
+        note = (data.note or "").strip()
+        if 0 < len(note) < 10:
+            error_id = request_id or str(uuid.uuid4())
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=ErrorResponse(
+                    error="REPORT_DESCRIPTION_TOO_SHORT",
+                    detail=f"Description is too short. Please add more detail. Error ID: {error_id}"
+                ).model_dump() | {"error_id": error_id}
+            )
+        ugc_data = _map_user_report_to_ugc(data)
+        result = await ugc_report_submit(request=request, data=ugc_data, quota_repo=quota_repo, policy_engine=policy_engine)
+        return UserReportResponse(ok=result["ok"], report_id=result["report_id"], duplicate=result.get("duplicate", False))
+    except ValidationError as exc:
+        error_id = request_id or str(uuid.uuid4())
+        logger.warning(
+            "user_report_validation_failed",
+            error_id=error_id,
+            errors=exc.errors(),
+            request_id=request_id,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=ErrorResponse(
+                error="REPORT_VALIDATION_FAILED",
+                detail=f"Report validation failed. Error ID: {error_id}"
+            ).model_dump() | {"error_id": error_id}
+        )
+    except HTTPException as exc:
+        detail = exc.detail if isinstance(exc.detail, dict) else {"detail": str(exc.detail)}
+        if isinstance(detail, dict):
+            detail.setdefault("error_id", request_id)
+        raise HTTPException(status_code=exc.status_code, detail=detail)
+    except Exception as exc:
+        error_id = request_id or str(uuid.uuid4())
+        logger.exception(
+            "user_report_submit_failed",
+            error_id=error_id,
+            request_id=request_id,
+            error=str(exc),
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=ErrorResponse(
+                error="REPORT_SUBMIT_FAILED",
+                detail=f"Failed to submit report. Error ID: {error_id}"
+            ).model_dump() | {"error_id": error_id}
+        )
 
 
 @router.post("/language")
