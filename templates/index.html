@@ -11,11 +11,18 @@
 <body 
   data-tier="{{ tier|default('free') }}" 
   data-demand-allowed="{{ 'true' if demand_allowed else 'false' }}"
+  data-label-go="{{ t.get('go', 'GO') }}"
+  data-label-unlock="{{ t.get('unlock', 'Unlock') }}"
+  data-label-active="{{ t.get('available', 'Available') }}"
+  data-label-ready="{{ t.get('ready', 'Ready') }}"
+  data-label-paid-required="{{ t.get('paid_pass_required', 'Paid pass required') }}"
+  data-label-demand-unlocked="{{ t.get('available', 'Available') }} ✓"
+  data-label-demand-locked="{{ t.get('locked', 'Locked') }} 🔒"
   data-turnstile-sitekey="{{ turnstile_site_key }}"
   data-turnstile-required="{{ 'true' if initial_turnstile_required else 'false' }}"
   data-current-lang="{{ current_lang }}"
 >
-  <main class="app" id="app">
+  <main class="app" id="app" data-tier="{{ tier|default('free') }}" data-demand-allowed="{{ 'true' if demand_allowed else 'false' }}">
     <!-- HEADER -->
     <header class="topbar">
       <div class="pill status-pill" id="userMenuBtn" role="button" tabindex="0">{{ initial_tier|capitalize }}</div>
@@ -108,7 +115,7 @@
           <text x="160" y="32" class="gauge-label text-center" fill="#ffb400">{{ t.get('medium', 'Medium') }}</text>
           <text x="255" y="65" transform="rotate(45 255 65)" class="gauge-label text-center" fill="#ff2f05">{{ t.get('high', 'High') }}</text>
         </svg>
-        <button class="gauge-btn" id="constructionGoBtn" disabled>{{ t.get('go', 'GO') }}</button>
+        <button class="gauge-btn" id="constructionGoBtn" disabled data-label-go="{{ t.get('go', 'GO') }}">{{ t.get('go', 'GO') }}</button>
       </div>
       <div class="message-board" id="constructionMessage" aria-live="polite">{{ t.get('results_empty_subtitle', 'Enter coordinates to begin') }}</div>
     </section>
@@ -158,11 +165,15 @@
           <text x="160" y="32" class="gauge-label text-center" fill="#a4bdec">{{ t.get('medium', 'Medium') }}</text>
           <text x="255" y="65" transform="rotate(45 255 65)" class="gauge-label text-center" fill="#4a90e2">{{ t.get('high', 'High') }}</text>
         </svg>
-        <button class="gauge-btn small {% if not demand_allowed %}unlock-styled{% endif %}" id="demandGoBtn" disabled>
+        <button class="gauge-btn small {% if not demand_allowed %}unlock-styled{% endif %}" id="demandGoBtn" disabled
+                data-label-go="{{ t.get('go', 'GO') }}"
+                data-label-unlock="{{ t.get('unlock', 'Unlock') }}">
           {{ t.get('go', 'GO') if demand_allowed else t.get('unlock', 'Unlock') }}
         </button>
       </div>
-      <div class="message-board" id="demandMessage" aria-live="polite">
+      <div class="message-board" id="demandMessage" aria-live="polite"
+           data-label-ready="{{ t.get('ready', 'Ready') }}"
+           data-label-locked="{{ t.get('paid_pass_required', 'Paid pass required') }}">
         {{ t.get('ready', 'Ready') if demand_allowed else t.get('paid_pass_required', 'Paid pass required') }}
       </div>
     </section>
@@ -171,7 +182,11 @@
     <div class="utility-row">
       <button class="utility-btn" id="reportBtn">{{ t.get('report', 'Report') }}</button>
       <button class="utility-btn" id="shareBtn">{{ t.get('share', 'Share') }}</button>
-      <button class="utility-btn accent" id="supportBtn">{{ t.get('unlock', 'Unlock') }}</button>
+      <button class="utility-btn {% if demand_allowed %}active{% else %}accent{% endif %}" id="supportBtn" {% if demand_allowed %}aria-disabled="true"{% endif %}
+              data-label-active="{{ t.get('available', 'Available') }}"
+              data-label-unlock="{{ t.get('unlock', 'Unlock') }}">
+        {{ t.get('available', 'Available') if demand_allowed else t.get('unlock', 'Unlock') }}
+      </button>
     </div>
     <button class="footer-btn" id="aboutBtn">{{ t.get('about_faq_legal', 'About · FAQ · Legal') }}</button>
     <div style="text-align: center; font-size: 13px; color: var(--muted); margin-top: 16px;">{{ t.get('rights', 'All rights reserved 2026') }}</div>
@@ -199,7 +214,7 @@
     </div>
 
     <!-- Tier Badge -->
-    <div class="tier-badge tier-{{ tier|default('free')|lower }}">
+    <div class="tier-badge tier-{{ tier|default('free')|lower }}" id="userTierBadge" data-tier="{{ tier|default('free')|lower }}" data-label-tier="{{ t.get('tier', 'TIER') }}">
       {{ initial_tier|upper }} {{ t.get('tier', 'TIER') }}
     </div>
 
@@ -212,12 +227,19 @@
       <div class="status-row">
         <span><strong>{{ t.get('demand', 'Demand') }}:</strong></span>
         {% if demand_allowed %}
-          <span class="available">{{ t.get('available', 'Available') }} ✓</span>
+          <span class="available" id="userDemandStatus"
+                data-label-unlocked="{{ t.get('available', 'Available') }} ✓"
+                data-label-locked="{{ t.get('locked', 'Locked') }} 🔒">{{ t.get('available', 'Available') }} ✓</span>
         {% else %}
-          <span class="locked">{{ t.get('locked', 'Locked') }} 🔒</span>
+          <span class="locked" id="userDemandStatus"
+                data-label-unlocked="{{ t.get('available', 'Available') }} ✓"
+                data-label-locked="{{ t.get('locked', 'Locked') }} 🔒">{{ t.get('locked', 'Locked') }} 🔒</span>
         {% endif %}
       </div>
     </div>
+    <p class="option-meta" id="userStatusText">
+      {{ t.get('ready', 'Ready') if demand_allowed else t.get('paid_pass_required', 'Paid pass required') }}
+    </p>
 
     <!-- Content -->
     <div class="info-grid">

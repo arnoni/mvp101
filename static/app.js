@@ -1,7 +1,52 @@
+const AccessState = (() => {
+  let access = { tier: "free", demandAllowed: false };
+  const listeners = new Set();
+
+  function emit() {
+    listeners.forEach((listener) => listener({ ...access }));
+  }
+
+  function readDomAccess() {
+    const appEl = document.getElementById("app");
+    const bodyTier = document.body?.dataset.tier || "free";
+    const appTier = appEl?.dataset.tier || bodyTier;
+    const rawDemand = appEl?.dataset.demandAllowed ?? document.body?.dataset.demandAllowed ?? "false";
+    access = { tier: appTier, demandAllowed: rawDemand === "true" };
+    emit();
+  }
+
+  function set(nextAccess) {
+    access = { ...access, ...nextAccess };
+    const demandAllowed = access.demandAllowed ? "true" : "false";
+    document.body.dataset.demandAllowed = demandAllowed;
+    document.body.dataset.tier = access.tier;
+    const appEl = document.getElementById("app");
+    if (appEl) {
+      appEl.dataset.demandAllowed = demandAllowed;
+      appEl.dataset.tier = access.tier;
+    }
+    emit();
+  }
+
+  return {
+    readDomAccess,
+    set,
+    get: () => ({ ...access }),
+    subscribe(listener) {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    }
+  };
+})();
+
+function updateAccessState(isPaid, tier = null) {
+  const normalizedTier = tier || (isPaid ? "paid" : "free");
+  AccessState.set({ tier: normalizedTier, demandAllowed: Boolean(isPaid) });
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   // 1. STATE MACHINE (Single Source of Truth)
   const state = {
-    access: { demandAllowed: document.body.dataset.demandAllowed === "true" },
     coords: { lat: null, lng: null, valid: false, key: null },
     input: { kind: "empty", original: "", preview: "", parsed: null, error: "", touched: false },
     construction: { status: "idle", coordKey: null, score: null },
@@ -40,6 +85,40 @@ document.addEventListener("DOMContentLoaded", () => {
     continuePaymentBtn: document.getElementById("continueToPaymentBtn"),
     awaitingEmailDisplay: document.getElementById("awaitingEmailDisplay")
   };
+  const labels = {
+    constructionGo: els.conBtn?.dataset.labelGo || (els.conBtn?.textContent || "").trim(),
+    demandGo: els.demBtn?.dataset.labelGo || document.body.dataset.labelGo || (els.demBtn?.textContent || "").trim(),
+    demandUnlock: els.demBtn?.dataset.labelUnlock || document.body.dataset.labelUnlock || (els.demBtn?.textContent || "").trim(),
+    demandReady: els.demMsg?.dataset.labelReady || document.body.dataset.labelReady || (els.demMsg?.textContent || "").trim(),
+    demandLocked: els.demMsg?.dataset.labelLocked || document.body.dataset.labelPaidRequired || (els.demMsg?.textContent || "").trim()
+  };
+
+  AccessState.readDomAccess();
+  AccessState.subscribe(() => {
+    syncAccessUI();
+    updateButtons();
+  });
+
+  function syncAccessUI() {
+    const demandAllowed = AccessState.get().demandAllowed;
+    if (els.demBtn) {
+      els.demBtn.textContent = demandAllowed ? labels.demandGo : labels.demandUnlock;
+      els.demBtn.classList.toggle("unlock-styled", !demandAllowed);
+    }
+    if (els.demMsg && state.demand.status === "idle") {
+      els.demMsg.textContent = demandAllowed ? labels.demandReady : labels.demandLocked;
+    }
+    const supportBtn = document.getElementById("supportBtn");
+    if (supportBtn) {
+      const paidLabel = supportBtn.dataset.labelActive || document.body.dataset.labelActive || supportBtn.textContent.trim();
+      const unlockLabel = supportBtn.dataset.labelUnlock || document.body.dataset.labelUnlock || supportBtn.textContent.trim();
+      supportBtn.textContent = demandAllowed ? paidLabel : unlockLabel;
+      supportBtn.classList.toggle("accent", !demandAllowed);
+      supportBtn.classList.toggle("active", demandAllowed);
+      supportBtn.disabled = demandAllowed;
+      supportBtn.setAttribute("aria-disabled", demandAllowed ? "true" : "false");
+    }
+  }
 
   // Success redirect handling: force a server round-trip so template tier data is refreshed.
   const urlParams = new URLSearchParams(window.location.search);
@@ -49,7 +128,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   if (urlParams.get("activated") === "1") {
-    state.access.demandAllowed = true;
+    updateAccessState(true, document.body.dataset.tier || "paid");
     window.history.replaceState({}, document.title, window.location.pathname);
     if (window.ModalSystem?.notify) {
       window.ModalSystem.notify("🎉 Pass Activated! You now have full access.", "success");
@@ -274,7 +353,8 @@ document.addEventListener("DOMContentLoaded", () => {
         animateGauge(els.conBand, els.conNeedle, null);
         animateGauge(els.demBand, els.demNeedle, null);
         els.conMsg.textContent = "Coordinates changed";
-        els.demMsg.textContent = state.access.demandAllowed ? "Ready to check" : "Paid pass required";
+        const access = AccessState.get();
+        els.demMsg.textContent = access.demandAllowed ? labels.demandReady : labels.demandLocked;
         els.turnstileSlot.classList.add("hidden");
       }
 
@@ -307,10 +387,11 @@ document.addEventListener("DOMContentLoaded", () => {
       els.conBtn.textContent = "Verify";
     } else {
       els.mainBtn.textContent = "Check Construction";
-      els.conBtn.textContent = "GO";
+      els.conBtn.textContent = labels.constructionGo;
     }
 
-    els.demBtn.textContent = state.access.demandAllowed ? "GO" : "Unlock";
+    const access = AccessState.get();
+    els.demBtn.textContent = access.demandAllowed ? labels.demandGo : labels.demandUnlock;
   }
 
   // 3. SVG ANIMATION MATH
@@ -455,7 +536,7 @@ document.addEventListener("DOMContentLoaded", () => {
   async function fetchDemand() {
     if (!state.coords.valid) return;
 
-    if (!state.access.demandAllowed) {
+    if (!AccessState.get().demandAllowed) {
       if (window.ModalSystem) { ModalSystem.open("supportModalLayer"); }
       return;
     }
@@ -601,8 +682,9 @@ document.addEventListener("DOMContentLoaded", () => {
   if (document.body.dataset.turnstileRequired === "true") {
     state.verification.required = true;
     renderTurnstile();
-    updateButtons();
   }
+  syncAccessUI();
+  updateButtons();
 });
 
 
@@ -620,10 +702,6 @@ const ModalSystem = (function() {
   // STATE MANAGEMENT
   // ==========================================
   const state = {
-    access: {
-      tier: document.getElementById('app')?.dataset.tier || 'free',
-      demandAllowed: document.getElementById('app')?.dataset.demandAllowed === 'true'
-    },
     coords: {
       lat: null,
       lng: null,
@@ -993,21 +1071,39 @@ const ModalSystem = (function() {
       },
 
       updateStatus(tier, demandAllowed) {
-        state.access.tier = tier;
-        state.access.demandAllowed = demandAllowed;
+        const access = { tier, demandAllowed };
         
         const badge = document.getElementById('userTierBadge');
-        const statusText = document.getElementById('userStatusText');
         
         if (badge) {
-          badge.textContent = `${tier.charAt(0).toUpperCase() + tier.slice(1)} Tier`;
-          badge.dataset.tier = tier;
+          const tierSuffix = badge.dataset.labelTier || "TIER";
+          badge.textContent = `${access.tier.charAt(0).toUpperCase() + access.tier.slice(1)} ${tierSuffix}`;
+          badge.dataset.tier = access.tier;
         }
-        
-        if (statusText) {
-          statusText.textContent = demandAllowed 
-            ? 'Demand is unlocked and your pass is active.'
-            : 'Construction is available. Demand requires a paid pass.';
+
+        const demandStatus = document.getElementById('userDemandStatus');
+        if (demandStatus) {
+          const unlockedLabel = demandStatus.dataset.labelUnlocked || document.body.dataset.labelDemandUnlocked || demandStatus.textContent.trim();
+          const lockedLabel = demandStatus.dataset.labelLocked || document.body.dataset.labelDemandLocked || demandStatus.textContent.trim();
+          demandStatus.textContent = access.demandAllowed ? unlockedLabel : lockedLabel;
+          demandStatus.classList.toggle('available', access.demandAllowed);
+          demandStatus.classList.toggle('locked', !access.demandAllowed);
+        }
+
+        const upgradeBtn = document.getElementById('userUpgradeBtn');
+        if (upgradeBtn) {
+          upgradeBtn.closest('.modal-footer')?.classList.toggle('hidden', access.demandAllowed);
+        }
+
+        const supportBtn = document.getElementById('supportBtn');
+        if (supportBtn) {
+          const paidLabel = supportBtn.dataset.labelActive || document.body.dataset.labelActive || supportBtn.textContent.trim();
+          const unlockLabel = supportBtn.dataset.labelUnlock || document.body.dataset.labelUnlock || supportBtn.textContent.trim();
+          supportBtn.textContent = access.demandAllowed ? paidLabel : unlockLabel;
+          supportBtn.classList.toggle('accent', !access.demandAllowed);
+          supportBtn.classList.toggle('active', access.demandAllowed);
+          supportBtn.disabled = access.demandAllowed;
+          supportBtn.setAttribute('aria-disabled', access.demandAllowed ? 'true' : 'false');
         }
       }
     },
@@ -1616,6 +1712,11 @@ const ModalSystem = (function() {
     init() {
       core.init();
       Object.values(modals).forEach(m => m.init());
+      const access = AccessState.get();
+      modals.user.updateStatus(access.tier, access.demandAllowed);
+      AccessState.subscribe((nextAccess) => {
+        modals.user.updateStatus(nextAccess.tier, nextAccess.demandAllowed);
+      });
     },
     
     // Expose specific methods for external use
@@ -1639,7 +1740,7 @@ const ModalSystem = (function() {
     },
     
     updateAccess(tier, demandAllowed) {
-      modals.user.updateStatus(tier, demandAllowed);
+      updateAccessState(Boolean(demandAllowed), tier);
     },
 
     notify(message, type = 'info') {
