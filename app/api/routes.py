@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Request, HTTPException, status, Depends, Response
+from fastapi import APIRouter, Request, HTTPException, status as http_status, Depends, Response
 import structlog
 from typing import Optional
 from urllib.parse import quote, unquote
@@ -96,8 +96,8 @@ def _map_user_report_to_ugc(data: UserReportRequest) -> UGCReportRequest:
     }
     category = category_map.get(data.report_kind.value, "active_construction")
     fallback_title = title_map[data.report_kind.value]
-    note = (data.note or "").strip()
-    description = note or fallback_title
+    note = data.note if data.note is not None else ""
+    description = note if note.strip() else fallback_title
     return UGCReportRequest(
         title=fallback_title,
         description=description,
@@ -206,7 +206,7 @@ async def status(
     except Exception as e:
         logger.error("status_endpoint_failed", error=str(e))
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=ErrorResponse(
                 error="STATUS_FAILED",
                 detail="Could not compute status."
@@ -260,7 +260,7 @@ async def find_nearest(
                 data.lon = parsed_input.longitude
             except LocationParseError as exc:
                 raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
+                    status_code=http_status.HTTP_400_BAD_REQUEST,
                     detail=ErrorResponse(error=exc.error_code, detail=str(exc)).model_dump()
                 ) from exc
         elif data.lat is not None and data.lon is not None:
@@ -274,7 +274,7 @@ async def find_nearest(
             )
         else:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=http_status.HTTP_400_BAD_REQUEST,
                 detail=ErrorResponse(error="INVALID_LOCATION_INPUT", detail="Location input is required.").model_dump()
             )
 
@@ -290,7 +290,7 @@ async def find_nearest(
             # We can force BLOCK via PolicyEngine or return error. 
             # Returning error "try again later" is safer.
             raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                status_code=http_status.HTTP_429_TOO_MANY_REQUESTS,
                 detail=ErrorResponse(error="ABUSE_LIMIT", detail="Too many variations. Please wait.").model_dump()
             )
 
@@ -409,7 +409,7 @@ async def find_nearest(
         err_id = get_req_id(request) or "unknown"
         logger.critical(f"unexpected_error_in_find_nearest", error=str(e), exc_info=True)
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=ErrorResponse(
                 error="INTERNAL_LOGIC_ERROR",
                 detail="An unexpected error occurred processing your request.",
@@ -477,7 +477,7 @@ async def search(
             description="Unhandled exception while executing /api/search route.",
         )
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=ErrorResponse(
                 error="SEARCH_ROUTE_FAILED",
                 detail="Search request failed due to an internal error.",
@@ -523,11 +523,12 @@ async def user_report_submit(
 ):
     request_id = get_req_id(request)
     try:
-        note = (data.note or "").strip()
-        if 0 < len(note) < 10:
+        note = data.note
+        note_stripped = note.strip() if isinstance(note, str) else ""
+        if 0 < len(note_stripped) < 10:
             error_id = request_id or str(uuid.uuid4())
             raise HTTPException(
-                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
                 detail=ErrorResponse(
                     error="REPORT_DESCRIPTION_TOO_SHORT",
                     detail=f"Description is too short. Please add more detail. Error ID: {error_id}"
@@ -545,7 +546,7 @@ async def user_report_submit(
             request_id=request_id,
         )
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=ErrorResponse(
                 error="REPORT_VALIDATION_FAILED",
                 detail=f"Report validation failed. Error ID: {error_id}"
@@ -565,7 +566,7 @@ async def user_report_submit(
             error=str(exc),
         )
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=ErrorResponse(
                 error="REPORT_SUBMIT_FAILED",
                 detail=f"Failed to submit report. Error ID: {error_id}"
@@ -611,25 +612,25 @@ async def ugc_report_submit(
     daily_limit = int(getattr(request.state, "daily_limit", 3) or 3)
     if not is_inside_da_nang_bbox(data.lat, data.lon):
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
+            status_code=http_status.HTTP_400_BAD_REQUEST,
             detail=ErrorResponse(error="OUT_OF_BOUNDS", detail="Coordinates outside allowed area.").model_dump()
         )
     if data.severity is not None:
         if data.severity < 1 or data.severity > 5:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=http_status.HTTP_400_BAD_REQUEST,
                 detail=ErrorResponse(error="INVALID_SEVERITY", detail="Severity must be between 1 and 5.").model_dump()
             )
     if data.evidence_urls is not None:
         if len(data.evidence_urls) > 5:
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
+                status_code=http_status.HTTP_400_BAD_REQUEST,
                 detail=ErrorResponse(error="TOO_MANY_EVIDENCE_URLS", detail="Maximum 5 evidence URLs allowed.").model_dump()
             )
         for u in data.evidence_urls:
             if len(u) > 500:
                 raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
+                    status_code=http_status.HTTP_400_BAD_REQUEST,
                     detail=ErrorResponse(error="EVIDENCE_URL_TOO_LONG", detail="Evidence URL exceeds maximum length.").model_dump()
                 )
     anon_id = getattr(request.state, "anon_id", "unknown_anon")
@@ -656,7 +657,7 @@ async def ugc_report_submit(
     from sqlalchemy import text
     redis_cli = getattr(request.app.state, "redis", None)
     if not redis_cli:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="enforcement unavailable")
+        raise HTTPException(status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE, detail="enforcement unavailable")
     def norm_text(s: str) -> str:
         return " ".join((s or "").strip().lower().split())
     title_n = norm_text(data.title)
@@ -678,7 +679,7 @@ async def ugc_report_submit(
         return {"ok": True, "report_id": existing, "duplicate": True}
     db_engine = getattr(request.app.state, "db_engine", None)
     if not db_engine:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="enforcement unavailable")
+        raise HTTPException(status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE, detail="enforcement unavailable")
     UGC_INSERT_SQL = text("""
     INSERT INTO ugc_reports (
       public_id,
@@ -736,7 +737,7 @@ async def ugc_report_submit(
           error=str(exc),
           description="Failed to insert UGC report row into database.",
       )
-      raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=ErrorResponse(error="STORAGE_UNAVAILABLE", detail="Database unavailable.").model_dump())
+      raise HTTPException(status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE, detail=ErrorResponse(error="STORAGE_UNAVAILABLE", detail="Database unavailable.").model_dump())
     if data.evidence_urls:
         try:
             await redis_cli.set(f"ugc:evidence:{public_id}", json.dumps(data.evidence_urls), ex=7 * 24 * 3600)
