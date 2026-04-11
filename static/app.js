@@ -1295,7 +1295,7 @@ const ModalSystem = (function() {
 
         const note = (state.report.note || '').trim();
         if (note.length > 0 && note.length < 10) {
-          const err = new Error('Description is too short. Please add more detail.');
+          const err = new Error('Report must be at least 10 characters.');
           err.code = 'REPORT_DESCRIPTION_TOO_SHORT';
           err.errorId = utils.newErrorId('REPORT');
           this.showError(this.formatTrackedError(err, 'REPORT_DESCRIPTION_TOO_SHORT'));
@@ -1311,7 +1311,7 @@ const ModalSystem = (function() {
             lon: state.coords.lng,
             report_kind: state.report.type,
             is_nearby_now: Boolean(document.getElementById('reportNearbyNow')?.checked),
-            note: state.report.note
+            note
           });
 
           // Show success state
@@ -1324,6 +1324,10 @@ const ModalSystem = (function() {
           }, 3000);
 
         } catch (err) {
+          if (err?.status === 422 && err?.code === 'REPORT_DESCRIPTION_TOO_SHORT') {
+            errorEl.textContent = 'Report must be at least 10 characters.';
+            return;
+          }
           console.error('Report submit failed', {
             code: err?.code,
             errorId: err?.errorId,
