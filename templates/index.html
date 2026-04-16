@@ -28,7 +28,24 @@
     <!-- HEADER -->
     <header class="topbar">
       <div class="pill status-pill" id="userMenuBtn" role="button" tabindex="0">{{ initial_tier|capitalize }}</div>
-      <h1 class="brand">{{ t.get('title', 'DillDrill') }}<sup style="font-size: 0.5em; font-weight: 500;">™</sup></h1>
+      <h1 class="brand">
+        {{ t.get('title', 'DillDrill') }}<sup style="font-size: 0.5em; font-weight: 500;">™</sup>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 145 30" width="120" height="25" style="display: inline-block; vertical-align: middle; margin-left: 12px; margin-bottom: 2px; transform: rotate(-2deg);" aria-label="Research Preview">
+          <defs>
+            <pattern id="stripes" width="12" height="12" patternTransform="rotate(45)" patternUnits="userSpaceOnUse">
+              <rect width="6" height="12" fill="#111111"/>
+              <rect x="6" width="6" height="12" fill="#FFCC00"/>
+            </pattern>
+            <filter id="sticker-shadow">
+              <feDropShadow dx="1" dy="2" stdDeviation="2" flood-color="#000" flood-opacity="0.4"/>
+            </filter>
+          </defs>
+          <rect x="2" y="2" width="141" height="26" rx="6" fill="#FFFFFF" filter="url(#sticker-shadow)"/>
+          <rect x="4" y="4" width="137" height="22" rx="4" fill="url(#stripes)"/>
+          <rect x="7" y="7" width="131" height="16" rx="2" fill="#E63946"/>
+          <text x="72.5" y="19" font-family="system-ui, -apple-system, sans-serif" font-weight="900" font-size="11" fill="#FFCC00" text-anchor="middle" letter-spacing="1">RESEARCH PREVIEW</text>
+        </svg>
+      </h1>
       <button class="pill" id="langOpenBtn">{{ current_lang|upper }}</button>
     </header>
 

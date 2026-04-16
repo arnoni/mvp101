@@ -4,7 +4,7 @@ from app.core.config import settings
 TRANSLATIONS = {
     "en": {
         "title": "DillDrill",
-        "subtitle": "Detect noisy rentals ahead of time – plan visits only for quiet homes.",
+        "subtitle": "Check construction now, sleep better later.",
         "early_preview": "Early research preview",
         "input_label": "Enter Latitude, Longitude",
         "placeholder": "e.g., 16.061, 108.235",
@@ -140,7 +140,7 @@ TRANSLATIONS = {
     },
     "es": {
         "title": "DillDrill",
-        "subtitle": "Detecte alquileres ruidosos con antelación.",
+        "subtitle": "Verifique la construcción ahora, duerma mejor después.",
         "early_preview": "Vista previa de investigación temprana",
         "input_label": "Ingrese Latitud, Longitud",
         "placeholder": "ej., 16.061, 108.235",
@@ -274,7 +274,7 @@ TRANSLATIONS = {
     },
     "ru": {
         "title": "DillDrill",
-        "subtitle": "Обнаруживайте шумное жилье заранее.",
+        "subtitle": "Проверьте строительство сейчас, спите спокойнее потом.",
         "early_preview": "Ранний исследовательский предварительный показ",
         "input_label": "Введите широту, долготу",
         "placeholder": "напр., 16.061, 108.235",
@@ -408,7 +408,7 @@ TRANSLATIONS = {
     },
     "ko": {
         "title": "DillDrill",
-        "subtitle": "시끄러운 임대 숙소를 미리 감지하세요.",
+        "subtitle": "지금 공사를 확인하고 나중에 더 편안하게 주무세요.",
         "early_preview": "초기 연구 프리뷰",
         "input_label": "위도, 경도 입력",
         "placeholder": "예: 16.061, 108.235",
@@ -542,7 +542,7 @@ TRANSLATIONS = {
     },
     "fr": {
         "title": "DillDrill",
-        "subtitle": "Détectez les locations bruyantes à l'avance.",
+        "subtitle": "Vérifiez la construction maintenant, dormez mieux plus tard.",
         "early_preview": "Aperçu de recherche",
         "input_label": "Entrez Latitude, Longitude",
         "placeholder": "ex., 16.061, 108.235",
@@ -676,7 +676,7 @@ TRANSLATIONS = {
     },
     "de": {
         "title": "DillDrill",
-        "subtitle": "Erkennen Sie lärmige Mietobjekte im Voraus.",
+        "subtitle": "Prüfen Sie den Bau jetzt, schlafen Sie später besser.",
         "early_preview": "Forschungsvorschau",
         "input_label": "Breitengrad, Längengrad eingeben",
         "placeholder": "z.B., 16.061, 108.235",
