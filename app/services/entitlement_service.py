@@ -118,18 +118,38 @@ class EntitlementService:
                     )
                     return result
 
-                free_res = await conn.execute(
-                    text(
-                        """
-                        SELECT u.ab_cohort, fq.daily_limit
-                        FROM users u
-                        LEFT JOIN free_quotas fq ON fq.cohort = u.ab_cohort
-                        WHERE u.id = :user_id
-                        LIMIT 1
-                        """
-                    ),
-                    {"user_id": user_id},
+                # free_quotas may not exist in newer schema revisions; keep entitlement resolution resilient.
+                free_quota_exists_res = await conn.execute(
+                    text("SELECT to_regclass('public.free_quotas') IS NOT NULL AS exists")
                 )
+                free_quota_exists = bool(free_quota_exists_res.scalar())
+
+                if free_quota_exists:
+                    free_res = await conn.execute(
+                        text(
+                            """
+                            SELECT u.ab_cohort, fq.daily_limit
+                            FROM users u
+                            LEFT JOIN free_quotas fq ON fq.cohort = u.ab_cohort
+                            WHERE u.id = :user_id
+                            LIMIT 1
+                            """
+                        ),
+                        {"user_id": user_id},
+                    )
+                else:
+                    free_res = await conn.execute(
+                        text(
+                            """
+                            SELECT u.ab_cohort, NULL::INTEGER AS daily_limit
+                            FROM users u
+                            WHERE u.id = :user_id
+                            LIMIT 1
+                            """
+                        ),
+                        {"user_id": user_id},
+                    )
+
                 free_row = free_res.mappings().first()
                 daily_limit = int(free_row["daily_limit"]) if free_row and free_row.get("daily_limit") else 3
                 result = EntitlementResult(
