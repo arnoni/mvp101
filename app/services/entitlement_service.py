@@ -1,18 +1,23 @@
 import json
+import logging
 import time
 from enum import Enum
 from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, validate_call
-from sqlalchemy import text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncEngine
 from upstash_redis.asyncio import Redis
 
 from app.core.keys import KeyBuilder
+from app.models.models import SimulatedBillingPlan, SimulatedUserPass
+
+logger = logging.getLogger(__name__)
 
 
 class TierStatus(str, Enum):
     FREE = "FREE"
+    SIMULATED_PAID = "SIMULATED_PAID"
     PASS_1_DAY = "PASS_1_DAY"
     PASS_3_DAY = "PASS_3_DAY"
 
@@ -27,13 +32,6 @@ class EntitlementResult(BaseModel):
 
 
 class EntitlementService:
-    @staticmethod
-    def _tier_from_plan(plan_code: Optional[str], duration_days: int) -> TierStatus:
-        code = (plan_code or "").lower()
-        if duration_days >= 3 or code.startswith("3_day"):
-            return TierStatus.PASS_3_DAY
-        return TierStatus.PASS_1_DAY
-
     @staticmethod
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def get_tier(
@@ -75,42 +73,37 @@ class EntitlementService:
                         is_stale=is_stale,
                         raw_data=payload,
                     )
-            except Exception as e:
-                logger.error(f"ENTITLEMENT_REDIS_GET_FAILED: {e}", user_id=user_id)
-                # Fall through to DB
-                pass
+            except Exception as exc:
+                logger.error("ENTITLEMENT_REDIS_GET_FAILED user_id=%s err=%s", user_id, exc)
 
         if not db_engine:
-            logger.warning("ENTITLEMENT_DB_ENGINE_MISSING", user_id=user_id)
+            logger.warning("ENTITLEMENT_DB_ENGINE_MISSING user_id=%s", user_id)
             return EntitlementResult(tier=TierStatus.FREE, daily_limit=3, is_stale=True)
 
         try:
             async with db_engine.connect() as conn:
-                paid_res = await conn.execute(
-                    text(
-                        """
-                        SELECT up.plan_code, up.expires_at, bp.duration_days, bp.daily_limit
-                        FROM user_passes up
-                        JOIN billing_plans bp ON bp.code = up.plan_code
-                        WHERE up.user_id = :user_id
-                          AND up.status = 'active'
-                          AND up.expires_at > NOW()
-                        ORDER BY up.expires_at DESC
-                        LIMIT 1
-                        """
-                    ),
-                    {"user_id": user_id},
-                )
-                paid_row = paid_res.mappings().first()
-                if paid_row:
-                    tier = EntitlementService._tier_from_plan(
-                        str(paid_row["plan_code"]), int(paid_row["duration_days"])
+                simulated_res = await conn.execute(
+                    select(
+                        SimulatedUserPass.plan_code,
+                        SimulatedUserPass.expires_at,
+                        SimulatedBillingPlan.daily_limit,
                     )
-                    expires_ts = int(paid_row["expires_at"].timestamp()) if paid_row.get("expires_at") else None
+                    .join(SimulatedBillingPlan, SimulatedBillingPlan.code == SimulatedUserPass.plan_code)
+                    .where(
+                        SimulatedUserPass.user_id == user_id,
+                        SimulatedUserPass.status == "active",
+                        SimulatedUserPass.expires_at > func.now(),
+                    )
+                    .order_by(SimulatedUserPass.expires_at.desc())
+                    .limit(1)
+                )
+                simulated_row = simulated_res.first()
+                if simulated_row:
+                    expires_ts = int(simulated_row.expires_at.timestamp()) if simulated_row.expires_at else None
                     result = EntitlementResult(
-                        tier=tier,
-                        active_plan_code=str(paid_row["plan_code"]),
-                        daily_limit=int(paid_row["daily_limit"]),
+                        tier=TierStatus.SIMULATED_PAID,
+                        active_plan_code=str(simulated_row.plan_code),
+                        daily_limit=int(simulated_row.daily_limit),
                         expires_at=expires_ts,
                         is_stale=False,
                     )
@@ -156,8 +149,8 @@ class EntitlementService:
                     ttl_seconds=ttl_seconds,
                 )
                 return result
-        except Exception as e:
-            logger.error(f"ENTITLEMENT_DB_QUERY_FAILED: {e}", user_id=user_id)
+        except Exception as exc:
+            logger.error("ENTITLEMENT_DB_QUERY_FAILED user_id=%s err=%s", user_id, exc)
             return EntitlementResult(tier=TierStatus.FREE, daily_limit=3, is_stale=True)
 
     @staticmethod
@@ -175,7 +168,7 @@ class EntitlementService:
             logger.error("ENTITLEMENT_CACHE_MISSING_USER_ID")
             return
         if not redis_cli:
-            logger.debug("ENTITLEMENT_CACHE_REDIS_UNAVAILABLE", user_id=user_id)
+            logger.debug("ENTITLEMENT_CACHE_REDIS_UNAVAILABLE user_id=%s", user_id)
             return
 
         key = KeyBuilder.entitlement_status(user_id)
@@ -187,15 +180,7 @@ class EntitlementService:
             "expires_at": expires_at,
             "verified_at": int(time.time()),
         }
-        print(f"About to call redis.set() for key: {key}")
-        import asyncio
         try:
-            await asyncio.wait_for(
-                redis_cli.set(key, json.dumps(payload), ex=ttl_seconds),
-                timeout=10,
-            )
-            print(f"redis.set() finished for key: {key}")
-        except asyncio.TimeoutError:
-            logger.error(f"ENTITLEMENT_CACHE_REDIS_TIMEOUT: {key}")
-        except Exception as e:
-            logger.error(f"ENTITLEMENT_CACHE_REDIS_ERROR: {e}", key=key)
+            await redis_cli.set(key, json.dumps(payload), ex=ttl_seconds)
+        except Exception as exc:
+            logger.error("ENTITLEMENT_CACHE_REDIS_ERROR key=%s err=%s", key, exc)

@@ -235,6 +235,8 @@ class MagicLinkToken(Base):
     __table_args__ = (
         UniqueConstraint("token_hash", name="magic_link_tokens_token_hash_key"),
         Index("idx_magic_tokens_email_created", "email", "created_at"),
+        Index("idx_magic_tokens_expires_at", "expires_at"),
+        Index("idx_magic_tokens_redeemed_at", "redeemed_at"),
     )
 
 
@@ -307,6 +309,7 @@ class SimulatedPaymentIntent(Base):
         Index("idx_simulated_payment_intents_user_created", "user_id", "created_at"),
         Index("idx_simulated_payment_intents_status_created", "status", "created_at"),
         Index("idx_simulated_payment_intents_plan_code", "plan_code"),
+        Index("idx_simulated_payment_intents_created_at", "created_at"),
     )
 
 
@@ -345,6 +348,7 @@ class SimulatedUserPass(Base):
         Index("idx_simulated_user_passes_user_expires", "user_id", "expires_at"),
         Index("idx_simulated_user_passes_status_expires", "status", "expires_at"),
         Index("idx_simulated_user_passes_intent", "simulated_intent_id"),
+        Index("idx_simulated_user_passes_updated_at", "updated_at"),
     )
 
 

@@ -1,71 +1,53 @@
-import uuid
-import json
-import secrets
-import hashlib
 import logging
-from datetime import datetime, timedelta, timezone
-import re
+import uuid
 
-import httpx
 from fastapi import APIRouter, HTTPException, Request
-from sqlalchemy import text
+from sqlalchemy import insert, select, func
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.core.config import settings
-from app.schemas.billing import UnlockIntentRequest, UnlockIntentResponse
-from app.services.plan_catalog_service import get_plan_by_code
+from app.models.models import FeatureFlag, FunnelEvent, SimulatedBillingPlan, SimulatedPaymentIntent, User
+from app.schemas.billing import UnlockIntentRequest, UnlockIntentResponse, UnlockUiSurface
+from app.services.entitlement_service import TierStatus
 from app.utils.security import get_client_ip, protect_mutation, verify_turnstile
 from app.utils.url import resolve_checkout_base
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
+SIMULATED_PAID_USERS_ALLOWED_FLAG = "simulated_paid_users_allowed_flag"
 
-async def _create_dodo_checkout(
-    *,
-    email: str,
-    plan_code: str,
-    amount_usd_cents: int,
-    currency: str,
-    intent_id: str,
-) -> tuple[str, str | None]:
-    if not settings.DODO_API_KEY:
-        raise HTTPException(status_code=503, detail="Dodo API key is not configured")
 
-    base_url = "https://api.dodopayments.com/v1" if settings.ENV == "production" else "https://test.dodopayments.com/v1"
-    app_origin = resolve_checkout_base(settings.APP_ORIGIN).rstrip("/")
+def _tier_to_funnel(tier: TierStatus | str | None) -> str:
+    if tier == TierStatus.SIMULATED_PAID:
+        return "simulated_paid"
+    if tier == TierStatus.PASS_1_DAY:
+        return "paid_1_day"
+    if tier == TierStatus.PASS_3_DAY:
+        return "paid_3_days"
+    return "free"
 
-    payload = {
-        "customer": {"email": email},
-        "amount": amount_usd_cents,
-        "currency": currency,
-        "metadata": {
-            "plan": plan_code,
-            "email": email,
-            "intent_id": intent_id,
-        },
-        "success_url": f"{app_origin}/?payment=success",
-        "cancel_url": f"{app_origin}/?payment=cancelled",
-    }
 
-    async with httpx.AsyncClient(timeout=10) as client:
-        response = await client.post(
-            f"{base_url}/checkouts",
-            headers={
-                "Authorization": f"Bearer {settings.DODO_API_KEY}",
-                "Content-Type": "application/json",
-                "Idempotency-Key": intent_id,
-            },
-            json=payload,
-        )
-        if response.status_code >= 400:
-            raise HTTPException(status_code=502, detail="Failed to create Dodo checkout session")
-        data = response.json()
-
-    checkout_url = data.get("checkout_url") or data.get("url") or data.get("data", {}).get("checkout_url")
-    checkout_id = data.get("checkout_id") or data.get("id") or data.get("data", {}).get("id")
-    if not checkout_url:
-        raise HTTPException(status_code=502, detail="Dodo checkout URL not present in response")
-    return checkout_url, checkout_id
+def _report_funnel_failure(*, route: str, event_name: str, request: Request, exc: Exception) -> None:
+    logger.error(
+        "FUNNEL_EVENT_WRITE_FAILED route=%s event=%s user_id=%s session_id=%s anon_id=%s error_class=%s error=%s",
+        route,
+        event_name,
+        getattr(request.state, "user_id", None),
+        request.cookies.get(settings.SESSION_COOKIE_NAME),
+        getattr(request.state, "anon_id", None),
+        exc.__class__.__name__,
+        str(exc),
+    )
+    try:
+        import sentry_sdk
+        with sentry_sdk.push_scope() as scope:
+            scope.set_tag("telemetry_kind", "funnel_event")
+            scope.set_tag("route", route)
+            scope.set_tag("event_name", event_name)
+            sentry_sdk.capture_exception(exc)
+    except Exception:
+        logger.error("FUNNEL_EVENT_SENTRY_CAPTURE_FAILED route=%s event=%s", route, event_name)
 
 
 @router.post('/unlock-intent', response_model=UnlockIntentResponse)
@@ -73,14 +55,7 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
     await protect_mutation(request)
     if not payload.turnstile_token:
         raise HTTPException(status_code=400, detail="Turnstile token required")
-    
-    # Check for Smoke Test Bypass
-    is_smoke_test = (
-        settings.SMOKE_TURNSTILE_TOKEN 
-        and payload.turnstile_token == settings.SMOKE_TURNSTILE_TOKEN
-    )
-    is_test_account = payload.email.lower() == "dilldrillteam@gmail.com"
-    
+
     is_valid_turnstile = await verify_turnstile(payload.turnstile_token, client_ip=get_client_ip(request))
     if not is_valid_turnstile:
         raise HTTPException(status_code=403, detail="Turnstile verification failed")
@@ -89,233 +64,79 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
     if not db_engine:
         raise HTTPException(status_code=503, detail="Database is not configured")
 
-    intent_id = str(uuid.uuid4())
-    try:
-        async with db_engine.begin() as conn:
-            user_row = await conn.execute(
-                text(
-                    """
-                    INSERT INTO users (email, ab_cohort)
-                    VALUES (:email, CASE WHEN random() < 0.5 THEN 'A' ELSE 'B' END)
-                    ON CONFLICT (email) DO UPDATE SET email = EXCLUDED.email
-                    RETURNING id, ab_cohort
-                    """
-                ),
-                {"email": payload.email.lower()},
-            )
-            user_record = user_row.mappings().first()
-            user_id = user_record["id"]
-            ab_cohort = user_record["ab_cohort"]
-            
-            resolved_plan_code = f"{payload.plan}_test_{ab_cohort.lower()}"
-            
-            plan_result = await conn.execute(
-                text(
-                    """
-                    SELECT code, amount_usd_cents, currency, dodo_product_id, display_price
-                    FROM billing_plans
-                    WHERE code = :code AND is_active = true
-                    LIMIT 1
-                    """
-                ),
-                {"code": resolved_plan_code},
-            )
-            plan_row = plan_result.mappings().first()
-            if not plan_row:
-                raise HTTPException(status_code=400, detail="Invalid or inactive plan")
-                
-            from app.services.plan_catalog_service import PlanConfig
-            plan = PlanConfig(
-                code=plan_row["code"],
-                amount_usd_cents=int(plan_row["amount_usd_cents"]),
-                currency=plan_row["currency"],
-                dodo_product_id=plan_row.get("dodo_product_id"),
-                display_price=plan_row["display_price"],
-            )
+    email = payload.email.lower()
+    anon_id = getattr(request.state, "anon_id", None)
+    session_id = request.cookies.get(settings.SESSION_COOKIE_NAME)
+    effective_tier = _tier_to_funnel(getattr(request.state, "tier", TierStatus.FREE))
+    ui_surface = payload.ui_surface.value if payload.ui_surface else UnlockUiSurface.HERO_UNLOCK_BUTTON.value
 
-            provider_intent_id = intent_id
-            if is_smoke_test or is_test_account:
-                provider_intent_id = f"smoke_intent_{uuid.uuid4().hex[:8]}"
-
-            await conn.execute(
-                text(
-                    """
-                    INSERT INTO payment_intents (id, user_id, plan_code, amount_cents, provider_intent_id, currency, status)
-                    VALUES (:id, :user_id, :plan_code, :amount_cents, :provider_intent_id, :currency, :status)
-                    """
-                ),
-                {
-                    "id": intent_id,
-                    "user_id": user_id,
-                    "plan_code": plan.code,
-                    "amount_cents": plan.amount_usd_cents,
-                    "provider_intent_id": provider_intent_id,
-                    "currency": plan.currency,
-                    "status": "pending" if (is_smoke_test or is_test_account) else "initiated"
-                },
-            )
-
-            if is_test_account:
-                if not re.fullmatch(r"(1_day|3_day)_test_[ab]", plan.code):
-                    logger.error(
-                        "🧪 [dilldrillteamtest] Unexpected plan code for test bypass: "
-                        f"{plan.code}"
-                    )
-                    raise HTTPException(status_code=400, detail="Invalid test plan configuration")
-
-                duration_days_result = await conn.execute(
-                    text(
-                        """
-                        SELECT duration_days
-                        FROM billing_plans
-                        WHERE code = :code
-                        LIMIT 1
-                        """
-                    ),
-                    {"code": plan.code},
-                )
-                duration_days = int(duration_days_result.scalar() or 1)
-
-                current_expiry_result = await conn.execute(
-                    text(
-                        """
-                        SELECT MAX(expires_at) AS max_expires_at
-                        FROM user_passes
-                        WHERE user_id = :user_id
-                          AND status = 'active'
-                        """
-                    ),
-                    {"user_id": user_id},
-                )
-                current_expiry = current_expiry_result.scalar()
-                now_utc = datetime.now(timezone.utc)
-                if current_expiry is None:
-                    base_time = now_utc
-                else:
-                    if current_expiry.tzinfo is None:
-                        current_expiry = current_expiry.replace(tzinfo=timezone.utc)
-                    base_time = max(current_expiry, now_utc)
-                expires_at_utc = base_time + timedelta(days=duration_days)
-
-                await conn.execute(
-                    text(
-                        """
-                        INSERT INTO user_passes (
-                            user_id,
-                            plan_code,
-                            provider_payment_id,
-                            amount_paid_cents,
-                            status,
-                            expires_at
-                        )
-                        VALUES (
-                            :user_id,
-                            :plan_code,
-                            :provider_payment_id,
-                            :amount_paid_cents,
-                            'active',
-                            :expires_at_utc
-                        )
-                        ON CONFLICT (provider_payment_id) DO UPDATE
-                        SET
-                            plan_code = EXCLUDED.plan_code,
-                            amount_paid_cents = EXCLUDED.amount_paid_cents,
-                            status = 'active',
-                            expires_at = EXCLUDED.expires_at,
-                            updated_at = NOW()
-                        """
-                    ),
-                    {
-                        "user_id": user_id,
-                        "plan_code": plan.code,
-                        "provider_payment_id": provider_intent_id,
-                        "amount_paid_cents": plan.amount_usd_cents,
-                        "expires_at_utc": expires_at_utc,
-                    },
-                )
-                logger.info(
-                    "🧪 [dilldrillteamtest] Created/updated active user_passes row "
-                    f"for test account {payload.email.lower()} plan={plan.code}"
-                )
-
-        if is_smoke_test or is_test_account:
-            logger.info(f"🧪 [dilldrillteamtest] Detected test account or smoke test: {payload.email}")
-            # SMOKE/TEST BYPASS: Skip Dodo API network call
-            try:
-                app_origin = resolve_checkout_base(settings.APP_ORIGIN).rstrip("/")
-            except Exception as url_err:
-                logger.error(f"ERROR: Failed to resolve checkout base URL: {url_err}")
-                app_origin = "https://dilldrill.com"
-            
-            # --- Trigger Magic Link for Test Account ---
-            if is_test_account:
-                logger.info("🧪 [dilldrillteamtest] Sending magic link automatically for test account.")
-                try:
-                    raw_token = secrets.token_urlsafe(32)
-                    token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
-                    redis_payload = json.dumps({"user_id": str(user_id)})
-                    
-                    redis_cli = getattr(request.app.state, "redis", None)
-                    if redis_cli:
-                        logger.debug(f"DEBUG: Attempting Redis set for magic:{token_hash[:8]}")
-                        await redis_cli.set(f"magic:{token_hash}", redis_payload, ex=1800)
-                        logger.info(f"DEBUG: Magic link token stored in Redis for {payload.email}")
-                        
-                        from email_service import EmailService
-                        email_service = EmailService()
-                        magic_url = f"{app_origin}/api/auth/magic?token={raw_token}"
-                        
-                        logger.debug(f"DEBUG: Attempting email send to {payload.email}")
-                        await email_service.send_magic_link(
-                            email=payload.email.lower(),
-                            magic_link=magic_url,
-                            expire_minutes=30
-                        )
-                        logger.info(f"DEBUG: Magic link email sent to {payload.email}")
-                    else:
-                        logger.error("ERROR: Redis client not found in app state during test account bypass")
-                except Exception as e:
-                    logger.exception(f"ERROR: Failed to send auto-magic link for test account: {e}")
-            
-            mock_checkout_url = f"{app_origin}/?payment=success" if is_test_account else "https://dodo.mock/checkout"
-            return UnlockIntentResponse(
-                checkout_url=mock_checkout_url,
-                intent_id=intent_id
-            )
-
-        checkout_url, checkout_id = await _create_dodo_checkout(
-            email=payload.email.lower(),
-            plan_code=plan.code,
-            amount_usd_cents=plan.amount_usd_cents,
-            currency=plan.currency,
-            intent_id=intent_id,
+    async with db_engine.begin() as conn:
+        flag_result = await conn.execute(
+            select(FeatureFlag).where(FeatureFlag.key == SIMULATED_PAID_USERS_ALLOWED_FLAG).limit(1)
         )
-        async with db_engine.begin() as conn:
-            await conn.execute(
-                text(
-                    """
-                    UPDATE payment_intents
-                    SET status = 'pending', provider_intent_id = :provider_intent_id, updated_at = NOW()
-                    WHERE id = :id
-                    """
-                ),
-                {
-                    "id": intent_id,
-                    "provider_intent_id": checkout_id or intent_id,
-                },
-            )
-    except Exception:
-        async with db_engine.begin() as conn:
-            await conn.execute(
-                text(
-                    """
-                    UPDATE payment_intents
-                    SET status = 'api_error', updated_at = NOW()
-                    WHERE id = :id AND status = 'initiated'
-                    """
-                ),
-                {"id": intent_id},
-            )
-        raise
+        flag = flag_result.scalar_one_or_none()
+        if not flag or not flag.is_enabled:
+            raise HTTPException(status_code=403, detail="Simulated unlock is currently disabled")
 
-    return UnlockIntentResponse(checkout_url=checkout_url, intent_id=intent_id)
+        user_stmt = (
+            pg_insert(User)
+            .values(email=email)
+            .on_conflict_do_update(index_elements=[User.email], set_={"updated_at": func.now()})
+            .returning(User.id)
+        )
+        user_result = await conn.execute(user_stmt)
+        user_id = user_result.scalar_one()
+
+        plan_result = await conn.execute(
+            select(SimulatedBillingPlan).where(
+                SimulatedBillingPlan.code == payload.plan,
+                SimulatedBillingPlan.is_active.is_(True),
+            ).limit(1)
+        )
+        plan = plan_result.scalar_one_or_none()
+        if not plan:
+            raise HTTPException(status_code=400, detail="Invalid or inactive simulated plan")
+
+        simulated_intent_id = str(uuid.uuid4())
+        await conn.execute(
+            insert(SimulatedPaymentIntent).values(
+                id=simulated_intent_id,
+                user_id=user_id,
+                plan_code=plan.code,
+                status="initiated",
+                source="simulated_paid",
+                upgraded_from_anon_id=anon_id,
+            )
+        )
+        try:
+            await conn.execute(
+                insert(FunnelEvent).values(
+                    event_name="simulated_magic_requested",
+                    event_source="api",
+                    event_version=1,
+                    anon_id=anon_id,
+                    session_id=session_id,
+                    user_id=user_id,
+                    effective_tier=effective_tier,
+                    target_tier="simulated_paid",
+                    transition_name="free_to_simulated_paid",
+                    related_simulated_intent_id=simulated_intent_id,
+                    ui_surface=ui_surface,
+                    metadata_json={"plan_code": plan.code},
+                )
+            )
+        except Exception as event_err:
+            _report_funnel_failure(
+                route="/api/billing/unlock-intent",
+                event_name="simulated_magic_requested",
+                request=request,
+                exc=event_err,
+            )
+
+    app_origin = resolve_checkout_base(settings.APP_ORIGIN).rstrip("/")
+    logger.info("SIMULATED_UNLOCK_INTENT_CREATED user=%s anon_id=%s plan=%s", email, anon_id, payload.plan)
+    return UnlockIntentResponse(
+        checkout_url=f"{app_origin}/?simulated_unlock=initiated",
+        intent_id=simulated_intent_id,
+        message="Simulated unlock initiated",
+    )

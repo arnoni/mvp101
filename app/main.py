@@ -298,7 +298,7 @@ async def root(request: Request, lang: str = "en"):
         "initial_checks_today": checks_today,
         "initial_tier": tier_str,
         "tier": tier_str,
-        "demand_allowed": tier in {TierStatus.PASS_1_DAY, TierStatus.PASS_3_DAY},
+        "demand_allowed": tier in {TierStatus.SIMULATED_PAID, TierStatus.PASS_1_DAY, TierStatus.PASS_3_DAY},
         "plan_prices": plan_prices,
     }
     return templates.TemplateResponse("index.html", context)
@@ -400,6 +400,8 @@ async def global_exception_handler(request: Request, exc: Exception):
     )
 def tier_to_client(tier):
     from app.services.entitlement_service import TierStatus
+    if tier == TierStatus.SIMULATED_PAID:
+        return "simulated_paid"
     if tier == TierStatus.PASS_3_DAY:
         return "3_day"
     if tier == TierStatus.PASS_1_DAY:

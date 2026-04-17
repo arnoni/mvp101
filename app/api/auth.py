@@ -4,14 +4,19 @@ import json
 import logging
 import hashlib
 import httpx
+from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Request, Response, Depends
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, EmailStr
-from sqlalchemy import text
+from sqlalchemy import insert, select, text, update, func
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.core.config import settings
 from app.core.keys import KeyBuilder
+from app.api.dependencies import scope_to_user
+from app.models.models import FunnelEvent, MagicLinkToken, SimulatedBillingPlan, SimulatedPaymentIntent, SimulatedUserPass, User
+from app.services.entitlement_service import TierStatus
 from app.services.magic_auth_service import MagicAuthService, PaymentGatewayFactory
 from app.utils.security import get_client_ip, verify_turnstile
 from app.utils.url import resolve_checkout_base
@@ -40,6 +45,47 @@ class MagicLinkRequest(BaseModel):
     email: EmailStr
     turnstile_token: Optional[str] = None
     intent_id: Optional[str] = None
+
+
+def _tier_to_funnel(tier: TierStatus | str | None) -> str:
+    if tier == TierStatus.SIMULATED_PAID:
+        return "simulated_paid"
+    if tier == TierStatus.PASS_1_DAY:
+        return "paid_1_day"
+    if tier == TierStatus.PASS_3_DAY:
+        return "paid_3_days"
+    return "free"
+
+
+def _report_funnel_failure(
+    *,
+    route: str,
+    event_name: str,
+    request: Request,
+    exc: Exception,
+) -> None:
+    logger.error(
+        "FUNNEL_EVENT_WRITE_FAILED route=%s event=%s user_id=%s session_id=%s anon_id=%s error_class=%s error=%s",
+        route,
+        event_name,
+        getattr(request.state, "user_id", None),
+        request.cookies.get(settings.SESSION_COOKIE_NAME),
+        getattr(request.state, "anon_id", None),
+        exc.__class__.__name__,
+        str(exc),
+    )
+    try:
+        import sentry_sdk
+        with sentry_sdk.push_scope() as scope:
+            scope.set_tag("telemetry_kind", "funnel_event")
+            scope.set_tag("route", route)
+            scope.set_tag("event_name", event_name)
+            scope.set_extra("user_id", str(getattr(request.state, "user_id", None)))
+            scope.set_extra("session_id", request.cookies.get(settings.SESSION_COOKIE_NAME))
+            scope.set_extra("anon_id", getattr(request.state, "anon_id", None))
+            sentry_sdk.capture_exception(exc)
+    except Exception:
+        logger.error("FUNNEL_EVENT_SENTRY_CAPTURE_FAILED route=%s event=%s", route, event_name)
 
 
 def _pass_duration_days(plan_code: str | None) -> int:
@@ -262,11 +308,17 @@ async def resend_magic_link(payload: MagicLinkRequest, request: Request):
 
     raw_token = secrets.token_urlsafe(32)
     token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
-    redis_payload = json.dumps({
-        "user_id": str(active_pass["user_id"]),
-    })
+    expires_at = func.now() + text("interval '10 minutes'")
     try:
-        await redis_cli.set(f"magic:{token_hash}", redis_payload, ex=600)
+        async with db_engine.begin() as conn:
+            await conn.execute(
+                insert(MagicLinkToken).values(
+                    user_id=active_pass["user_id"],
+                    email=email,
+                    token_hash=token_hash,
+                    expires_at=expires_at,
+                )
+            )
     except Exception:
         return generic_response
 
@@ -328,61 +380,6 @@ async def login(
         app_origin = settings.APP_ORIGIN or "http://localhost:8000"
         magic_link = f"{app_origin}/api/auth/magic?token={token}"
         
-        # --- dilldrillteamtest START ---
-        # Backdoor for development: Automatically validate payment for the test email
-        if payload.email.lower() == "dilldrillteam@gmail.com":
-            logger.info("🧪 [dilldrillteamtest] Bypassing webhook for test email. Pre-validating in Redis.")
-            token_hash = hashlib.sha256(token.encode()).hexdigest()
-            async with service.db.begin() as conn:
-                user_row = await conn.execute(
-                    text(
-                        """
-                        INSERT INTO users (email, ab_cohort)
-                        VALUES (:email, CASE WHEN random() < 0.5 THEN 'A' ELSE 'B' END)
-                        ON CONFLICT (email) DO UPDATE SET updated_at = NOW(), last_login = NOW()
-                        RETURNING id
-                        """
-                    ),
-                    {"email": payload.email.lower()},
-                )
-                user_id = user_row.scalar()
-                pass_row = await conn.execute(
-                    text(
-                        """
-                        INSERT INTO user_passes (
-                            user_id,
-                            plan_code,
-                            provider_payment_id,
-                            amount_paid_cents,
-                            status,
-                            expires_at
-                        )
-                        VALUES (
-                            :user_id,
-                            '1_day_test_a',
-                            :provider_payment_id,
-                            499,
-                            'active',
-                            NOW() + INTERVAL '1 day'
-                        )
-                        ON CONFLICT (provider_payment_id) DO UPDATE
-                        SET updated_at = NOW()
-                        RETURNING id, user_id
-                        """
-                    ),
-                    {
-                        "user_id": user_id,
-                        "provider_payment_id": f"sim_backdoor_test_{int(time.time())}",
-                    },
-                )
-                pass_payload = pass_row.mappings().first()
-            redis_payload = json.dumps({
-                "user_id": str(pass_payload["user_id"])
-            })
-            # Use the same Redis key structure as the webhook
-            await service.redis.set(f"magic:{token_hash}", redis_payload, ex=1800)
-        # --- dilldrillteamtest END ---
-
         # Send via Resend
         email_service = EmailService()
         sent = await email_service.send_magic_link(
@@ -397,6 +394,57 @@ async def login(
                 logger.info(f"🔐 [DEV FALLBACK] MAGIC LINK for {payload.email}: {magic_link}")
                 return AuthResponse(message="Magic link logged to console (Dev Mode).")
             raise HTTPException(status_code=500, detail="Failed to send magic link email")
+
+        try:
+            async with service.db.begin() as conn:
+                user_result = await conn.execute(
+                    select(User.id).where(User.email == payload.email.lower()).limit(1)
+                )
+                user_id = user_result.scalar_one_or_none()
+                if user_id is not None:
+                    latest_intent_result = await conn.execute(
+                        select(SimulatedPaymentIntent.id)
+                        .where(
+                            SimulatedPaymentIntent.user_id == user_id,
+                            SimulatedPaymentIntent.status == "initiated",
+                        )
+                        .order_by(SimulatedPaymentIntent.created_at.desc())
+                        .limit(1)
+                    )
+                    latest_intent_id = latest_intent_result.scalar_one_or_none()
+                    if latest_intent_id is not None:
+                        update_result = await conn.execute(
+                            update(SimulatedPaymentIntent)
+                            .where(
+                                SimulatedPaymentIntent.id == latest_intent_id,
+                                SimulatedPaymentIntent.status == "initiated",
+                            )
+                            .values(status="magic_sent", updated_at=func.now())
+                        )
+                        if (update_result.rowcount or 0) > 0:
+                            await conn.execute(
+                                insert(FunnelEvent).values(
+                                    event_name="simulated_magic_sent",
+                                    event_source="api",
+                                    event_version=1,
+                                    anon_id=getattr(request.state, "anon_id", None),
+                                    session_id=request.cookies.get(settings.SESSION_COOKIE_NAME),
+                                    user_id=user_id,
+                                    effective_tier=_tier_to_funnel(getattr(request.state, "tier", TierStatus.FREE)),
+                                    target_tier="simulated_paid",
+                                    transition_name="free_to_simulated_paid",
+                                    related_simulated_intent_id=latest_intent_id,
+                                    ui_surface="user_access_modal",
+                                    metadata_json={"email": payload.email.lower()},
+                                )
+                            )
+        except Exception as emit_err:
+            _report_funnel_failure(
+                route="/api/auth/login",
+                event_name="simulated_magic_sent",
+                request=request,
+                exc=emit_err,
+            )
         
         return AuthResponse(message="Magic link sent. Check your inbox.")
         
@@ -419,68 +467,101 @@ async def magic_landing(
     app_origin = resolve_checkout_base(settings.APP_ORIGIN).rstrip("/")
     redis = service.redis
     db = service.db
-    
-    try:
-        # 1. Hash the incoming raw token to match what is stored in Redis
-        token_hash = hashlib.sha256(token.encode()).hexdigest()
-        
-        # 2. ATOMIC CONSUME: Get the payload and delete the key in one step.
-        # GETDEL is available in Redis 6.2+.
-        try:
-            payload_str = await redis.getdel(f"magic:{token_hash}")
-        except Exception as e:
-            logger.error(f"AUTH_MAGIC_REDIS_GETDEL_FAILED: {e}")
-            return RedirectResponse(url=f"{app_origin}/?error=system_error&code=AUTH_MAGIC_REDIS_ERROR&msg={str(e)[:50]}", status_code=303)
-        
-        if not payload_str:
-            logger.warning(f"AUTH_MAGIC_INVALID_LINK: Attempted use of invalid, expired, or already-consumed magic link. Hash: {token_hash[:8]}")
-            return RedirectResponse(url=f"{app_origin}/?error=invalid_link", status_code=303)
-            
-        # Parse the data safely stored during the webhook phase
-        try:
-            payload = json.loads(payload_str)
-            user_id_from_token = payload.get("user_id")
-        except (json.JSONDecodeError, AttributeError) as e:
-            logger.error(f"AUTH_MAGIC_PAYLOAD_PARSE_FAILED: {e}")
-            return RedirectResponse(url=f"{app_origin}/?error=system_error&code=AUTH_MAGIC_INVALID_PAYLOAD", status_code=303)
-            
-        if not user_id_from_token:
-            logger.error(f"AUTH_MAGIC_INCOMPLETE_PAYLOAD: user_id={user_id_from_token}")
-            return RedirectResponse(url=f"{app_origin}/?error=system_error&code=AUTH_MAGIC_INCOMPLETE_DATA", status_code=303)
 
-        # 3. Ensure user exists and stamp login; pass checks happen in downstream guards.
+    if redis is None:
+        return RedirectResponse(url=f"{app_origin}/?error=system_error&code=AUTH_MAGIC_SESSION_CACHE_UNAVAILABLE", status_code=303)
+
+    try:
+        token_hash = hashlib.sha256(token.encode()).hexdigest()
+
         try:
             async with db.begin() as conn:
-                user_res = await conn.execute(
-                    text(
-                        """
-                        SELECT id, email
-                        FROM users
-                        WHERE id = :user_id
-                        LIMIT 1
-                        """
-                    ),
-                    {"user_id": user_id_from_token}
+                token_result = await conn.execute(
+                    select(MagicLinkToken).where(MagicLinkToken.token_hash == token_hash).limit(1)
                 )
-                user_row = user_res.mappings().first()
-                if not user_row:
-                    logger.warning(f"AUTH_MAGIC_USER_MISMATCH: User {user_id_from_token} not found")
+                token_row = token_result.scalar_one_or_none()
+                if token_row is None or token_row.redeemed_at is not None or token_row.expires_at <= datetime.now(timezone.utc):
+                    logger.warning("AUTH_MAGIC_INVALID_OR_EXPIRED_LINK: hash=%s", token_hash[:8])
                     return RedirectResponse(url=f"{app_origin}/?error=invalid_link", status_code=303)
-                
-                # Crucial: Ensure user_id is a string for JSON serialization later
-                user_id = str(user_row["id"])
-                email = user_row["email"]
-                
+
                 await conn.execute(
-                    text(
-                        """
-                        UPDATE users
-                        SET last_login = NOW(), updated_at = NOW()
-                        WHERE id = :user_id
-                        """
-                    ),
-                    {"user_id": user_id},
+                    update(MagicLinkToken)
+                    .where(MagicLinkToken.id == token_row.id)
+                    .values(redeemed_at=func.now())
                 )
+
+                user_result = await conn.execute(
+                    pg_insert(User)
+                    .values(email=token_row.email.lower())
+                    .on_conflict_do_update(
+                        index_elements=[User.email],
+                        set_={"last_login": func.now(), "updated_at": func.now()},
+                    )
+                    .returning(User.id, User.email)
+                )
+                user_row = user_result.first()
+                user_id = str(user_row.id)
+                email = user_row.email
+
+                pending_intent_result = await conn.execute(
+                    scope_to_user(
+                        select(SimulatedPaymentIntent)
+                        .where(SimulatedPaymentIntent.status.in_(["initiated", "magic_sent"]))
+                        .order_by(SimulatedPaymentIntent.created_at.desc())
+                        .limit(1),
+                        model_user_id_column=SimulatedPaymentIntent.user_id,
+                        current_user_id=user_row.id,
+                    )
+                )
+                pending_intent = pending_intent_result.scalar_one_or_none()
+                if pending_intent is not None:
+                    plan_result = await conn.execute(
+                        select(SimulatedBillingPlan.duration_hours)
+                        .where(SimulatedBillingPlan.code == pending_intent.plan_code)
+                        .limit(1)
+                    )
+                    duration_hours = int(plan_result.scalar_one_or_none() or 24)
+                    await conn.execute(
+                        update(SimulatedPaymentIntent)
+                        .where(SimulatedPaymentIntent.id == pending_intent.id)
+                        .values(status="activated", activated_at=func.now(), updated_at=func.now())
+                    )
+                    pass_result = await conn.execute(
+                        insert(SimulatedUserPass).values(
+                            user_id=user_row.id,
+                            plan_code=pending_intent.plan_code,
+                            simulated_intent_id=pending_intent.id,
+                            status="active",
+                            expires_at=func.now() + text(f"interval '{duration_hours} hours'"),
+                        )
+                        .returning(SimulatedUserPass.id)
+                    )
+                    pass_row = pass_result.first()
+                    try:
+                        await conn.execute(
+                            insert(FunnelEvent).values(
+                                event_name="simulated_pass_activated",
+                                event_source="api",
+                                event_version=1,
+                                anon_id=getattr(request.state, "anon_id", None),
+                                session_id=request.cookies.get(settings.SESSION_COOKIE_NAME),
+                                user_id=user_row.id,
+                                effective_tier="simulated_paid",
+                                target_tier="simulated_paid",
+                                transition_name="free_to_simulated_paid",
+                                related_simulated_intent_id=pending_intent.id,
+                                related_simulated_pass_id=(pass_row.id if pass_row else None),
+                                ui_surface="user_access_modal",
+                                metadata_json={"plan_code": pending_intent.plan_code},
+                            )
+                        )
+                    except Exception as event_err:
+                        _report_funnel_failure(
+                            route="/api/auth/magic",
+                            event_name="simulated_pass_activated",
+                            request=request,
+                            exc=event_err,
+                        )
         except Exception as e:
             logger.error(f"AUTH_MAGIC_DB_ACTIVATION_FAILED: {e}")
             return RedirectResponse(url=f"{app_origin}/?error=system_error&code=AUTH_MAGIC_DB_ERROR&msg={str(e)[:50]}", status_code=303)
