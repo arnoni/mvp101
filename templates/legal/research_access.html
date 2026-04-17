@@ -1,0 +1,41 @@
+{% extends "legal/base.html" %}
+
+{% block title %}Research Access Notice - DillDrill{% endblock %}
+{% block active_page %}access{% endblock %}
+
+{% block content %}
+<h1>DillDrill Research Access Notice</h1>
+
+<div class="legal-meta">
+  <p>Effective Date: {{ legal_config.date }}</p>
+  <p>Last Updated: {{ legal_config.date }}</p>
+</div>
+
+<p>DillDrill may use research-access controls, feature limits, temporary expanded access, preview-mode access, participation limits, or join flows in order to:</p>
+<ul>
+  <li>manage stability;</li>
+  <li>improve research quality;</li>
+  <li>reduce abuse;</li>
+  <li>test features gradually;</li>
+  <li>measure interest in possible future project directions;</li>
+  <li>protect the integrity of the Service.</li>
+</ul>
+
+<p>Certain interfaces or join flows within DillDrill may simulate or approximate an access-selection experience in order to study user interest and interaction patterns. Unless DillDrill expressly states otherwise, these flows are used for research and testing purposes and do not require payment.</p>
+
+<p>Access to any feature, temporary feature state, or expanded research-access state may be changed, limited, suspended, expire automatically, or be withdrawn at any time.</p>
+
+<p>Use of any feature within DillDrill does not create:</p>
+<ul>
+  <li>a client relationship;</li>
+  <li>a customer relationship;</li>
+  <li>a professional advisory relationship;</li>
+  <li>any guarantee of service continuity;</li>
+  <li>any guarantee of result accuracy;</li>
+  <li>any right to continued or expanded access.</li>
+</ul>
+
+<p>DillDrill remains a research and beta project regardless of which features are available to a given user at a given time.</p>
+
+<p>For full terms, please review the DillDrill Terms of Use and Privacy Policy.</p>
+{% endblock %}

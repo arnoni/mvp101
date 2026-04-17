@@ -13,7 +13,7 @@
 <body data-tier="{{ tier|default('free') }}" data-demand-allowed="{{ 'true' if demand_allowed else 'false' }}"
   data-label-go="{{ t.get('go', 'GO') }}" data-label-unlock="{{ t.get('unlock', 'Unlock') }}"
   data-label-active="{{ t.get('available', 'Available') }}" data-label-ready="{{ t.get('ready', 'Ready') }}"
-  data-label-paid-required="{{ t.get('paid_pass_required', 'Paid pass required') }}"
+  data-label-paid-required="{{ t.get('paid_pass_required', 'Research access required') }}"
   data-label-demand-unlocked="{{ t.get('available', 'Available') }} ✓"
   data-label-demand-locked="{{ t.get('locked', 'Locked') }} 🔒"
   data-label-parsed-as="{{ t.get('parsed_as', 'Parsed as:') }}"
@@ -190,8 +190,8 @@
         </button>
       </div>
       <div class="message-board" id="demandMessage" aria-live="polite" data-label-ready="{{ t.get('ready', 'Ready') }}"
-        data-label-locked="{{ t.get('paid_pass_required', 'Paid pass required') }}">
-        {{ t.get('ready', 'Ready') if demand_allowed else t.get('paid_pass_required', 'Paid pass required') }}
+        data-label-locked="{{ t.get('paid_pass_required', 'Research access required') }}">
+        {{ t.get('ready', 'Ready') if demand_allowed else t.get('paid_pass_required', 'Research access required') }}
       </div>
     </section>
 
@@ -257,7 +257,7 @@
           </div>
         </div>
         <p class="option-meta" id="userStatusText">
-          {{ t.get('ready', 'Ready') if demand_allowed else t.get('paid_pass_required', 'Paid pass required') }}
+          {{ t.get('ready', 'Ready') if demand_allowed else t.get('paid_pass_required', 'Research access required') }}
         </p>
 
         <!-- Content -->
@@ -272,7 +272,7 @@
           </div>
 
           <div class="info-block">
-            <div class="info-title">💡 {{ t.get('workflow_title', 'Pro Workflow') }}</div>
+            <div class="info-title">💡 {{ t.get('workflow_title', 'Research Workflow') }}</div>
             <ul>
               <li>{{ t.get('work_coords', 'Use valid coordinates') }}</li>
               <li>{{ t.get('work_construction', 'Run construction models') }}</li>
@@ -468,11 +468,11 @@
       </div>
     </dialog>
 
-    <!-- 4. PURCHASE SUPPORT / SUBSCRIPTION MODAL (DEEP NAVY THEME) -->
+    <!-- 4. RESEARCH ACCESS MODAL (DEEP NAVY THEME) -->
     <dialog class="modal-layer theme-navy" id="supportModalLayer" aria-labelledby="supportModalTitle">
       <div class="modal">
         <div class="modal-head">
-          <h2 class="modal-title" id="supportModalTitle">{{ t.get('unlock_full_access_title', 'Unlock Full Access') }}
+          <h2 class="modal-title" id="supportModalTitle">{{ t.get('unlock_full_access_title', 'Join Research Group') }}
           </h2>
           <button class="modal-close" type="button" data-close="supportModalLayer"
             aria-label="{{ t.get('close', 'Close') }}">✕</button>
@@ -484,13 +484,12 @@
             <div class="option-card info-card">
               <div class="option-title">🔐 {{ t.get('no_account_needed', 'No Account Needed') }}</div>
               <div class="option-meta">
-                {{ t.get('purchase_intro', 'Enter your email and pay. We will instantly email you a secure access link
-                to unlock the app.') }}
+                {{ t.get('purchase_intro', 'Request extended research integration parameters.') }}
               </div>
             </div>
 
             <div class="field-group">
-              <label class="field-label">1. {{ t.get('select_pass', 'Select Pass') }}</label>
+              <label class="field-label">1. {{ t.get('select_pass', 'Select Access Level') }}</label>
               <div class="plan-cards" id="planGrid" role="radiogroup">
                 <!-- 1 Day Pass (Active State) -->
                 <button type="button" class="plan-card active" data-plan="1_day" role="radio" aria-checked="true">
@@ -502,7 +501,6 @@
                       </svg>
                     </span>
                   </div>
-                  <div class="plan-price">{{ plan_prices.get('1_day', '$4.99') }}</div>
                   <div class="plan-desc">{{ t.get('pass_1_day_desc', 'Full access for 24 hours') }}</div>
                 </button>
 
@@ -516,7 +514,6 @@
                       </svg>
                     </span>
                   </div>
-                  <div class="plan-price">{{ plan_prices.get('3_day', '$9.99') }}</div>
                   <div class="plan-desc">{{ t.get('pass_3_day_desc', 'Full access for 72 hours') }}</div>
                 </button>
               </div>
@@ -538,14 +535,14 @@
             <div class="button-group">
               <!-- The Glowing "GO" Button Style -->
               <button class="modal-primary btn-glow" type="button" id="proceedToPaymentBtn">
-                <span class="btn-text">{{ t.get('continue_to_payment', 'Continue to Payment') }} ➔</span>
+                <span class="btn-text">{{ t.get('continue_to_payment', 'Verify Request') }} ➔</span>
                 <span class="btn-spinner hidden">⟳</span>
               </button>
             </div>
 
             <!-- Trust Signals -->
             <div class="trust-signals">
-              🔒 Secure checkout via DodoPay
+              🔒 Protected by secure research authorization gateway
             </div>
 
             <div class="secondary-actions">
@@ -561,9 +558,8 @@
           <div class="modal-stack purchase-step hidden" id="purchaseStep2">
             <div class="processing-state">
               <div class="spinner-large">⟳</div>
-              <div class="option-title">{{ t.get('preparing_checkout', 'Preparing Checkout...') }}</div>
-              <div class="option-meta">{{ t.get('checkout_redirect_msg', "You'll be redirected to our secure payment
-                provider.") }}</div>
+              <div class="option-title">{{ t.get('preparing_checkout', 'Authorizing Preview...') }}</div>
+              <div class="option-meta">{{ t.get('checkout_redirect_msg', "You'll be redirected to activate your session.") }}</div>
             </div>
             <button class="modal-secondary" type="button" id="cancelPaymentBtn">{{ t.get('cancel', 'Cancel') }}</button>
             <div class="inline-error" id="purchaseRedirectError" role="alert"></div>
@@ -682,11 +678,11 @@
               </div>
 
               <p class="about-panel__text">
-                {{ t.get('important_notes_desc') }}
+                {{ t.get('important_notes_desc', 'DillDrill is an independent international research project and informational tool. Results may be partial, delayed, inferred, or unavailable depending on data coverage and research-access state. Always verify independently.') }}
               </p>
             </section>
 
-            <!-- Support -->
+            <!-- Legal & Contact -->
             <section class="about-panel">
               <div class="about-panel__head">
                 <div class="about-panel__icon" aria-hidden="true">
@@ -697,13 +693,12 @@
                   </svg>
                 </div>
                 <h3 class="about-panel__title">
-                  {{ t.get('support_legal', 'Legal & Contact') }}
+                  {{ t.get('legal_contact', 'Legal & Contact') }}
                 </h3>
               </div>
 
               <div class="about-links">
-                <!-- Added noreferrer for security -->
-                <a href="{{ faq_url|default('#') }}" class="about-link-chip" target="_blank" rel="noopener noreferrer">
+                <a href="/legal" class="about-link-chip">
                   {{ t.get('about_legal', 'Legal') }}
                 </a>
 
@@ -712,7 +707,7 @@
                 </a>
 
                 <a href="mailto:dilldrillteam@gmail.com" class="about-link-chip about-link-chip--stack">
-                  <span>{{ t.get('about_partner_contact_label', 'Partnerships & collaboration') }}</span>
+                  <span>{{ t.get('about_collab_contact_label', 'Collaborations & inquiries') }}</span>
                   <span class="chip-email">dilldrillteam@gmail.com</span>
                 </a>
               </div>

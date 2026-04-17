@@ -1,0 +1,33 @@
+{% extends "legal/base.html" %}
+
+{% block title %}Legal - DillDrill{% endblock %}
+{% block active_page %}hub{% endblock %}
+
+{% block content %}
+<h1>Legal</h1>
+<p style="font-size: 1.1rem; color: var(--text-base);">
+  DillDrill is an independent international research project. These documents explain the terms and data handling that apply to participants.
+</p>
+
+<div class="legal-hub-grid">
+  <a href="/terms" class="legal-hub-card">
+    <div class="legal-hub-title">Terms of Use</div>
+    <div class="legal-hub-desc">Conditions that apply to using DillDrill, including its research-preview status, informational-only outputs, and acceptable use.</div>
+  </a>
+
+  <a href="/privacy" class="legal-hub-card">
+    <div class="legal-hub-title">Privacy Policy</div>
+    <div class="legal-hub-desc">What data is collected during your participation, how it is used for research purposes, and what choices you have.</div>
+  </a>
+
+  <a href="/research-notice" class="legal-hub-card">
+    <div class="legal-hub-title">Research & Beta Notice</div>
+    <div class="legal-hub-desc">Important caveats about DillDrill's ongoing experimental and beta status — accuracy limits, availability, and what to verify independently.</div>
+  </a>
+
+  <a href="/research-access" class="legal-hub-card">
+    <div class="legal-hub-title">Research Access Notice</div>
+    <div class="legal-hub-desc">Explains access controls, participation limits, temporary expanded access, and how intent-measurement flows are used in the project.</div>
+  </a>
+</div>
+{% endblock %}

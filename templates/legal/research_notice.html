@@ -1,0 +1,33 @@
+{% extends "legal/base.html" %}
+
+{% block title %}Research & Beta Notice - DillDrill{% endblock %}
+{% block active_page %}research{% endblock %}
+
+{% block content %}
+<h1>DillDrill Research & Beta Notice</h1>
+
+<div class="legal-meta">
+  <p>Effective Date: {{ legal_config.date }}</p>
+  <p>Last Updated: {{ legal_config.date }}</p>
+</div>
+
+<p>DillDrill is currently operating in research, pilot, preview, and beta mode.</p>
+
+<p>The Service is designed to help users explore construction activity signals and related location-based information. It is still being tested, refined, and improved.</p>
+
+<p>By using DillDrill, you acknowledge that:</p>
+<ul>
+  <li>outputs may be incomplete, delayed, inaccurate, or inconsistent;</li>
+  <li>the Service may contain bugs or technical failures;</li>
+  <li>location ratings and demand indicators are informational only;</li>
+  <li>user-submitted reports may be mistaken, subjective, or misleading;</li>
+  <li>the Service is not a substitute for independent verification or on-site inspection;</li>
+  <li>research-access rules, temporary access states, limits, join flows, or related flows may change at any time.</li>
+</ul>
+
+<p>DillDrill does not guarantee that any location rating, signal, report, or output is correct, complete, current, or suitable for your needs.</p>
+
+<p>You should not rely solely on DillDrill for any housing, renting, purchasing, relocation, business, travel, or investment decision.</p>
+
+<p>For full terms, please review the DillDrill Terms of Use and Privacy Policy.</p>
+{% endblock %}

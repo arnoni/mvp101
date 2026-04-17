@@ -196,12 +196,25 @@ app.include_router(auth_router, prefix="/api/auth")
 app.include_router(webhooks_router, prefix="/api/webhooks")
 app.include_router(billing_router, prefix="/api/billing")
 
-#
+@app.get("/legal", response_class=HTMLResponse)
+async def legal_hub(request: Request):
+    return templates.TemplateResponse("legal/index.html", {"request": request, "lang": request.cookies.get("dd_lang", "en"), "legal_config": settings.LEGAL_CONFIG})
+
+@app.get("/terms", response_class=HTMLResponse)
+async def terms(request: Request):
+    return templates.TemplateResponse("legal/terms.html", {"request": request, "lang": request.cookies.get("dd_lang", "en"), "legal_config": settings.LEGAL_CONFIG})
 
 @app.get("/privacy", response_class=HTMLResponse)
-async def privacy():
-    with open(os.path.join(static_dir, "privacy.html"), "r", encoding="utf-8") as f:
-        return HTMLResponse(content=f.read())
+async def privacy(request: Request):
+    return templates.TemplateResponse("legal/privacy.html", {"request": request, "lang": request.cookies.get("dd_lang", "en"), "legal_config": settings.LEGAL_CONFIG})
+
+@app.get("/research-notice", response_class=HTMLResponse)
+async def research_notice(request: Request):
+    return templates.TemplateResponse("legal/research_notice.html", {"request": request, "lang": request.cookies.get("dd_lang", "en"), "legal_config": settings.LEGAL_CONFIG})
+
+@app.get("/research-access", response_class=HTMLResponse)
+async def research_access(request: Request):
+    return templates.TemplateResponse("legal/research_access.html", {"request": request, "lang": request.cookies.get("dd_lang", "en"), "legal_config": settings.LEGAL_CONFIG})
 
 @app.get("/sw.js", response_class=HTMLResponse)
 async def service_worker():

@@ -4,7 +4,7 @@
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from pydantic import Field
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 class Settings(BaseSettings):
     # Implements TSD Section 5: Executive Summary
@@ -108,6 +108,19 @@ class Settings(BaseSettings):
     BAND_IMMEDIATE_FRAC: float = 0.15
     BAND_NEARBY_FRAC: float = 0.35
     BAND_WITHIN_CELL_FRAC: float = 0.75
+
+    # --- Legal Configuration ---
+    LEGAL_EFFECTIVE_DATE: str = Field("17.04.2026", description="Effective and last-updated date shown in legal documents")
+    LEGAL_CONTACT_EMAIL: str = Field("dilldrillteam@gmail.com", description="Contact email shown in legal documents")
+    LEGAL_MINIMUM_AGE: str = Field("18", description="Minimum age shown in privacy policy")
+
+    @property
+    def LEGAL_CONFIG(self) -> Dict[str, str]:
+        return {
+            "date": self.LEGAL_EFFECTIVE_DATE,
+            "contact_email": self.LEGAL_CONTACT_EMAIL,
+            "minimum_age": self.LEGAL_MINIMUM_AGE,
+        }
 
     # Pydantic configuration
     model_config = SettingsConfigDict(
