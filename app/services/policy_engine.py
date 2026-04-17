@@ -62,7 +62,7 @@ class PolicyEngine:
         from app.core.keys import KeyBuilder
         
         # STRICT RULE: If tier is PAID and entitlement is not stale -> user_id
-        if tier in {TierStatus.PASS_1_DAY, TierStatus.PASS_3_DAY} and not entitlement_stale and user_id:
+        if tier in {TierStatus.SIMULATED_PAID, TierStatus.PASS_1_DAY, TierStatus.PASS_3_DAY} and not entitlement_stale and user_id:
              return KeyBuilder.quota_rolling24h("paid", user_id)
         
         # Fallback to anon_id
@@ -79,7 +79,7 @@ class PolicyEngine:
         limit = max(1, int(context.daily_limit))
         max_results = self.FREE_TIER_RESULTS
         
-        if context.paid_tier in {TierStatus.PASS_1_DAY, TierStatus.PASS_3_DAY}:
+        if context.paid_tier in {TierStatus.SIMULATED_PAID, TierStatus.PASS_1_DAY, TierStatus.PASS_3_DAY}:
             max_results = self.PAID_TIER_RESULTS
             
         # 2. Check Quota

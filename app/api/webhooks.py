@@ -5,9 +5,10 @@ import logging
 import secrets
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from sqlalchemy import text
+from sqlalchemy import insert, select, text
 
 from app.core.config import settings
+from app.models.models import MagicLinkToken, SimulatedBillingPlan
 from app.services.entitlement_service import EntitlementService, TierStatus
 from email_service import EmailService
 
@@ -51,6 +52,11 @@ def parse_dodo_event(raw_body: bytes):
                     or "USD"
                 ),
                 "status": data.get("status"),
+                "plan_code": (
+                    data.get("metadata", {}).get("plan")
+                    or data.get("metadata", {}).get("plan_code")
+                    or data.get("plan_code")
+                ),
             },
         )
     except (json.JSONDecodeError, AttributeError, KeyError) as e:
@@ -79,11 +85,27 @@ async def dodo_webhook(request: Request, services: dict = Depends(get_services))
         if not event or not event.id or not event.email:
             raise HTTPException(status_code=400, detail="Incomplete event data")
 
+        # Isolation guardrail: simulated plans must never touch real billing ledger tables.
+        if event.plan_code:
+            async with db.connect() as conn:
+                simulated_plan = await conn.execute(
+                    select(SimulatedBillingPlan.code).where(SimulatedBillingPlan.code == str(event.plan_code)).limit(1)
+                )
+                if simulated_plan.scalar_one_or_none():
+                    logger.info("WEBHOOK_DODO_SIMULATED_PLAN_IGNORED plan=%s event_id=%s", event.plan_code, event.id)
+                    return {"status": "ok", "reason": "simulated_plan_ignored"}
+
         lock_key = f"lock:webhook:{event.id}"
         acquired = await redis.set(lock_key, "1", nx=True, ex=30)
         if not acquired:
             raise HTTPException(status_code=409, detail="Concurrent processing")
 
+        issued_pass = None
+        duration_days = None
+        daily_limit = None
+        expires_at_ts = None
+        user_id_str = None
+        magic_url = None
         try:
             async with db.begin() as conn:
                 already = await conn.execute(
@@ -204,46 +226,36 @@ async def dodo_webhook(request: Request, services: dict = Depends(get_services))
                         "payload": raw_body.decode("utf-8")
                     }
                 )
-
-                tier = TierStatus.PASS_3_DAY if duration_days >= 3 else TierStatus.PASS_1_DAY
+                user_id_str = str(issued_pass["user_id"])
                 expires_at_ts = int(issued_pass["expires_at"].timestamp()) if issued_pass.get("expires_at") else None
+                raw_token = secrets.token_urlsafe(32)
+                token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
+                await conn.execute(
+                    insert(MagicLinkToken).values(
+                        user_id=issued_pass["user_id"],
+                        email=event.email.lower(),
+                        token_hash=token_hash,
+                        expires_at=text("NOW() + INTERVAL '30 minutes'"),
+                    )
+                )
+                app_origin = resolve_checkout_base(settings.APP_ORIGIN).rstrip("/")
+                magic_url = f"{app_origin}/api/auth/magic?token={raw_token}"
+
+            # DB committed successfully above. Cache updates happen strictly after commit.
+            if issued_pass and redis:
+                tier = TierStatus.PASS_3_DAY if int(duration_days or 1) >= 3 else TierStatus.PASS_1_DAY
                 try:
                     await EntitlementService.cache_entitlement(
-                        user_id=str(issued_pass["user_id"]),
+                        user_id=user_id_str,
                         tier=tier,
                         redis_cli=redis,
                         active_plan_code=str(issued_pass["plan_code"]),
-                        daily_limit=daily_limit,
+                        daily_limit=int(daily_limit or 5),
                         expires_at=expires_at_ts,
                     )
                 except Exception as redis_exc:
                     logger.warning(f"WEBHOOK_DODO_CACHE_FAILED: {redis_exc}")
-                    # Don't fail the whole transaction for a cache write failure
 
-            raw_token = secrets.token_urlsafe(32)
-            token_hash = hashlib.sha256(raw_token.encode()).hexdigest()
-            redis_payload = json.dumps(
-                {
-                    "user_id": str(issued_pass["user_id"]),
-                }
-            )
-            print(f"About to call redis.set() for magic link: {token_hash[:8]}")
-            import asyncio
-            try:
-                await asyncio.wait_for(
-                    redis.set(f"magic:{token_hash}", redis_payload, ex=1800),
-                    timeout=10,
-                )
-                print(f"redis.set() finished for magic link: {token_hash[:8]}")
-            except asyncio.TimeoutError:
-                logger.error(f"WEBHOOK_DODO_REDIS_TIMEOUT: Redis set timed out for token {token_hash[:8]}")
-                raise
-            except Exception as redis_exc:
-                logger.error(f"WEBHOOK_DODO_REDIS_ERROR: {redis_exc}")
-                raise
-
-            app_origin = resolve_checkout_base(settings.APP_ORIGIN).rstrip("/")
-            magic_url = f"{app_origin}/api/auth/magic?token={raw_token}"
             try:
                 await email_service.send_magic_link(email=event.email, magic_link=magic_url, expire_minutes=30)
             except Exception as email_exc:

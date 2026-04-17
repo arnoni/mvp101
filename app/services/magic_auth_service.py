@@ -1,19 +1,20 @@
 import time
 import secrets
 import logging
-import json
+import hashlib
 import httpx
 from enum import Enum
 from typing import Optional, Protocol
 from datetime import datetime, timedelta, timezone
 
 from pydantic import BaseModel, EmailStr
-from itsdangerous import URLSafeTimedSerializer, BadSignature, SignatureExpired
 from sqlalchemy.ext.asyncio import AsyncEngine
-from sqlalchemy import text
+from sqlalchemy import insert, select, text, update, func
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from upstash_redis.asyncio import Redis
 
 from app.core.config import settings
+from app.models.models import MagicLinkToken, User
 
 logger = logging.getLogger(__name__)
 
@@ -181,40 +182,41 @@ class AuthResult(BaseModel):
     error_code: Optional[str] = None
 
 class MagicAuthService:
-    def __init__(self, db: AsyncEngine, redis: Redis, payment_factory: PaymentGatewayFactory):
+    def __init__(self, db: AsyncEngine, redis: Redis | None, payment_factory: PaymentGatewayFactory):
         self.db = db
         self.redis = redis
         self.payment_factory = payment_factory
-        self.serializer = URLSafeTimedSerializer(settings.SECRET_KEY, salt="magic-auth-v3")
         
     async def create_magic_link(self, email: str, purchase_id: Optional[str] = None, provider: Optional[str] = None) -> str:
-        """Generates token payload containing payment refs & stores idempotency row."""
+        """Generates a one-time token and persists it in Postgres."""
         try:
-            expires_at = datetime.now(timezone.utc) + timedelta(minutes=15)
-            token_id = secrets.token_urlsafe(16)
-            
-            payload = {
-                "email": email.lower(),
-                "exp": int(expires_at.timestamp()),
-                "jti": token_id,
-                "pid": purchase_id,
-                "prv": provider
-            }
-            
-            try:
-                token = self.serializer.dumps(payload)
-            except Exception as e:
-                logger.error(f"MAGIC_AUTH_SERIALIZATION_FAILED: {e}")
-                raise
+            del purchase_id, provider
+            normalized_email = email.lower()
+            expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.MAGICLINK_EXPIRY_MINUTES)
+            token = secrets.token_urlsafe(32)
+            token_hash = hashlib.sha256(token.encode()).hexdigest()
 
             async with self.db.begin() as conn:
                 try:
+                    upsert_user_stmt = (
+                        pg_insert(User)
+                        .values(email=normalized_email)
+                        .on_conflict_do_update(
+                            index_elements=[User.email],
+                            set_={"updated_at": func.now()},
+                        )
+                        .returning(User.id)
+                    )
+                    user_result = await conn.execute(upsert_user_stmt)
+                    user_id = user_result.scalar_one()
+
                     await conn.execute(
-                        text("""
-                            INSERT INTO magic_link_tokens (email, token_hash, expires_at, purpose)
-                            VALUES (:email, :token_id, :expires_at, 'login')
-                        """),
-                        {"email": email.lower(), "token_id": token_id, "expires_at": expires_at}
+                        insert(MagicLinkToken).values(
+                            user_id=user_id,
+                            email=normalized_email,
+                            token_hash=token_hash,
+                            expires_at=expires_at,
+                        )
                     )
                 except Exception as e:
                     logger.error(f"MAGIC_AUTH_DB_INSERT_FAILED: {e}")
@@ -226,67 +228,41 @@ class MagicAuthService:
             raise
 
     async def redeem_token(self, token: str) -> AuthResult:
-        """Atomically checks token, validates MoR payment safely, and logs user in."""
+        """Consumes a Postgres-backed magic link and returns the logged-in user."""
         try:
-            try:
-                payload = self.serializer.loads(token, max_age=900)
-                email = payload["email"]
-                token_id = payload["jti"]
-                purchase_id = payload.get("pid")
-                provider_name = payload.get("prv")
-            except SignatureExpired:
-                return AuthResult(success=False, error="Link expired", error_code="expired")
-            except BadSignature:
-                return AuthResult(success=False, error="Invalid link signature", error_code="invalid")
-            except Exception as e:
-                logger.error(f"MAGIC_AUTH_TOKEN_LOAD_FAILED: {e}")
-                return AuthResult(success=False, error="Invalid token", error_code="token_invalid")
+            token_hash = hashlib.sha256(token.encode()).hexdigest()
 
             async with self.db.begin() as conn:
-                # 1. ATOMIC CONSUMPTION: UPDATE ... RETURNING to prevent double-click race conditions
-                try:
-                    result = await conn.execute(
-                        text("""
-                            UPDATE magic_link_tokens 
-                            SET redeemed_at = NOW() 
-                            WHERE token_hash = :token_id AND redeemed_at IS NULL AND expires_at > NOW()
-                            RETURNING id
-                        """),
-                        {"token_id": token_id}
-                    )
-                    if not result.fetchone():
-                        return AuthResult(success=False, error="Link already used or expired", error_code="consumed")
-                except Exception as e:
-                    logger.error(f"MAGIC_AUTH_DB_REDEEM_FAILED: {e}")
-                    return AuthResult(success=False, error="Database error during redemption", error_code="db_error")
+                token_result = await conn.execute(
+                    select(MagicLinkToken).where(MagicLinkToken.token_hash == token_hash).limit(1)
+                )
+                token_row = token_result.scalar_one_or_none()
+                if token_row is None:
+                    return AuthResult(success=False, error="Invalid link", error_code="invalid")
+                if token_row.redeemed_at is not None:
+                    return AuthResult(success=False, error="Link already used", error_code="consumed")
+                if token_row.expires_at <= datetime.now(timezone.utc):
+                    return AuthResult(success=False, error="Link expired", error_code="expired")
 
-                # 2. PAYMENT & SCAM VALIDATION
-                if purchase_id and provider_name:
-                    try:
-                        valid_payment = await self._verify_payment(conn, email, purchase_id, provider_name)
-                        if not valid_payment.success:
-                            return valid_payment
-                    except Exception as e:
-                        logger.error(f"MAGIC_AUTH_PAYMENT_VERIFY_FAILED: {e}")
-                        return AuthResult(success=False, error="Payment verification failed", error_code="payment_verify_failed")
-                    
-                # 3. UPSERT USER
-                try:
-                    user_result = await conn.execute(
-                        text("""
-                            INSERT INTO users (email, ab_cohort, created_at) 
-                            VALUES (:email, CASE WHEN random() < 0.5 THEN 'A' ELSE 'B' END, NOW()) 
-                            ON CONFLICT (email) DO UPDATE SET last_login = NOW()
-                            RETURNING id
-                        """),
-                        {"email": email}
-                    )
-                    user_id = user_result.scalar()
-                except Exception as e:
-                    logger.error(f"MAGIC_AUTH_DB_USER_UPSERT_FAILED: {e}")
-                    return AuthResult(success=False, error="Database error during user login", error_code="user_upsert_failed")
+                await conn.execute(
+                    update(MagicLinkToken)
+                    .where(MagicLinkToken.id == token_row.id)
+                    .values(redeemed_at=func.now())
+                )
 
-            return AuthResult(success=True, user_id=user_id, email=email)
+                user_result = await conn.execute(
+                    pg_insert(User)
+                    .values(email=token_row.email.lower())
+                    .on_conflict_do_update(
+                        index_elements=[User.email],
+                        set_={"last_login": func.now(), "updated_at": func.now()},
+                    )
+                    .returning(User.id, User.email)
+                )
+                user_row = user_result.first()
+                user_id = user_row.id
+
+            return AuthResult(success=True, user_id=user_id, email=user_row.email)
         except Exception as e:
             logger.exception(f"MAGIC_AUTH_REDEEM_CRITICAL_FAILURE: {e}")
             return AuthResult(success=False, error="Critical authentication failure", error_code="critical_failure")

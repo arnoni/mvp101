@@ -2,6 +2,15 @@
 from fastapi import Request, HTTPException, status, Depends
 from typing import Optional
 from app.services.entitlement_service import TierStatus
+from sqlalchemy.sql import Select
+
+
+def scope_to_user(stmt: Select, *, model_user_id_column, current_user_id) -> Select:
+    """Apply app-layer ownership boundary to user-scoped selects.
+
+    Use this helper for selects over user-owned tables when RLS is disabled.
+    """
+    return stmt.where(model_user_id_column == current_user_id)
 
 async def get_current_user_id(request: Request) -> Optional[str]:
     """
@@ -42,7 +51,7 @@ async def require_paid(
         )
         
     # 403: User is logged in but not paid (and verification is fresh)
-    if tier not in {TierStatus.PASS_1_DAY, TierStatus.PASS_3_DAY}:
+    if tier not in {TierStatus.SIMULATED_PAID, TierStatus.PASS_1_DAY, TierStatus.PASS_3_DAY}:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Paid subscription required."

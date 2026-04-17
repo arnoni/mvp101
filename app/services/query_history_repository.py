@@ -42,9 +42,9 @@ class QueryHistoryRepository:
         claimed = await self.redis.set(dedupe_key, "1", ex=window_seconds, nx=True)
         return not bool(claimed)
 
-    async def log_event(self, event: QueryHistoryEvent) -> None:
+    async def log_event(self, event: QueryHistoryEvent) -> int | None:
         if not self.db_engine:
-            return
+            return None
 
         is_dup = await self._is_duplicate_window(event)
         stmt = text(
@@ -62,11 +62,12 @@ class QueryHistoryRepository:
               :demand_cell_id, :request_country, :request_city, :user_agent,
               :result_status, :result_count, :error_code, :response_ms, :is_duplicate_window
             )
+            RETURNING id
             """
         )
 
         async with self.db_engine.begin() as conn:
-            await conn.execute(
+            result = await conn.execute(
                 stmt,
                 {
                     "anon_id": event.anon_id,
@@ -89,3 +90,5 @@ class QueryHistoryRepository:
                     "is_duplicate_window": is_dup,
                 },
             )
+            row = result.first()
+            return int(row.id) if row else None

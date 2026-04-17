@@ -5,23 +5,22 @@ from urllib.parse import quote, unquote
 from pydantic import BaseModel, Field
 from pydantic import ValidationError
 import uuid
+from sqlalchemy import insert
 
 from app.core.config import settings
-from app.models.dto import FindNearestRequest, FindNearestResponse, ErrorResponse, StatusResponse, UserStatus
+from app.models.models import FunnelEvent
+from app.models.dto import ErrorResponse, StatusResponse, UserStatus
 from app.schemas.search import SearchRequest, SearchResponse, SearchTarget
 from app.schemas.user_reports import UserReportRequest, UserReportResponse
 from app.services.search_service import SearchService, SearchDependencies
 from app.services.area_bucketer import AreaBucketer
 from app.services.entitlement_service import EntitlementService, TierStatus
 from app.services.policy_engine import PolicyEngine, RequestContext, PolicyVerdict, PolicyDecision, run_gate
-from app.services.poi_service import POIService
 from app.services.quota_repository import QuotaRepository
 from app.utils.security import verify_turnstile, get_client_ip, protect_mutation
 from app.services.bucket_engine import BucketEngine
 from app.services.precompute_repo import PrecomputeRepository
-from app.services.anomaly_service import AnomalyService
 from app.services.demand_service import DemandService
-from app.services.report_renderer import ReportRenderer
 from app.services.i18n import get_translations
 from app.core.config import is_inside_da_nang_bbox
 from app.services.location_parser import (
@@ -41,11 +40,64 @@ def get_req_id(request: Request) -> Optional[str]:
 
 
 def tier_to_client(tier: TierStatus) -> str:
+    if tier == TierStatus.SIMULATED_PAID:
+        return "simulated_paid"
     if tier == TierStatus.PASS_3_DAY:
         return "3_day"
     if tier == TierStatus.PASS_1_DAY:
         return "1_day"
     return "free"
+
+
+def _tier_to_funnel(tier: TierStatus) -> str:
+    if tier == TierStatus.SIMULATED_PAID:
+        return "simulated_paid"
+    if tier == TierStatus.PASS_1_DAY:
+        return "paid_1_day"
+    if tier == TierStatus.PASS_3_DAY:
+        return "paid_3_days"
+    return "free"
+
+
+async def _emit_funnel_event(request: Request, **values) -> None:
+    db_engine = getattr(request.app.state, "db_engine", None)
+    if not db_engine:
+        return
+    payload = {
+        "event_source": "api",
+        "event_version": 1,
+        "anon_id": getattr(request.state, "anon_id", None),
+        "session_id": request.cookies.get(settings.SESSION_COOKIE_NAME),
+        "user_id": getattr(request.state, "user_id", None),
+        "effective_tier": "free",
+        "metadata_json": {},
+    }
+    payload.update(values)
+    try:
+        async with db_engine.begin() as conn:
+            await conn.execute(insert(FunnelEvent).values(**payload))
+    except Exception as exc:
+        route_path = request.url.path if request.url else "unknown"
+        logger.error(
+            "funnel_event_emit_failed",
+            route=route_path,
+            event_name=payload.get("event_name"),
+            user_id=payload.get("user_id"),
+            session_id=payload.get("session_id"),
+            anon_id=payload.get("anon_id"),
+            error_class=exc.__class__.__name__,
+            error=str(exc),
+        )
+        try:
+            import sentry_sdk
+            with sentry_sdk.push_scope() as scope:
+                scope.set_tag("telemetry_kind", "funnel_event")
+                scope.set_tag("route", route_path)
+                scope.set_tag("event_name", str(payload.get("event_name")))
+                scope.set_extra("payload", payload)
+                sentry_sdk.capture_exception(exc)
+        except Exception:
+            logger.error("funnel_event_sentry_capture_failed", route=route_path, event_name=payload.get("event_name"))
 
 # --- Dependencies ---
 
@@ -56,9 +108,6 @@ def get_quota_repo(request: Request) -> QuotaRepository:
 
 def get_precompute_repo(request: Request) -> PrecomputeRepository:
     return request.app.state.precompute_repo
-
-def get_anomaly_service(request: Request) -> AnomalyService:
-    return request.app.state.anomaly_service
 
 def get_demand_service(request: Request) -> DemandService:
     return request.app.state.demand_service
@@ -229,196 +278,6 @@ async def parse_location(data: ParseLocationRequest):
     except LocationParseError as exc:
         return ParseLocationResponse(ok=False, error_code=exc.error_code, message=str(exc))
 
-@router.post("/find-nearest", response_model=FindNearestResponse)
-async def find_nearest(
-    request: Request,
-    response: Response,
-    data: FindNearestRequest,
-    policy_engine: PolicyEngine = Depends(get_policy_engine),
-    quota_repo: QuotaRepository = Depends(get_quota_repo),
-    precompute_repo: PrecomputeRepository = Depends(get_precompute_repo),
-    anomaly_service: AnomalyService = Depends(get_anomaly_service),
-    demand_service: DemandService = Depends(get_demand_service),
-    query_history_repo: QueryHistoryRepository = Depends(get_query_history_repo),
-):
-    # CSRF protection for quota-consuming POST
-    await protect_mutation(request)
-    
-    try:
-        started_at = time.perf_counter()
-        anon_id = getattr(request.state, "anon_id", "unknown_anon")
-        user_id = getattr(request.state, "user_id", None)
-        client_ip = get_client_ip(request)
-        tier = getattr(request.state, "tier", TierStatus.FREE)
-        entitlement_stale = getattr(request.state, "entitlement_stale", False)
-        
-        parsed_input: ParsedLocationInput
-        if data.location_input:
-            try:
-                parsed_input = parse_location_input(data.location_input)
-                data.lat = parsed_input.latitude
-                data.lon = parsed_input.longitude
-            except LocationParseError as exc:
-                raise HTTPException(
-                    status_code=http_status.HTTP_400_BAD_REQUEST,
-                    detail=ErrorResponse(error=exc.error_code, detail=str(exc)).model_dump()
-                ) from exc
-        elif data.lat is not None and data.lon is not None:
-            parsed_input = ParsedLocationInput(
-                input_kind="decimal_pair",
-                original_input=f"{data.lat}, {data.lon}",
-                normalized_input=f"{data.lat:.6f}, {data.lon:.6f}",
-                latitude=data.lat,
-                longitude=data.lon,
-                resolution_method="legacy_lat_lon",
-            )
-        else:
-            raise HTTPException(
-                status_code=http_status.HTTP_400_BAD_REQUEST,
-                detail=ErrorResponse(error="INVALID_LOCATION_INPUT", detail="Location input is required.").model_dump()
-            )
-
-        # 1. Anomaly Check
-        # Identify based on user_id if present, else anon_id
-        is_abusive = await anomaly_service.check_is_abusive(
-            "user" if user_id else "anon", 
-            user_id if user_id else anon_id
-        )
-        if is_abusive:
-            logger.warning("abuse_detected", ip=client_ip, id=user_id or anon_id)
-            # Fail silently or block? PolicyEngine handles GATE, Anomaly handles velocity.
-            # We can force BLOCK via PolicyEngine or return error. 
-            # Returning error "try again later" is safer.
-            raise HTTPException(
-                status_code=http_status.HTTP_429_TOO_MANY_REQUESTS,
-                detail=ErrorResponse(error="ABUSE_LIMIT", detail="Too many variations. Please wait.").model_dump()
-            )
-
-        # 2. Bucket Engine
-        from app.services.bucket_engine import BucketEngine
-        cell_id = BucketEngine.get_cell_id(parsed_input.latitude, parsed_input.longitude)
-        # Using cell_id as "area_code" logic for policy if we wanted per-cell quotas?
-        # For now, stick to "area_code" from AreaBucketer for simple "global/danang" check if needed.
-        area_code = AreaBucketer.get_area_code(parsed_input.latitude, parsed_input.longitude)
-
-        # 3. Policy Gate
-        gate_result = await run_gate(
-            request=request,
-            data_turnstile_token=data.turnstile_token,
-            policy_engine=policy_engine,
-            quota_repo=quota_repo,
-            anon_id=anon_id,
-            user_id=user_id,
-            tier=tier,
-            entitlement_stale=entitlement_stale,
-            daily_limit=daily_limit,
-            area_code=area_code,
-        )
-        decision = gate_result.decision
-        
-        # 4. Anomaly Record (Record this attempt AFTER gate passes or challenges?)
-        # Record attempt anyway
-        await anomaly_service.record_action("user" if user_id else "anon", user_id if user_id else anon_id, cell_id)
-        
-        # 5. Demand Record (Record interest in this cell)
-        await demand_service.record_query(cell_id)
-
-        # 6. Fetch Precomputed Data
-        # Only fetch if allowed
-        candidates = []
-        logs = []
-        if decision.verdict == PolicyVerdict.ALLOW or gate_result.admin_bypass:
-            candidates = await precompute_repo.get_candidates(cell_id)
-            if settings.ENV == "development":
-                logs.append(f"Cell {cell_id} candidates: {len(candidates)}")
-        
-        # 7. Render Opaque Report
-        from app.services.report_renderer import ReportRenderer
-        report_lines = ReportRenderer.render(candidates, parsed_input.latitude, parsed_input.longitude, limit=decision.max_results)
-        
-        # 8. Construct Response
-        remaining_after = gate_result.remaining_after
-        limit = daily_limit
-        checks_today = max(0, limit - remaining_after)
-        
-        lang = request.cookies.get("dd_lang") or "en"
-        t = get_translations(lang)
-        # Determine status text
-        can_search = (decision.verdict != PolicyVerdict.BLOCK or gate_result.admin_bypass)
-        if not can_search:
-            status_text = t.get("status_limit", "Daily limit reached")
-            state = "limit"
-        elif checks_today == 0:
-            status_text = t.get("status_quiet", "Quiet check available")
-            state = "quiet"
-         # Correct "active" text logic
-        else:
-             status_text = t.get("status_active_many", "You’ve checked {n} places today").replace("{n}", str(checks_today))
-             state = "active"
-
-        tier_str = tier_to_client(tier)
-        results_state = "found" if len(report_lines) > 0 else "empty"
-        if not can_search: results_state = "never"
-
-        resp = FindNearestResponse(
-            report_lines=report_lines,
-            user_lat=parsed_input.latitude,
-            user_lon=parsed_input.longitude,
-            quota_remaining=remaining_after,
-            share_url=f"/share?lat={data.lat}&lon={data.lon}",
-            debug_logs=logs if settings.ENV == "development" else None,
-            user_status=UserStatus(state=state, text=status_text),
-            can_search=can_search,
-            turnstile_required=False, # We don't ask for TS in response generally, client logic handles based on 402/Challenge? 
-            # PolicyEngine returns CHALLENGE_REQUIRED. 
-            # If Result was CHALLENGE_REQUIRED, run_gate would have thrown exception if token missing.
-            # If token was present and valid, run_gate returned ALLOW.
-            # So here turnstile_required is False unless next one needs it?
-            # Actually frontend uses this flag to show widget.
-            # If we just consumed quota, maybe we are good.
-            # But let's assume False for now.
-            checks_today=checks_today,
-            tier=tier_str,
-            results_state=results_state,
-            errors=None
-        )
-
-        await query_history_repo.log_event(
-            QueryHistoryEvent(
-                parsed=parsed_input,
-                anon_id=anon_id,
-                session_id=request.cookies.get(settings.SESSION_COOKIE_NAME),
-                user_id=user_id,
-                demand_cell_id=cell_id,
-                user_agent=request.headers.get("user-agent"),
-                request_country=request.headers.get("cf-ipcountry"),
-                request_city=request.headers.get("x-vercel-ip-city"),
-                result_status=results_state,
-                result_count=len(report_lines),
-                error_code=None,
-                response_ms=int((time.perf_counter() - started_at) * 1000),
-            )
-        )
-        
-        logger.info("search_request_processed", anon_id=anon_id, cell_id=cell_id, results_count=len(report_lines))
-        return resp
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        err_id = get_req_id(request) or "unknown"
-        logger.critical(f"unexpected_error_in_find_nearest", error=str(e), exc_info=True)
-        raise HTTPException(
-            status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=ErrorResponse(
-                error="INTERNAL_LOGIC_ERROR",
-                detail="An unexpected error occurred processing your request.",
-                error_id=err_id
-            ).model_dump()
-        )
-
-
-
 @router.post("/search", response_model=SearchResponse)
 async def search(
     request: Request,
@@ -427,29 +286,67 @@ async def search(
     quota_repo: QuotaRepository = Depends(get_quota_repo),
     precompute_repo: PrecomputeRepository = Depends(get_precompute_repo),
     demand_service: DemandService = Depends(get_demand_service),
+    query_history_repo: QueryHistoryRepository = Depends(get_query_history_repo),
 ):
     try:
         await protect_mutation(request)
+        started_at = time.perf_counter()
 
         anon_id = getattr(request.state, "anon_id", "unknown_anon")
         user_id = getattr(request.state, "user_id", None)
         tier = getattr(request.state, "tier", TierStatus.FREE)
         entitlement_stale = getattr(request.state, "entitlement_stale", False)
         daily_limit = int(getattr(request.state, "daily_limit", 3) or 3)
+        if data.location_input:
+            parsed_input = parse_location_input(data.location_input)
+            data.lat = parsed_input.latitude
+            data.lon = parsed_input.longitude
+        else:
+            parsed_input = ParsedLocationInput(
+                input_kind="decimal_pair",
+                original_input=f"{data.lat}, {data.lon}",
+                normalized_input=f"{data.lat:.6f}, {data.lon:.6f}",
+                latitude=data.lat,
+                longitude=data.lon,
+                resolution_method="search_lat_lon",
+            )
         area_code = AreaBucketer.get_area_code(data.lat, data.lon)
+        check_types = ["construction", "demand"] if data.target == SearchTarget.BOTH else [data.target.value]
 
-        gate_result = await run_gate(
-            request=request,
-            data_turnstile_token=data.turnstile_token,
-            policy_engine=policy_engine,
-            quota_repo=quota_repo,
-            anon_id=anon_id,
-            user_id=user_id,
-            tier=tier,
-            entitlement_stale=entitlement_stale,
-            daily_limit=daily_limit,
-            area_code=area_code,
-        )
+        for check_type in check_types:
+            ui_surface = "demand_level_page" if check_type == "demand" else "construction_level_page"
+            await _emit_funnel_event(
+                request,
+                event_name="check_attempted",
+                effective_tier=_tier_to_funnel(tier),
+                check_type=check_type,
+                ui_surface=ui_surface,
+            )
+
+        try:
+            gate_result = await run_gate(
+                request=request,
+                data_turnstile_token=data.turnstile_token,
+                policy_engine=policy_engine,
+                quota_repo=quota_repo,
+                anon_id=anon_id,
+                user_id=user_id,
+                tier=tier,
+                entitlement_stale=entitlement_stale,
+                daily_limit=daily_limit,
+                area_code=area_code,
+            )
+        except HTTPException:
+            for check_type in check_types:
+                ui_surface = "demand_level_page" if check_type == "demand" else "construction_level_page"
+                await _emit_funnel_event(
+                    request,
+                    event_name="check_blocked_tier",
+                    effective_tier=_tier_to_funnel(tier),
+                    check_type=check_type,
+                    ui_surface=ui_surface,
+                )
+            raise
 
         limit = daily_limit
         checks_today = max(0, limit - gate_result.remaining_after)
@@ -462,12 +359,48 @@ async def search(
                 demand_service=demand_service,
             )
         )
-        return await service.run(
+        response_payload = await service.run(
             request=data,
             tier=tier_str,
             quota_remaining=gate_result.remaining_after,
             checks_today=checks_today,
         )
+        related_query_id = await query_history_repo.log_event(
+            QueryHistoryEvent(
+                parsed=parsed_input,
+                anon_id=anon_id,
+                session_id=request.cookies.get(settings.SESSION_COOKIE_NAME),
+                user_id=user_id,
+                demand_cell_id=BucketEngine.get_cell_id(data.lat, data.lon),
+                user_agent=request.headers.get("user-agent"),
+                request_country=request.headers.get("cf-ipcountry"),
+                request_city=request.headers.get("x-vercel-ip-city"),
+                result_status="search_completed",
+                result_count=int((1 if response_payload.construction else 0) + (1 if response_payload.demand else 0)),
+                error_code=None,
+                response_ms=int((time.perf_counter() - started_at) * 1000),
+            )
+        )
+        if related_query_id is not None:
+            if response_payload.construction is not None and data.target in (SearchTarget.CONSTRUCTION, SearchTarget.BOTH):
+                await _emit_funnel_event(
+                    request,
+                    event_name="check_completed",
+                    effective_tier=_tier_to_funnel(tier),
+                    check_type="construction",
+                    ui_surface="construction_level_page",
+                    related_query_id=related_query_id,
+                )
+            if response_payload.demand is not None and data.target in (SearchTarget.DEMAND, SearchTarget.BOTH) and _tier_to_funnel(tier) != "free":
+                await _emit_funnel_event(
+                    request,
+                    event_name="check_completed",
+                    effective_tier=_tier_to_funnel(tier),
+                    check_type="demand",
+                    ui_surface="demand_level_page",
+                    related_query_id=related_query_id,
+                )
+        return response_payload
     except HTTPException:
         raise
     except Exception as exc:
@@ -494,9 +427,10 @@ async def construction_wrapper(
     quota_repo: QuotaRepository = Depends(get_quota_repo),
     precompute_repo: PrecomputeRepository = Depends(get_precompute_repo),
     demand_service: DemandService = Depends(get_demand_service),
+    query_history_repo: QueryHistoryRepository = Depends(get_query_history_repo),
 ):
     data.target = SearchTarget.CONSTRUCTION
-    payload = await search(request, data, policy_engine, quota_repo, precompute_repo, demand_service)
+    payload = await search(request, data, policy_engine, quota_repo, precompute_repo, demand_service, query_history_repo)
     return payload.construction or {"message": "No construction result"}
 
 
@@ -508,9 +442,10 @@ async def demand_wrapper(
     quota_repo: QuotaRepository = Depends(get_quota_repo),
     precompute_repo: PrecomputeRepository = Depends(get_precompute_repo),
     demand_service: DemandService = Depends(get_demand_service),
+    query_history_repo: QueryHistoryRepository = Depends(get_query_history_repo),
 ):
     data.target = SearchTarget.DEMAND
-    payload = await search(request, data, policy_engine, quota_repo, precompute_repo, demand_service)
+    payload = await search(request, data, policy_engine, quota_repo, precompute_repo, demand_service, query_history_repo)
     return payload.demand or {"message": "No demand result"}
 
 
