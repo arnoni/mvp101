@@ -1,7 +1,9 @@
 from app.models.base import Base
 from app.models.models import (
     BillingPlan,
+    CellPoiPrecompute,
     FeatureFlag,
+    FreeQuota,
     FunnelEvent,
     MagicLinkToken,
     PaymentIntent,
@@ -14,12 +16,14 @@ from app.models.models import (
     User,
     UserPass,
     UserLocationQuery,
+    WebhookEvent,
 )
 
 __all__ = [
     "Base",
     "User",
     "BillingPlan",
+    "CellPoiPrecompute",
     "UGCReport",
     "UGCReportEvidence",
     "UserLocationQuery",
@@ -32,4 +36,6 @@ __all__ = [
     "SimulatedPaymentIntent",
     "SimulatedUserPass",
     "FunnelEvent",
+    "WebhookEvent",
+    "FreeQuota",
 ]
