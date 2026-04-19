@@ -23,11 +23,11 @@ class MasterList(BaseModel):
 
 class PrecomputeCandidate(BaseModel):
     """Raw candidate from the DB precompute JSON."""
+    id: str
     lat: float
     lon: float
     category: str
-    name_hash: Optional[str] = None # For dedupe, not display
-    metadata: dict = {}
+    name: Optional[str] = None
 
 # --- Public Data Transfer Objects (DTOs) ---
 
