@@ -58,3 +58,11 @@ This checklist implements behavioral decisions 9–16.
   - Emit `funnel_events` with valid `effective_tier`/`target_tier`/`transition_name` vocabulary.
   - For `event_name='check_completed'`, always supply `related_query_id`.
   - For demand checks, enforce paid/simulated-paid effective tier per DB `CHECK`.
+
+## 10) Precompute/runtime integration follow-ups
+- [x] Precompute Job Refactor
+  - Rename weekly precompute to daily precompute, remove in-cell distance ranking, and align payload schema.
+- [x] Downstream DB Integrations
+  - Update precompute repository parsing to read `payload["pois"]` and map to `PrecomputeCandidate`.
+- [ ] Implement 3x3 Grid Fetching (`get_adjacent_cell_ids`) in the Runtime API Layer
+  - Expand runtime reads to include neighboring cells and define merge/ordering rules for report rendering.

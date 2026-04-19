@@ -1,8 +1,10 @@
-from typing import List, Optional, Any
-from sqlalchemy.ext.asyncio import AsyncEngine
-from sqlalchemy import text
-from app.models.dto import PrecomputeCandidate
 import json
+from typing import List
+
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncEngine
+
+from app.models.dto import PrecomputeCandidate
 
 class PrecomputeRepository:
     """
@@ -29,12 +31,12 @@ class PrecomputeRepository:
                 
                 if row and row[0]:
                     # row[0] is the JSONB data column
-                    raw_list = row[0] if isinstance(row[0], list) else json.loads(row[0])
+                    payload = row[0] if isinstance(row[0], dict) else json.loads(row[0])
+                    raw_list = payload.get("pois", []) if isinstance(payload, dict) else []
                     # Parse into Pydantic models
                     candidates = []
                     for item in raw_list:
                         try:
-                            # Assuming item has lat, lon, category, etc.
                             candidates.append(PrecomputeCandidate(**item))
                         except Exception:
                             continue
