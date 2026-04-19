@@ -433,3 +433,37 @@ class FunnelEvent(Base):
         Index("idx_funnel_events_anon_created", "anon_id", "created_at"),
         Index("idx_funnel_events_session_created", "session_id", "created_at"),
     )
+
+
+class CellPoiPrecompute(Base):
+    __tablename__ = "cell_poi_precompute"
+
+    cell_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    data: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+
+
+class WebhookEvent(Base):
+    __tablename__ = "webhook_events"
+
+    provider: Mapped[str] = mapped_column(Text, primary_key=True)
+    event_id: Mapped[str] = mapped_column(Text, primary_key=True)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, server_default=func.now())
+    processed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'received'"))
+    payload: Mapped[dict[str, Any]] = mapped_column(JSONB, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("status IN ('received', 'processed', 'failed')", name="webhook_events_status_check"),
+    )
+
+
+class FreeQuota(Base):
+    __tablename__ = "free_quotas"
+
+    cohort: Mapped[str] = mapped_column(Text, primary_key=True)
+    daily_limit: Mapped[int] = mapped_column(Integer, nullable=False)
+
+    __table_args__ = (
+        CheckConstraint("daily_limit > 0", name="free_quotas_daily_limit_check"),
+    )
