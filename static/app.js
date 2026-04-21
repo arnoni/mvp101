@@ -540,7 +540,7 @@ document.addEventListener("DOMContentLoaded", () => {
           return;
         }
         console.warn(`Construction API failed with status ${res.status}. Using fallback simulation.`);
-        data = { score: 87, coord_key: state.coords.key, message: 'Simulated Analysis (Fallback)' };
+        data = { score: 87, coord_key: state.coords.key, message: 'Coming soon...' };
       } else {
         data = await res.json();
       }
