@@ -399,6 +399,7 @@ class FunnelEvent(Base):
     ui_surface: Mapped[str | None] = mapped_column(Text)
     check_type: Mapped[str | None] = mapped_column(Text)
     cohort: Mapped[str | None] = mapped_column(Text)
+    selected_language: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'en'"))
     metadata_json: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSONB, nullable=False, server_default=text("'{}'::jsonb")
     )
