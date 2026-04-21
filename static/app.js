@@ -1669,7 +1669,7 @@ const ModalSystem = (function() {
         if (proceedBtn) {
           utils.setButtonLoading(proceedBtn, true);
           const btnText = proceedBtn.querySelector('.btn-text');
-          if (btnText) btnText.textContent = 'Redirecting to secure checkout...';
+          if (btnText) btnText.textContent = 'Redirecting to research access...';
         }
         this.showStep(2); // Show processing spinner 
 
@@ -1696,10 +1696,10 @@ const ModalSystem = (function() {
           if (proceedBtn) {
             utils.setButtonLoading(proceedBtn, false);
             const btnText = proceedBtn.querySelector('.btn-text');
-            if (btnText) btnText.textContent = 'Continue to Payment ➔';
+            if (btnText) btnText.textContent = 'Join Research ➔';
           }
           this.showStep(1);
-          errorEl.textContent = err.message || 'Checkout failed. Please try again.';
+          errorEl.textContent = err.message || 'Research access setup failed. Please try again.';
           // Reset Turnstile on failure 
           if (window.turnstile) turnstile.reset();
         }
@@ -1764,7 +1764,7 @@ const ModalSystem = (function() {
         if (proceedBtn) {
           utils.setButtonLoading(proceedBtn, false);
           const btnText = proceedBtn.querySelector('.btn-text');
-          if (btnText) btnText.textContent = 'Continue to Payment ➔';
+          if (btnText) btnText.textContent = 'Join Research ➔';
         }
       }
     },
