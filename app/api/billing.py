@@ -118,6 +118,7 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
                     session_id=session_id,
                     user_id=user_id,
                     effective_tier=effective_tier,
+                    selected_language=request.cookies.get("dd_lang") or "en",
                     target_tier="simulated_paid",
                     transition_name="free_to_simulated_paid",
                     related_simulated_intent_id=simulated_intent_id,

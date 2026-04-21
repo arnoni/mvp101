@@ -70,6 +70,7 @@ async def _emit_funnel_event(request: Request, **values) -> None:
         "session_id": request.cookies.get(settings.SESSION_COOKIE_NAME),
         "user_id": getattr(request.state, "user_id", None),
         "effective_tier": "free",
+        "selected_language": request.cookies.get("dd_lang") or "en",
         "metadata_json": {},
     }
     payload.update(values)
