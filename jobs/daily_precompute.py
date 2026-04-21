@@ -11,6 +11,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy import text
 from app.core.config import settings
+from app.core.db import build_asyncpg_url_and_connect_args
 from app.services.bucket_engine import BucketEngine
 import structlog
 
@@ -30,11 +31,8 @@ async def run_precompute():
         return
 
     # Create engine
-    url = settings.DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
-    if "sslmode=" not in url:
-        url += "&sslmode=require" if "?" in url else "?sslmode=require"
-
-    engine = create_async_engine(url)
+    url, connect_args = build_asyncpg_url_and_connect_args(settings.DATABASE_URL)
+    engine = create_async_engine(url, connect_args=connect_args)
 
     # 1. Fetch ALL POIs
     # In a real heavy production system, we'd paginate or stream. 
