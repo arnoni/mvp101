@@ -12,7 +12,7 @@ import uuid
 
 # Local imports
 from app.core.config import settings
-from app.core.db import build_asyncpg_url_and_connect_args
+from app.core.db import create_asyncpg_engine
 from app.core.observability import init_sentry
 
 # Configure Sentry as early as possible
@@ -25,7 +25,7 @@ init_sentry(
 from app.services.poi_service import POIService
 from app.logging import configure_logging
 from app.middleware.logging import LoggingMiddleware
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy import text
 from sqlalchemy.pool import NullPool
 from upstash_redis.asyncio import Redis
@@ -43,13 +43,11 @@ def build_async_engine() -> AsyncEngine:
     url = settings.DATABASE_URL
     if not url:
         raise RuntimeError("DATABASE_URL is not set")
-    async_url, connect_args = build_asyncpg_url_and_connect_args(url)
 
     if "neon.tech" in url and "-pooler.neon.tech" not in url:
         logger.warning("database_url_not_using_pooler")
-    return create_async_engine(
-        async_url,
-        connect_args=connect_args,
+    return create_asyncpg_engine(
+        url,
         poolclass=NullPool,
         pool_pre_ping=True,
     )

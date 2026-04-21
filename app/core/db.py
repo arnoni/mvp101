@@ -4,6 +4,7 @@ from typing import Any
 
 import structlog
 from sqlalchemy.engine import make_url
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 logger = structlog.get_logger(__name__)
 
@@ -43,3 +44,9 @@ def build_asyncpg_url_and_connect_args(database_url: str) -> tuple[str, dict[str
     )
 
     return clean_async_url.render_as_string(hide_password=False), connect_args
+
+
+def create_asyncpg_engine(database_url: str, **engine_kwargs: Any) -> AsyncEngine:
+    """Create an AsyncEngine from DATABASE_URL using sanitized asyncpg URL + connect args."""
+    clean_url, connect_args = build_asyncpg_url_and_connect_args(database_url)
+    return create_async_engine(clean_url, connect_args=connect_args, **engine_kwargs)
