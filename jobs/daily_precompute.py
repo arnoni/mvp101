@@ -29,11 +29,10 @@ async def run_precompute():
         logger.error("DATABASE_URL not set")
         return
 
-    # Create engine (handling sslmode quirk)
+    # Create engine
     url = settings.DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
-    if "?sslmode=" in url or "&sslmode=" in url:
-        url = url.replace("?sslmode=require", "").replace("&sslmode=require", "")
-        url = url.replace("?channel_binding=require", "").replace("&channel_binding=require", "")
+    if "sslmode=" not in url:
+        url += "&sslmode=require" if "?" in url else "?sslmode=require"
 
     engine = create_async_engine(url)
 

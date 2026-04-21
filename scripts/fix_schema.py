@@ -16,12 +16,9 @@ async def fix_schema():
         print("DATABASE_URL not set.")
         return
 
-    # asyncpg doesn't support 'sslmode' in URL query params typically
     url = settings.DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
-    if "?sslmode=" in url or "&sslmode=" in url:
-        url = url.replace("?sslmode=require", "").replace("&sslmode=require", "")
-        # Also handle channel_binding if present
-        url = url.replace("?channel_binding=require", "").replace("&channel_binding=require", "")
+    if "sslmode=" not in url:
+        url += "&sslmode=require" if "?" in url else "?sslmode=require"
     
     engine = create_async_engine(url, echo=True)
 

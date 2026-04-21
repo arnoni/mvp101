@@ -17,10 +17,8 @@ async def run_migrations():
 
     # Create async engine
     url = settings.DATABASE_URL.replace("postgresql://", "postgresql+asyncpg://", 1)
-    if "?" in url:
-        url = url.split("?")[0]
-    # asyncpg requires ssl=require instead of sslmode=require and does not support channel_binding
-    url += "?ssl=require"
+    if "sslmode=" not in url:
+        url += "&sslmode=require" if "?" in url else "?sslmode=require"
     engine = create_async_engine(url, echo=True)
 
     sql_statements = [
