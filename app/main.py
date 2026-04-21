@@ -12,6 +12,7 @@ import uuid
 
 # Local imports
 from app.core.config import settings
+from app.core.db import build_asyncpg_url_and_connect_args
 from app.core.observability import init_sentry
 
 # Configure Sentry as early as possible
@@ -42,14 +43,13 @@ def build_async_engine() -> AsyncEngine:
     url = settings.DATABASE_URL
     if not url:
         raise RuntimeError("DATABASE_URL is not set")
-    async_url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
-    if "sslmode=" not in async_url:
-        async_url += "&sslmode=require" if "?" in async_url else "?sslmode=require"
+    async_url, connect_args = build_asyncpg_url_and_connect_args(url)
 
     if "neon.tech" in url and "-pooler.neon.tech" not in url:
         logger.warning("database_url_not_using_pooler")
     return create_async_engine(
         async_url,
+        connect_args=connect_args,
         poolclass=NullPool,
         pool_pre_ping=True,
     )
