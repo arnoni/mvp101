@@ -256,6 +256,8 @@ def build_async_engine() -> AsyncEngine:
         raise RuntimeError("DATABASE_URL is not set")
 
     async_url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    if "sslmode=" not in async_url:
+        async_url += "&sslmode=require" if "?" in async_url else "?sslmode=require"
 
     return create_async_engine(
         async_url,

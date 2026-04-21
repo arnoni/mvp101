@@ -43,10 +43,8 @@ def build_async_engine() -> AsyncEngine:
     if not url:
         raise RuntimeError("DATABASE_URL is not set")
     async_url = url.replace("postgresql://", "postgresql+asyncpg://", 1)
-    # asyncpg incompatibility fix
-    if "?sslmode=" in async_url or "&sslmode=" in async_url:
-        async_url = async_url.replace("?sslmode=require", "").replace("&sslmode=require", "")
-        async_url = async_url.replace("?channel_binding=require", "").replace("&channel_binding=require", "")
+    if "sslmode=" not in async_url:
+        async_url += "&sslmode=require" if "?" in async_url else "?sslmode=require"
 
     if "neon.tech" in url and "-pooler.neon.tech" not in url:
         logger.warning("database_url_not_using_pooler")
