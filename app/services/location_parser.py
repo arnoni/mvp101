@@ -44,6 +44,33 @@ class MalformedLocationInputError(LocationParseError):
     error_code = "MALFORMED_LOCATION_INPUT"
 
 
+def _format_resolution_event_details(
+    *,
+    stage: str,
+    short_url: str,
+    current_url: str | None = None,
+    response_url: str | None = None,
+    final_url: str | None = None,
+    status_code: int | str | None = None,
+    redirect_hop: int | None = None,
+    content_type: str | None = None,
+) -> str:
+    details: list[str] = [f"stage={stage}", f"short_url={short_url}"]
+    if current_url:
+        details.append(f"current_url={current_url}")
+    if response_url:
+        details.append(f"response_url={response_url}")
+    if final_url:
+        details.append(f"final_url={final_url}")
+    if status_code is not None:
+        details.append(f"status_code={status_code}")
+    if redirect_hop is not None:
+        details.append(f"redirect_hop={redirect_hop}")
+    if content_type:
+        details.append(f"content_type={content_type}")
+    return "; ".join(details)
+
+
 def _normalize_raw(raw: str) -> str:
     normalized = (raw or "").replace("\u00A0", " ").strip()
     normalized = normalized.replace("\u2018", "'").replace("\u2019", "'")
@@ -251,8 +278,27 @@ def extract_lat_lng_from_google_maps_url(url: str) -> tuple[float, float, str]:
 
     raise MalformedLocationInputError(
         "Could not extract coordinates from the resolved Google Maps URL. "
-        "Please open the link in Google Maps, copy the full URL from the address bar, and try again."
+        "The link may point to a place page without explicit coordinates."
     )
+
+
+def _extract_lat_lng_from_google_maps_html(body: str | None) -> tuple[float, float, str] | None:
+    if not body:
+        return None
+
+    patterns = (
+        (r"!3d([+-]?\d+(?:\.\d+)?)!4d([+-]?\d+(?:\.\d+)?)", "html_place_3d4d"),
+        (r"@([+-]?\d+(?:\.\d+)?),([+-]?\d+(?:\.\d+)?)", "html_viewport_center"),
+        (r'"lat"\s*:\s*([+-]?\d+(?:\.\d+)?)\s*,\s*"lng"\s*:\s*([+-]?\d+(?:\.\d+)?)', "html_lat_lng_json"),
+    )
+    for pattern, method in patterns:
+        match = re.search(pattern, body)
+        if not match:
+            continue
+        lat, lng = float(match.group(1)), float(match.group(2))
+        validate_lat_lng(lat, lng)
+        return lat, lng, method
+    return None
 
 
 def resolve_google_maps_short_url(raw: str, timeout_seconds: float = 4.0) -> str:
@@ -283,20 +329,55 @@ def resolve_google_maps_short_url(raw: str, timeout_seconds: float = 4.0) -> str
                 location = response.headers.get("location")
                 if response.is_redirect or response.is_informational:
                     if not location:
-                        raise ShortUrlResolutionError("Redirect response from short link did not include a Location header.")
+                        details = _format_resolution_event_details(
+                            stage="redirect_missing_location",
+                            short_url=normalized,
+                            current_url=current_url,
+                            response_url=str(response.url),
+                            status_code=response.status_code,
+                            redirect_hop=redirect_count,
+                        )
+                        raise ShortUrlResolutionError(
+                            "Redirect response from short link did not include a Location header. "
+                            f"Event details: {details}."
+                        )
                     current_url = urljoin(str(response.url), location)
                     continue
                 try:
                     response.raise_for_status()
                 except httpx.HTTPStatusError as exc:
                     status = exc.response.status_code if exc.response is not None else "unknown"
+                    details = _format_resolution_event_details(
+                        stage="http_error_status",
+                        short_url=normalized,
+                        current_url=current_url,
+                        response_url=str(response.url),
+                        status_code=status,
+                        redirect_hop=redirect_count,
+                    )
                     raise ShortUrlResolutionError(
-                        f"Google Maps short link returned HTTP {status} while resolving redirects."
+                        f"Google Maps short link returned HTTP {status} while resolving redirects. "
+                        f"Event details: {details}."
                     ) from exc
                 final_url = str(response.url)
                 if not final_url:
-                    raise ShortUrlResolutionError("Google Maps short link resolved to an empty URL.")
+                    details = _format_resolution_event_details(
+                        stage="empty_final_url",
+                        short_url=normalized,
+                        current_url=current_url,
+                        response_url=str(response.url),
+                        status_code=response.status_code,
+                        redirect_hop=redirect_count,
+                    )
+                    raise ShortUrlResolutionError(
+                        "Google Maps short link resolved to an empty URL. "
+                        f"Event details: {details}."
+                    )
                 _validate_redirect_target(final_url, allow_short_hosts=False)
+                html_pair = _extract_lat_lng_from_google_maps_html(getattr(response, "text", None))
+                if html_pair and not _extract_pair(final_url):
+                    lat, lng, _ = html_pair
+                    return f"https://www.google.com/maps/search/?api=1&query={lat},{lng}"
                 return final_url
             raise ShortUrlResolutionError(f"Google Maps short link exceeded redirect limit ({max_redirects}).")
     except httpx.TimeoutException as exc:
@@ -320,7 +401,18 @@ def parse_google_maps_url(raw: str) -> ParsedLocationInput:
         if not _is_supported_short_path(host, parsed.path):
             raise UnsupportedLocationInputError("Only Google Maps short URLs are supported.")
         resolved = resolve_google_maps_short_url(normalized)
-        lat, lng, method = extract_lat_lng_from_google_maps_url(resolved)
+        try:
+            lat, lng, method = extract_lat_lng_from_google_maps_url(resolved)
+        except MalformedLocationInputError as exc:
+            details = _format_resolution_event_details(
+                stage="extract_coordinates_failed_after_resolution",
+                short_url=normalized,
+                final_url=resolved,
+            )
+            raise MalformedLocationInputError(
+                "Could not extract coordinates from the resolved Google Maps short URL. "
+                f"Event details: {details}."
+            ) from exc
         return ParsedLocationInput(
             input_kind="google_maps_short_url",
             original_input=raw,
