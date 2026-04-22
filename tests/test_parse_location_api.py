@@ -15,7 +15,8 @@ def test_parse_location_decimal_success():
 def test_parse_location_invalid_url_error():
     with TestClient(app) as client:
         response = client.post("/api/parse-location", json={"location_input": "https://example.com"})
-        assert response.status_code == 200
+        assert response.status_code == 422
         body = response.json()
-        assert body["ok"] is False
-        assert body["error_code"] in {"UNSUPPORTED_LOCATION_INPUT", "INVALID_LOCATION_INPUT"}
+        detail = body["detail"]
+        assert detail["error"] == "LOCATION_PARSE_FAILED"
+        assert detail["error_code"] in {"UNSUPPORTED_LOCATION_INPUT", "INVALID_LOCATION_INPUT"}

@@ -95,6 +95,23 @@ document.addEventListener("DOMContentLoaded", () => {
     parsingLink: document.body.dataset.labelParsingLink || "Parsing link..."
   };
 
+  function getParserErrorMessage(payload, status) {
+    const errorCode = payload?.detail?.error_code || payload?.error_code;
+    if (errorCode === "UNSUPPORTED_LOCATION_INPUT") {
+      return "Please use a Google Maps link or latitude/longitude coordinates.";
+    }
+    if (errorCode === "INVALID_COORDINATE_RANGE") {
+      return "Coordinates are out of range. Latitude must be between -90 and 90, and longitude between -180 and 180.";
+    }
+    if (errorCode === "SHORT_URL_RESOLUTION_FAILED") {
+      return "Could not expand this Google Maps short link. Please try again.";
+    }
+    if (errorCode === "MALFORMED_LOCATION_INPUT" || errorCode === "INVALID_LOCATION_INPUT") {
+      return "Could not read coordinates from that location input. Please check the link and try again.";
+    }
+    return `Parser service returned HTTP ${status}.`;
+  }
+
   async function parseLocationPreview(raw, signal) {
     let response;
     try {
@@ -118,10 +135,10 @@ document.addEventListener("DOMContentLoaded", () => {
       throw new Error("Parser service returned an unreadable response.");
     }
     if (!response.ok) {
-      throw new Error(payload?.message || `Parser service returned HTTP ${response.status}.`);
+      throw new Error(getParserErrorMessage(payload, response.status));
     }
     if (!payload?.ok || !payload?.normalized) {
-      throw new Error(payload?.message || "The short link was expanded, but no coordinates were found in the resolved URL.");
+      throw new Error("The parser could not return coordinates for this location input.");
     }
     return {
       lat: Number(payload.normalized.latitude),

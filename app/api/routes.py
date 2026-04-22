@@ -277,7 +277,13 @@ async def parse_location(data: ParseLocationRequest):
             },
         )
     except LocationParseError as exc:
-        return ParseLocationResponse(ok=False, error_code=exc.error_code, message=str(exc))
+        raise HTTPException(
+            status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error": "LOCATION_PARSE_FAILED",
+                "error_code": exc.error_code,
+            },
+        ) from exc
 
 @router.post("/search", response_model=SearchResponse)
 async def search(
