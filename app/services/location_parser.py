@@ -2,14 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Literal
+import ipaddress
 import re
-from urllib.parse import urlparse, parse_qs, unquote
+from urllib.parse import urlparse, parse_qs, unquote, urljoin
 
 import httpx
 
 MAX_LOCATION_INPUT_LEN = 2048
 INPUT_KIND = Literal["decimal_pair", "degree_pair", "google_maps_url", "google_maps_short_url"]
-_GOOGLE_HOST_SUFFIXES = ("google.com", "maps.google.com")
 _SHORT_HOSTS = {"maps.app.goo.gl", "goo.gl", "g.page"}
 
 
@@ -152,10 +152,10 @@ def parse_degree_pair(raw: str) -> ParsedLocationInput:
 
 
 def _is_supported_google_host(host: str) -> bool:
-    host = host.lower()
+    host = (host or "").strip().strip(".").lower()
     if host in _SHORT_HOSTS:
         return True
-    return host == "google.com" or host.endswith(".google.com") or host in _GOOGLE_HOST_SUFFIXES
+    return host == "google.com" or host.endswith(".google.com")
 
 
 def _is_supported_short_path(host: str, path: str) -> bool:
@@ -176,6 +176,50 @@ def _extract_pair(value: str | None) -> tuple[float, float] | None:
     lat, lng = float(match.group(1)), float(match.group(2))
     validate_lat_lng(lat, lng)
     return lat, lng
+
+
+def _is_private_or_local_host(host: str) -> bool:
+    normalized = (host or "").strip().strip("[]").lower()
+    if not normalized:
+        return True
+    if normalized == "localhost":
+        return True
+    try:
+        ip = ipaddress.ip_address(normalized)
+    except ValueError:
+        return False
+    return (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_reserved
+        or ip.is_multicast
+        or ip.is_unspecified
+    )
+
+
+def _validate_redirect_target(url: str, *, allow_short_hosts: bool) -> tuple[str, str]:
+    # DNS rebinding risk is reduced here by refusing all non-Google domains at every hop.
+    # We do not trust caller-provided hostnames; only Google-owned hosts are permitted.
+    parsed = urlparse(url)
+    scheme = (parsed.scheme or "").lower()
+    host = (parsed.hostname or "").lower()
+    if scheme not in {"http", "https"}:
+        raise ShortUrlResolutionError("Short link redirect used an unsupported URL scheme.")
+    if _is_private_or_local_host(host):
+        raise ShortUrlResolutionError(
+            f"Short link redirect targeted a private or local host ('{host or 'unknown'}'), which is blocked."
+        )
+    if allow_short_hosts:
+        if not _is_supported_google_host(host):
+            raise ShortUrlResolutionError(
+                f"Google Maps short link redirected to unsupported domain '{host or 'unknown'}'."
+            )
+    elif not (host == "google.com" or host.endswith(".google.com")):
+        raise ShortUrlResolutionError(
+            f"Google Maps short link did not resolve to a Google Maps domain ('{host or 'unknown'}')."
+        )
+    return host, parsed.path or "/"
 
 
 def extract_lat_lng_from_google_maps_url(url: str) -> tuple[float, float, str]:
@@ -205,23 +249,64 @@ def extract_lat_lng_from_google_maps_url(url: str) -> tuple[float, float, str]:
         validate_lat_lng(lat, lng)
         return lat, lng, "viewport_center"
 
-    raise MalformedLocationInputError("Could not extract coordinates from this Google Maps link.")
+    raise MalformedLocationInputError(
+        "Could not extract coordinates from the resolved Google Maps URL. "
+        "Please open the link in Google Maps, copy the full URL from the address bar, and try again."
+    )
 
 
 def resolve_google_maps_short_url(raw: str, timeout_seconds: float = 4.0) -> str:
-    try:
-        with httpx.Client(timeout=timeout_seconds, follow_redirects=True, max_redirects=5) as client:
-            response = client.get(raw)
-    except httpx.TimeoutException as exc:
-        raise ShortUrlResolutionError("Short URL resolution timed out. Please try again.") from exc
-    except httpx.HTTPError as exc:
-        raise ShortUrlResolutionError("Could not resolve short URL. Please try again.") from exc
+    normalized = _normalize_raw(raw)
+    parsed = urlparse(normalized)
+    host = (parsed.hostname or "").lower()
+    if host not in _SHORT_HOSTS:
+        raise UnsupportedLocationInputError("This URL is not a supported Google Maps short link.")
+    if not _is_supported_short_path(host, parsed.path):
+        raise UnsupportedLocationInputError("This Google short link format is not supported.")
 
-    final_url = str(response.url)
-    final_host = (response.url.host or "").lower()
-    if not _is_supported_google_host(final_host):
-        raise ShortUrlResolutionError("Short URL resolved to an unsupported domain.")
-    return final_url
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    }
+    max_redirects = 10
+    current_url = normalized
+    try:
+        with httpx.Client(timeout=timeout_seconds, follow_redirects=False, headers=headers) as client:
+            for redirect_count in range(max_redirects + 1):
+                host, path = _validate_redirect_target(current_url, allow_short_hosts=True)
+                if host in _SHORT_HOSTS and not _is_supported_short_path(host, path):
+                    raise UnsupportedLocationInputError("This Google short link format is not supported.")
+                response = client.get(current_url)
+                try:
+                    response.raise_for_status()
+                except httpx.HTTPStatusError as exc:
+                    status = exc.response.status_code if exc.response is not None else "unknown"
+                    raise ShortUrlResolutionError(
+                        f"Google Maps short link returned HTTP {status} while resolving redirects."
+                    ) from exc
+                location = response.headers.get("location")
+                if response.is_redirect or response.is_informational:
+                    if not location:
+                        raise ShortUrlResolutionError("Redirect response from short link did not include a Location header.")
+                    current_url = urljoin(str(response.url), location)
+                    continue
+                final_url = str(response.url)
+                if not final_url:
+                    raise ShortUrlResolutionError("Google Maps short link resolved to an empty URL.")
+                _validate_redirect_target(final_url, allow_short_hosts=False)
+                return final_url
+            raise ShortUrlResolutionError(f"Google Maps short link exceeded redirect limit ({max_redirects}).")
+    except httpx.TimeoutException as exc:
+        raise ShortUrlResolutionError(
+            "Google Maps short link resolution timed out. Please check your connection and try again."
+        ) from exc
+    except httpx.RequestError as exc:
+        raise ShortUrlResolutionError(
+            "Failed to resolve the Google Maps short link due to a network/protocol error."
+        ) from exc
 
 
 def parse_google_maps_url(raw: str) -> ParsedLocationInput:
