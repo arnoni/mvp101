@@ -280,6 +280,12 @@ def resolve_google_maps_short_url(raw: str, timeout_seconds: float = 4.0) -> str
                 if host in _SHORT_HOSTS and not _is_supported_short_path(host, path):
                     raise UnsupportedLocationInputError("This Google short link format is not supported.")
                 response = client.get(current_url)
+                location = response.headers.get("location")
+                if response.is_redirect or response.is_informational:
+                    if not location:
+                        raise ShortUrlResolutionError("Redirect response from short link did not include a Location header.")
+                    current_url = urljoin(str(response.url), location)
+                    continue
                 try:
                     response.raise_for_status()
                 except httpx.HTTPStatusError as exc:
@@ -287,12 +293,6 @@ def resolve_google_maps_short_url(raw: str, timeout_seconds: float = 4.0) -> str
                     raise ShortUrlResolutionError(
                         f"Google Maps short link returned HTTP {status} while resolving redirects."
                     ) from exc
-                location = response.headers.get("location")
-                if response.is_redirect or response.is_informational:
-                    if not location:
-                        raise ShortUrlResolutionError("Redirect response from short link did not include a Location header.")
-                    current_url = urljoin(str(response.url), location)
-                    continue
                 final_url = str(response.url)
                 if not final_url:
                     raise ShortUrlResolutionError("Google Maps short link resolved to an empty URL.")
