@@ -286,6 +286,10 @@ document.addEventListener("DOMContentLoaded", () => {
   function parseGoogleMapsLongUrl(raw) {
     const url = new URL(raw);
     const rawUrl = decodeURIComponent(raw);
+    for (const key of ["q", "ll", "query", "center", "destination", "origin", "saddr", "daddr"]) {
+      const pair = extractPair(url.searchParams.get(key) || "");
+      if (pair) return { lat: pair[0], lng: pair[1], normalizedText: `${pair[0].toFixed(6)}, ${pair[1].toFixed(6)}`, sourceKind: `query_${key}` };
+    }
     const place = rawUrl.match(/!3d([+-]?\d+(?:\.\d+)?)!4d([+-]?\d+(?:\.\d+)?)/);
     if (place) {
       const lat = Number(place[1]);
@@ -293,9 +297,12 @@ document.addEventListener("DOMContentLoaded", () => {
       validateLatLng(lat, lng);
       return { lat, lng, normalizedText: `${lat.toFixed(6)}, ${lng.toFixed(6)}`, sourceKind: "place_3d4d" };
     }
-    for (const key of ["q", "ll"]) {
-      const pair = extractPair(url.searchParams.get(key) || "");
-      if (pair) return { lat: pair[0], lng: pair[1], normalizedText: `${pair[0].toFixed(6)}, ${pair[1].toFixed(6)}`, sourceKind: `query_${key}` };
+    const placeReverse = rawUrl.match(/!2d([+-]?\d+(?:\.\d+)?)!3d([+-]?\d+(?:\.\d+)?)/);
+    if (placeReverse) {
+      const lng = Number(placeReverse[1]);
+      const lat = Number(placeReverse[2]);
+      validateLatLng(lat, lng);
+      return { lat, lng, normalizedText: `${lat.toFixed(6)}, ${lng.toFixed(6)}`, sourceKind: "place_2d3d" };
     }
     const vp = rawUrl.match(/@([+-]?\d+(?:\.\d+)?),([+-]?\d+(?:\.\d+)?)/);
     if (vp) {

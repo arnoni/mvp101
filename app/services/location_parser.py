@@ -181,18 +181,23 @@ def _extract_pair(value: str | None) -> tuple[float, float] | None:
 def extract_lat_lng_from_google_maps_url(url: str) -> tuple[float, float, str]:
     decoded = unquote(url)
 
+    query = parse_qs(urlparse(url).query)
+    for key in ("q", "ll", "query", "center", "destination", "origin", "saddr", "daddr"):
+        pair = _extract_pair(query.get(key, [None])[0])
+        if pair:
+            return pair[0], pair[1], f"query_{key}"
+
     place = re.search(r"!3d([+-]?\d+(?:\.\d+)?)!4d([+-]?\d+(?:\.\d+)?)", decoded)
     if place:
         lat, lng = float(place.group(1)), float(place.group(2))
         validate_lat_lng(lat, lng)
         return lat, lng, "place_3d4d"
 
-    parsed = urlparse(url)
-    query = parse_qs(parsed.query)
-    for key in ("q", "ll"):
-        pair = _extract_pair(query.get(key, [None])[0])
-        if pair:
-            return pair[0], pair[1], f"query_{key}"
+    place_reverse = re.search(r"!2d([+-]?\d+(?:\.\d+)?)!3d([+-]?\d+(?:\.\d+)?)", decoded)
+    if place_reverse:
+        lng, lat = float(place_reverse.group(1)), float(place_reverse.group(2))
+        validate_lat_lng(lat, lng)
+        return lat, lng, "place_2d3d"
 
     viewport = re.search(r"@([+-]?\d+(?:\.\d+)?),([+-]?\d+(?:\.\d+)?)", decoded)
     if viewport:

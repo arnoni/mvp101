@@ -59,6 +59,14 @@ def test_parse_google_long_viewport_fallback():
     assert parsed.resolution_method == "viewport_center"
 
 
+def test_parse_google_long_query_fallback():
+    url = "https://www.google.com/maps/search/?api=1&query=16.0544%2C108.2022"
+    parsed = parse_google_maps_url(url)
+    assert parsed.resolution_method == "query_query"
+    assert parsed.latitude == pytest.approx(16.0544)
+    assert parsed.longitude == pytest.approx(108.2022)
+
+
 def test_parse_unsupported_domain_rejected():
     with pytest.raises(UnsupportedLocationInputError):
         parse_location_input("https://example.com/?q=16.0544,108.2022")
@@ -108,3 +116,14 @@ def test_parse_google_supported_short_hosts(url, monkeypatch):
 def test_parse_google_invalid_goo_gl_short_path_rejected():
     with pytest.raises(UnsupportedLocationInputError):
         parse_google_maps_url("https://goo.gl/not-maps")
+
+
+def test_parse_google_short_url_resolved_query_link(monkeypatch):
+    monkeypatch.setattr(
+        "app.services.location_parser.resolve_google_maps_short_url",
+        lambda _: "https://www.google.com/maps/search/?api=1&query=16.0544%2C108.2022",
+    )
+    parsed = parse_google_maps_url("https://maps.app.goo.gl/gPZ5VtapJLqfSBnZ9?g_st=aw")
+    assert parsed.input_kind == "google_maps_short_url"
+    assert parsed.latitude == pytest.approx(16.0544)
+    assert parsed.longitude == pytest.approx(108.2022)
