@@ -1,10 +1,13 @@
 import json
+import logging
 from typing import List
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.models.dto import PrecomputeCandidate
+
+logger = logging.getLogger(__name__)
 
 class PrecomputeRepository:
     """
@@ -38,11 +41,20 @@ class PrecomputeRepository:
                     for item in raw_list:
                         try:
                             candidates.append(PrecomputeCandidate(**item))
-                        except Exception:
+                        except Exception as exc:
+                            logger.warning(
+                                "E_PRECOMPUTE_CANDIDATE_PARSE_FAILED skipping malformed precompute candidate",
+                                extra={"event_code": "E_PRECOMPUTE_CANDIDATE_PARSE_FAILED", "cell_id": cell_id, "candidate": item},
+                                exc_info=True,
+                            )
                             continue
                     return candidates
         except Exception:
-            # loose fail
+            logger.error(
+                "E_PRECOMPUTE_FETCH_FAILED failed loading precompute candidates; returning empty list",
+                extra={"event_code": "E_PRECOMPUTE_FETCH_FAILED", "cell_id": cell_id},
+                exc_info=True,
+            )
             return []
             
         return []
