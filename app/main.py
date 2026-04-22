@@ -142,13 +142,21 @@ async def lifespan(app: FastAPI):
         if db_engine:
             await db_engine.dispose()
     except Exception:
-        pass
+        logger.error(
+            "E_APP_SHUTDOWN_DB_DISPOSE_FAILED failed disposing database engine during shutdown",
+            extra={"event_code": "E_APP_SHUTDOWN_DB_DISPOSE_FAILED"},
+            exc_info=True,
+        )
     try:
         redis_cli = getattr(app.state, "redis", None)
         if redis_cli:
             await redis_cli.close()
     except Exception:
-        pass
+        logger.error(
+            "E_APP_SHUTDOWN_REDIS_CLOSE_FAILED failed closing redis client during shutdown",
+            extra={"event_code": "E_APP_SHUTDOWN_REDIS_CLOSE_FAILED"},
+            exc_info=True,
+        )
 
 
 # 2. Create App

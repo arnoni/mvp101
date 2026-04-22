@@ -59,7 +59,11 @@ async def verify_turnstile(token: str, anon_id: str | None = None, client_ip: st
             if cached:
                 return True
         except Exception:
-            pass
+            logger.warning(
+                "E_TURNSTILE_CACHE_READ_FAILED failed reading turnstile cache; continuing with live verification",
+                extra={"event_code": "E_TURNSTILE_CACHE_READ_FAILED", "cache_key": cache_key},
+                exc_info=True,
+            )
 
     url = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
     data = {

@@ -5,10 +5,13 @@ import hashlib
 import hmac
 import uuid
 import json
+import logging
 from typing import Optional
 from app.core.config import settings
 from app.services.entitlement_service import EntitlementService
 from app.services.redis_client import redis_client
+
+logger = logging.getLogger(__name__)
 
 # --- Helper Functions (No changes needed) ---
 def sign_value(val: str) -> str:
@@ -21,8 +24,11 @@ def unsign_value(val: str) -> Optional[str]:
         expected_sig = hmac.new(settings.SECRET_KEY.encode(), payload.encode(), hashlib.sha256).hexdigest()
         if hmac.compare_digest(sig, expected_sig):
             return payload
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning(
+            "E_MW_UNSIGN_FAILED invalid or malformed signed cookie",
+            extra={"event_code": "E_MW_UNSIGN_FAILED", "error": str(exc)},
+        )
     return None
 
 class AnonIdMiddleware(BaseHTTPMiddleware):
@@ -119,8 +125,11 @@ class SessionMiddleware(BaseHTTPMiddleware):
                 # If Redis fails, we want to know, but we don't want to crash the user's request.
                 # 'capture_exception' sends it to Sentry but lets code continue.
                 sentry_sdk.capture_exception(e)
-                # We proceed as if logged out
-                pass
+                logger.error(
+                    "E_MW_SESSION_LOAD_FAILED failed loading user session from redis; proceeding as logged-out",
+                    extra={"event_code": "E_MW_SESSION_LOAD_FAILED", "session_id": sid},
+                    exc_info=True,
+                )
                 
         return await call_next(request)
 
