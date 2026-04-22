@@ -96,18 +96,32 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   async function parseLocationPreview(raw, signal) {
-    const response = await fetch("/api/parse-location", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ location_input: raw }),
-      signal
-    });
-    if (!response.ok) {
-      throw new Error("Could not parse this Google Maps link.");
+    let response;
+    try {
+      response = await fetch("/api/parse-location", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ location_input: raw }),
+        signal
+      });
+    } catch (networkErr) {
+      if (networkErr?.name === "AbortError") throw networkErr;
+      throw new Error("Could not reach the parser service to expand this Google Maps short link. Please try again.");
     }
-    const payload = await response.json();
+    let payload = null;
+    try {
+      payload = await response.json();
+    } catch {
+      if (!response.ok) {
+        throw new Error(`Parser service returned HTTP ${response.status}.`);
+      }
+      throw new Error("Parser service returned an unreadable response.");
+    }
+    if (!response.ok) {
+      throw new Error(payload?.message || `Parser service returned HTTP ${response.status}.`);
+    }
     if (!payload?.ok || !payload?.normalized) {
-      throw new Error(payload?.message || "Could not parse this Google Maps link.");
+      throw new Error(payload?.message || "The short link was expanded, but no coordinates were found in the resolved URL.");
     }
     return {
       lat: Number(payload.normalized.latitude),
@@ -311,7 +325,10 @@ document.addEventListener("DOMContentLoaded", () => {
       validateLatLng(lat, lng);
       return { lat, lng, normalizedText: `${lat.toFixed(6)}, ${lng.toFixed(6)}`, sourceKind: "viewport_center" };
     }
-    throw new Error("Could not extract coordinates from this Google Maps link.");
+    throw new Error(
+      "Could not extract coordinates from this Google Maps URL. " +
+      "If you pasted a short link, wait for it to expand first, or copy the full Google Maps URL from your browser."
+    );
   }
 
   function buildSubmitPayload() {
@@ -385,7 +402,7 @@ document.addEventListener("DOMContentLoaded", () => {
         }
       }
 
-      const valid = Boolean(parsed || kind === "google_maps_short_url");
+      const valid = Boolean(parsed);
       const lat = parsed ? parsed.lat : null;
       const lng = parsed ? parsed.lng : null;
       const newKey = parsed ? `${lat.toFixed(4)},${lng.toFixed(4)}` : null;
