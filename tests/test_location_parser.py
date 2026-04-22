@@ -153,6 +153,47 @@ def test_short_url_resolution_http_error_status(monkeypatch):
         resolve_google_maps_short_url("https://maps.app.goo.gl/MXmuC4XEuLnUY5rR8")
 
 
+def test_short_url_resolution_redirect_302_does_not_raise_for_status(monkeypatch):
+    import httpx
+
+    class StubResponse:
+        def __init__(self, status_code, url, location=None, fail_raise=False):
+            self.status_code = status_code
+            self.url = url
+            self.headers = {"location": location} if location else {}
+            self.is_redirect = status_code in {301, 302, 303, 307, 308}
+            self.is_informational = 100 <= status_code < 200
+            self._fail_raise = fail_raise
+
+        def raise_for_status(self):
+            if self._fail_raise:
+                raise httpx.HTTPStatusError("redirect", request=None, response=self)
+            return None
+
+    class StubClient:
+        def __enter__(self):
+            self.calls = 0
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, _):
+            self.calls += 1
+            if self.calls == 1:
+                return StubResponse(
+                    302,
+                    "https://maps.app.goo.gl/abc",
+                    "https://www.google.com/maps/search/?api=1&query=16.0544%2C108.2022",
+                    fail_raise=True,
+                )
+            return StubResponse(200, "https://www.google.com/maps/search/?api=1&query=16.0544%2C108.2022")
+
+    monkeypatch.setattr("app.services.location_parser.httpx.Client", lambda **_: StubClient())
+    resolved = resolve_google_maps_short_url("https://maps.app.goo.gl/gPZ5VtapJLqfSBnZ9?g_st=aw")
+    assert resolved == "https://www.google.com/maps/search/?api=1&query=16.0544%2C108.2022"
+
+
 def test_short_url_resolution_redirect_chain_success(monkeypatch):
     first_response = Mock()
     first_response.status_code = 302
