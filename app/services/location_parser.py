@@ -286,13 +286,22 @@ def _extract_lat_lng_from_google_maps_html(body: str | None) -> tuple[float, flo
     if not body:
         return None
 
+    decoded_body = unquote(body)
     patterns = (
         (r"!3d([+-]?\d+(?:\.\d+)?)!4d([+-]?\d+(?:\.\d+)?)", "html_place_3d4d"),
         (r"@([+-]?\d+(?:\.\d+)?),([+-]?\d+(?:\.\d+)?)", "html_viewport_center"),
         (r'"lat"\s*:\s*([+-]?\d+(?:\.\d+)?)\s*,\s*"lng"\s*:\s*([+-]?\d+(?:\.\d+)?)', "html_lat_lng_json"),
+        (
+            r"(?:center|query|ll|destination|origin)=([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)",
+            "html_query_pair",
+        ),
+        (
+            r'"latitude"\s*:\s*([+-]?\d+(?:\.\d+)?)\s*,\s*"longitude"\s*:\s*([+-]?\d+(?:\.\d+)?)',
+            "html_latitude_longitude_json",
+        ),
     )
     for pattern, method in patterns:
-        match = re.search(pattern, body)
+        match = re.search(pattern, decoded_body)
         if not match:
             continue
         lat, lng = float(match.group(1)), float(match.group(2))
@@ -374,8 +383,14 @@ def resolve_google_maps_short_url(raw: str, timeout_seconds: float = 4.0) -> str
                         f"Event details: {details}."
                     )
                 _validate_redirect_target(final_url, allow_short_hosts=False)
+                try:
+                    extract_lat_lng_from_google_maps_url(final_url)
+                    return final_url
+                except MalformedLocationInputError:
+                    pass
+
                 html_pair = _extract_lat_lng_from_google_maps_html(getattr(response, "text", None))
-                if html_pair and not _extract_pair(final_url):
+                if html_pair:
                     lat, lng, _ = html_pair
                     return f"https://www.google.com/maps/search/?api=1&query={lat},{lng}"
                 return final_url
