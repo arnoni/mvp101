@@ -1,5 +1,43 @@
+import sys
+import types
 import pytest
 from unittest.mock import Mock
+
+try:
+    import httpx  # noqa: F401
+except ImportError:
+    httpx_stub = types.ModuleType("httpx")
+
+    class _TimeoutException(Exception):
+        pass
+
+    class _RequestError(Exception):
+        pass
+
+    class _HTTPStatusError(Exception):
+        def __init__(self, message, request=None, response=None):
+            super().__init__(message)
+            self.request = request
+            self.response = response
+
+    class _Client:  # pragma: no cover - tests monkeypatch client behavior directly
+        def __init__(self, **_):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, _):
+            raise NotImplementedError("Stub httpx.Client.get should be monkeypatched in tests.")
+
+    httpx_stub.TimeoutException = _TimeoutException
+    httpx_stub.RequestError = _RequestError
+    httpx_stub.HTTPStatusError = _HTTPStatusError
+    httpx_stub.Client = _Client
+    sys.modules["httpx"] = httpx_stub
 
 from app.services.location_parser import (
     MalformedLocationInputError,
@@ -251,6 +289,35 @@ def test_short_url_resolution_redirect_chain_success(monkeypatch):
     assert resolved == "https://www.google.com/maps/place/x/@16.0544,108.2022,17z"
 
 
+def test_short_url_resolution_skips_html_fallback_when_final_url_is_parseable(monkeypatch):
+    response = Mock()
+    response.status_code = 200
+    response.is_redirect = False
+    response.is_informational = False
+    response.headers = {}
+    response.url = "https://www.google.com/maps/place/x/@16.0544,108.2022,17z"
+    response.text = '<html><body>"lat":0.0000,"lng":0.0000</body></html>'
+    response.raise_for_status.return_value = None
+
+    class StubClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, _):
+            return response
+
+    monkeypatch.setattr("app.services.location_parser.httpx.Client", lambda **_: StubClient())
+    extractor = Mock(side_effect=AssertionError("html fallback should not run for parseable final urls"))
+    monkeypatch.setattr("app.services.location_parser._extract_lat_lng_from_google_maps_html", extractor)
+
+    resolved = resolve_google_maps_short_url("https://maps.app.goo.gl/MXmuC4XEuLnUY5rR8")
+    assert resolved == "https://www.google.com/maps/place/x/@16.0544,108.2022,17z"
+    extractor.assert_not_called()
+
+
 def test_short_url_resolution_extracts_coords_from_html_when_final_url_lacks_them(monkeypatch):
     response = Mock()
     response.status_code = 200
@@ -273,6 +340,31 @@ def test_short_url_resolution_extracts_coords_from_html_when_final_url_lacks_the
 
     monkeypatch.setattr("app.services.location_parser.httpx.Client", lambda **_: StubClient())
     resolved = resolve_google_maps_short_url("https://maps.app.goo.gl/MXmuC4XEuLnUY5rR8")
+    assert resolved == "https://www.google.com/maps/search/?api=1&query=16.0544,108.2022"
+
+
+def test_short_url_resolution_extracts_percent_encoded_query_pair_from_html(monkeypatch):
+    response = Mock()
+    response.status_code = 200
+    response.is_redirect = False
+    response.is_informational = False
+    response.headers = {}
+    response.url = "https://www.google.com/maps/place/KIM+Sui+cao/data=!4m2!3m1!1s0x3142170067a2441b:0x73a9445ab66c1679!18m1!1e1"
+    response.text = '<meta property="og:image" content="https://maps.googleapis.com/maps/api/staticmap?center=16.0544%2C108.2022&zoom=15">'
+    response.raise_for_status.return_value = None
+
+    class StubClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, _):
+            return response
+
+    monkeypatch.setattr("app.services.location_parser.httpx.Client", lambda **_: StubClient())
+    resolved = resolve_google_maps_short_url("https://maps.app.goo.gl/gPZ5VtapJLqfSBnZ9?g_st=aw")
     assert resolved == "https://www.google.com/maps/search/?api=1&query=16.0544,108.2022"
 
 
