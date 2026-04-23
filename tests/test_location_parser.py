@@ -368,6 +368,64 @@ def test_short_url_resolution_extracts_percent_encoded_query_pair_from_html(monk
     assert resolved == "https://www.google.com/maps/search/?api=1&query=16.0544,108.2022"
 
 
+def test_short_url_resolution_rejects_ashburn_block_page_coordinates(monkeypatch):
+    response = Mock()
+    response.status_code = 200
+    response.is_redirect = False
+    response.is_informational = False
+    response.headers = {}
+    response.url = "https://www.google.com/maps/place/KIM+Sui+cao/"
+    response.text = '<meta property="og:image" content="https://maps.googleapis.com/maps/api/staticmap?center=39.026799%2C-77.844326&zoom=15">'
+    response.raise_for_status.return_value = None
+
+    class StubClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, _):
+            return response
+
+    monkeypatch.setattr("app.services.location_parser.httpx.Client", lambda **_: StubClient())
+    with pytest.raises(MalformedLocationInputError, match="blocked/bot-protection"):
+        resolve_google_maps_short_url("https://maps.app.goo.gl/gPZ5VtapJLqfSBnZ9?g_st=aw")
+
+
+def test_short_url_resolution_uses_native_http_redirect_following(monkeypatch):
+    captured_kwargs = {}
+
+    class StubResponse:
+        status_code = 200
+        is_redirect = False
+        is_informational = False
+        headers = {}
+        url = "https://www.google.com/maps/search/?api=1&query=16.0544%2C108.2022"
+        text = ""
+
+        def raise_for_status(self):
+            return None
+
+    class StubClient:
+        def __init__(self, **kwargs):
+            captured_kwargs.update(kwargs)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, _):
+            return StubResponse()
+
+    monkeypatch.setattr("app.services.location_parser.httpx.Client", StubClient)
+    resolved = resolve_google_maps_short_url("https://maps.app.goo.gl/gPZ5VtapJLqfSBnZ9?g_st=aw")
+    assert captured_kwargs["follow_redirects"] is True
+    assert resolved == "https://www.google.com/maps/search/?api=1&query=16.0544%2C108.2022"
+
+
 @pytest.mark.parametrize("blocked_url", ["http://127.0.0.1/internal", "http://169.254.10.20/latest", "http://10.0.0.5/admin"])
 def test_short_url_resolution_redirect_chain_blocks_private_hosts(monkeypatch, blocked_url):
     first_response = Mock()

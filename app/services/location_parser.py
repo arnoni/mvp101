@@ -44,6 +44,12 @@ class MalformedLocationInputError(LocationParseError):
     error_code = "MALFORMED_LOCATION_INPUT"
 
 
+def _is_likely_google_block_page_coordinate_pair(lat: float, lng: float) -> bool:
+    # Observed fallback coordinates from Google consent/bot-protection pages
+    # frequently resolve to Ashburn, VA around (39.026799, -77.844326).
+    return abs(lat - 39.026799) <= 0.01 and abs(lng - (-77.844326)) <= 0.01
+
+
 def _format_resolution_event_details(
     *,
     stage: str,
@@ -329,7 +335,7 @@ def resolve_google_maps_short_url(raw: str, timeout_seconds: float = 4.0) -> str
     max_redirects = 10
     current_url = normalized
     try:
-        with httpx.Client(timeout=timeout_seconds, follow_redirects=False, headers=headers) as client:
+        with httpx.Client(timeout=timeout_seconds, follow_redirects=True, headers=headers) as client:
             for redirect_count in range(max_redirects + 1):
                 host, path = _validate_redirect_target(current_url, allow_short_hosts=True)
                 if host in _SHORT_HOSTS and not _is_supported_short_path(host, path):
@@ -392,6 +398,11 @@ def resolve_google_maps_short_url(raw: str, timeout_seconds: float = 4.0) -> str
                 html_pair = _extract_lat_lng_from_google_maps_html(getattr(response, "text", None))
                 if html_pair:
                     lat, lng, _ = html_pair
+                    if _is_likely_google_block_page_coordinate_pair(lat, lng):
+                        raise MalformedLocationInputError(
+                            "Resolved page appears to be blocked/bot-protection content from Google; "
+                            "could not extract destination coordinates."
+                        )
                     return f"https://www.google.com/maps/search/?api=1&query={lat},{lng}"
                 return final_url
             raise ShortUrlResolutionError(f"Google Maps short link exceeded redirect limit ({max_redirects}).")
