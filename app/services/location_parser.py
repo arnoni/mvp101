@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import html
 from typing import Literal
 import ipaddress
 import re
@@ -316,6 +317,45 @@ def _extract_lat_lng_from_google_maps_html(body: str | None) -> tuple[float, flo
     return None
 
 
+def _extract_html_redirect_url(body: str | None) -> str | None:
+    if not body:
+        return None
+
+    meta_refresh = re.search(
+        r'<meta[^>]*http-equiv\s*=\s*["\']?refresh["\']?[^>]*content\s*=\s*["\'][^"\']*;\s*url\s*=\s*([^"\']+)["\']',
+        body,
+        flags=re.IGNORECASE,
+    )
+    if meta_refresh:
+        return html.unescape(meta_refresh.group(1).strip().strip("'\""))
+
+    content_first = re.search(
+        r'<meta[^>]*content\s*=\s*["\'][^"\']*;\s*url\s*=\s*([^"\']+)["\'][^>]*http-equiv\s*=\s*["\']?refresh["\']?',
+        body,
+        flags=re.IGNORECASE,
+    )
+    if content_first:
+        return html.unescape(content_first.group(1).strip().strip("'\""))
+
+    js_redirect = re.search(
+        r"""(?:window\.)?location(?:\.href)?\s*=\s*["']([^"']+)["']""",
+        body,
+        flags=re.IGNORECASE,
+    )
+    if js_redirect:
+        return html.unescape(js_redirect.group(1).strip())
+
+    js_replace = re.search(
+        r"""(?:window\.)?location\.replace\(\s*["']([^"']+)["']\s*\)""",
+        body,
+        flags=re.IGNORECASE,
+    )
+    if js_replace:
+        return html.unescape(js_replace.group(1).strip())
+
+    return None
+
+
 def resolve_google_maps_short_url(raw: str, timeout_seconds: float = 4.0) -> str:
     normalized = _normalize_raw(raw)
     parsed = urlparse(normalized)
@@ -333,6 +373,8 @@ def resolve_google_maps_short_url(raw: str, timeout_seconds: float = 4.0) -> str
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     }
     max_redirects = 10
+    max_html_redirects = 3
+    html_redirect_hops = 0
     current_url = normalized
     try:
         with httpx.Client(timeout=timeout_seconds, follow_redirects=True, headers=headers) as client:
@@ -394,6 +436,17 @@ def resolve_google_maps_short_url(raw: str, timeout_seconds: float = 4.0) -> str
                     return final_url
                 except MalformedLocationInputError:
                     pass
+                html_redirect_url = _extract_html_redirect_url(getattr(response, "text", None))
+                if html_redirect_url:
+                    html_redirect_hops += 1
+                    if html_redirect_hops > max_html_redirects:
+                        raise MalformedLocationInputError(
+                            "Resolved page appears to be stuck in recursive HTML redirects; "
+                            "could not reach a stable Google Maps destination."
+                        )
+                    current_url = urljoin(final_url, html_redirect_url)
+                    _validate_redirect_target(current_url, allow_short_hosts=False)
+                    continue
 
                 html_pair = _extract_lat_lng_from_google_maps_html(getattr(response, "text", None))
                 if html_pair:

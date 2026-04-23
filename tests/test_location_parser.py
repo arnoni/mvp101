@@ -368,6 +368,157 @@ def test_short_url_resolution_extracts_percent_encoded_query_pair_from_html(monk
     assert resolved == "https://www.google.com/maps/search/?api=1&query=16.0544,108.2022"
 
 
+def test_short_url_resolution_follows_meta_refresh_to_real_maps_page(monkeypatch):
+    class StubResponse:
+        def __init__(self, url, text):
+            self.status_code = 200
+            self.is_redirect = False
+            self.is_informational = False
+            self.headers = {}
+            self.url = url
+            self.text = text
+
+        def raise_for_status(self):
+            return None
+
+    class StubClient:
+        def __enter__(self):
+            self.calls = []
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url):
+            self.calls.append(url)
+            if len(self.calls) == 1:
+                return StubResponse(
+                    "https://consent.google.com/m?continue=https://www.google.com/maps",
+                    '<meta content="0;url=https://www.google.com/maps/place/Da+Nang/@16.0194000,108.2540000,17z" http-equiv="refresh">',
+                )
+            return StubResponse("https://www.google.com/maps/place/Da+Nang/@16.0194000,108.2540000,17z", "<html/>")
+
+    stub_client = StubClient()
+    monkeypatch.setattr("app.services.location_parser.httpx.Client", lambda **_: stub_client)
+    resolved = resolve_google_maps_short_url("https://maps.app.goo.gl/gPZ5VtapJLqfSBnZ9?g_st=aw")
+    assert resolved == "https://www.google.com/maps/place/Da+Nang/@16.0194000,108.2540000,17z"
+    assert stub_client.calls == [
+        "https://maps.app.goo.gl/gPZ5VtapJLqfSBnZ9?g_st=aw",
+        "https://www.google.com/maps/place/Da+Nang/@16.0194000,108.2540000,17z",
+    ]
+
+
+def test_short_url_resolution_follows_window_location_redirect(monkeypatch):
+    class StubResponse:
+        def __init__(self, url, text):
+            self.status_code = 200
+            self.is_redirect = False
+            self.is_informational = False
+            self.headers = {}
+            self.url = url
+            self.text = text
+
+        def raise_for_status(self):
+            return None
+
+    class StubClient:
+        def __enter__(self):
+            self.calls = []
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url):
+            self.calls.append(url)
+            if len(self.calls) == 1:
+                return StubResponse(
+                    "https://consent.google.com/m?continue=https://www.google.com/maps",
+                    '<script>window.location="https://www.google.com/maps/search/?api=1&query=16.0194000,108.2540000";</script>',
+                )
+            return StubResponse(
+                "https://www.google.com/maps/search/?api=1&query=16.0194000,108.2540000",
+                "<html/>",
+            )
+
+    stub_client = StubClient()
+    monkeypatch.setattr("app.services.location_parser.httpx.Client", lambda **_: stub_client)
+    resolved = resolve_google_maps_short_url("https://maps.app.goo.gl/gPZ5VtapJLqfSBnZ9?g_st=aw")
+    assert resolved == "https://www.google.com/maps/search/?api=1&query=16.0194000,108.2540000"
+    assert stub_client.calls[-1] == "https://www.google.com/maps/search/?api=1&query=16.0194000,108.2540000"
+
+
+def test_short_url_resolution_unescapes_html_redirect_entities(monkeypatch):
+    class StubResponse:
+        def __init__(self, url, text):
+            self.status_code = 200
+            self.is_redirect = False
+            self.is_informational = False
+            self.headers = {}
+            self.url = url
+            self.text = text
+
+        def raise_for_status(self):
+            return None
+
+    class StubClient:
+        def __enter__(self):
+            self.calls = []
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, url):
+            self.calls.append(url)
+            if len(self.calls) == 1:
+                return StubResponse(
+                    "https://consent.google.com/m?continue=https://www.google.com/maps",
+                    '<meta content="0;url=https://www.google.com/maps/search/?api=1&amp;query=16.0194000,108.2540000" http-equiv="refresh">',
+                )
+            return StubResponse(
+                "https://www.google.com/maps/search/?api=1&query=16.0194000,108.2540000",
+                "<html/>",
+            )
+
+    stub_client = StubClient()
+    monkeypatch.setattr("app.services.location_parser.httpx.Client", lambda **_: stub_client)
+    resolved = resolve_google_maps_short_url("https://maps.app.goo.gl/gPZ5VtapJLqfSBnZ9?g_st=aw")
+    assert resolved == "https://www.google.com/maps/search/?api=1&query=16.0194000,108.2540000"
+    assert stub_client.calls == [
+        "https://maps.app.goo.gl/gPZ5VtapJLqfSBnZ9?g_st=aw",
+        "https://www.google.com/maps/search/?api=1&query=16.0194000,108.2540000",
+    ]
+
+
+def test_short_url_resolution_html_redirect_hop_limit(monkeypatch):
+    class StubResponse:
+        def __init__(self, url):
+            self.status_code = 200
+            self.is_redirect = False
+            self.is_informational = False
+            self.headers = {}
+            self.url = url
+            self.text = '<meta content="0;url=https://www.google.com/maps/place/Loop" http-equiv="refresh">'
+
+        def raise_for_status(self):
+            return None
+
+    class StubClient:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def get(self, _):
+            return StubResponse("https://www.google.com/maps/place/Loop")
+
+    monkeypatch.setattr("app.services.location_parser.httpx.Client", lambda **_: StubClient())
+    with pytest.raises(MalformedLocationInputError, match="recursive HTML redirects"):
+        resolve_google_maps_short_url("https://maps.app.goo.gl/gPZ5VtapJLqfSBnZ9?g_st=aw")
+
+
 def test_short_url_resolution_rejects_ashburn_block_page_coordinates(monkeypatch):
     response = Mock()
     response.status_code = 200
