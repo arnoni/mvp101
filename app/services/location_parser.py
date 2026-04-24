@@ -419,13 +419,19 @@ def resolve_google_maps_short_url(raw: str, timeout_seconds: float = 4.0) -> str
                     raise LocationResolutionBlockedError(_BLOCKED_RESOLUTION_MESSAGE)
 
                 try:
-                    extract_lat_lng_from_google_maps_url(final_url)
+                    lat, lng, _ = extract_lat_lng_from_google_maps_url(final_url)
+                    if _is_likely_google_block_page_coordinate_pair(lat, lng):
+                        _log_attempt(False, "bot_page_datacenter_coords", response.status_code)
+                        raise LocationResolutionBlockedError(_BLOCKED_RESOLUTION_MESSAGE)
                     _log_attempt(True, None, response.status_code)
                     return final_url
                 except MalformedLocationInputError as exc:
                     html_pair = _extract_lat_lng_from_google_maps_html(body)
                     if html_pair:
                         lat, lng, _ = html_pair
+                        if _is_likely_google_block_page_coordinate_pair(lat, lng):
+                            _log_attempt(False, "bot_page_datacenter_coords", response.status_code)
+                            raise LocationResolutionBlockedError(_BLOCKED_RESOLUTION_MESSAGE)
                         _log_attempt(True, None, response.status_code)
                         return f"https://www.google.com/maps/search/?api=1&query={lat},{lng}"
                     _log_attempt(False, "coordinates_not_found", response.status_code)
@@ -468,8 +474,6 @@ def parse_google_maps_url(raw: str) -> ParsedLocationInput:
         resolved = resolve_google_maps_short_url(normalized)
         try:
             lat, lng, method = extract_lat_lng_from_google_maps_url(resolved)
-            if _is_likely_google_block_page_coordinate_pair(lat, lng):
-                raise LocationResolutionBlockedError(_BLOCKED_RESOLUTION_MESSAGE)
         except MalformedLocationInputError as exc:
             details = _format_resolution_event_details(
                 stage="extract_coordinates_failed_after_resolution",
