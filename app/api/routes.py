@@ -24,6 +24,7 @@ from app.services.demand_service import DemandService
 from app.services.i18n import get_translations
 from app.core.config import is_inside_da_nang_bbox
 from app.services.location_parser import (
+    LocationResolutionBlockedError,
     LocationParseError,
     ParsedLocationInput,
     parse_location_input,
@@ -33,6 +34,39 @@ import time
 
 router = APIRouter()
 logger = structlog.get_logger(__name__)
+
+
+def _raise_location_resolution_blocked_http_exception() -> None:
+    raise HTTPException(
+        status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail={
+            "error": {
+                "code": "LOCATION_RESOLUTION_FAILED",
+                "reason": "SHORT_LINK_BLOCKED",
+                "message": "This map link could not be resolved automatically. Please paste the actual address or coordinates.",
+                "user_action": "PASTE_ADDRESS_OR_COORDINATES",
+                "field": "location",
+                "retryable": True,
+                "details": {
+                    "accepted_formats": [
+                        "address",
+                        "latitude_longitude",
+                        "full_google_maps_url",
+                    ]
+                },
+            }
+        },
+    )
+
+
+def _raise_location_parse_http_exception(error_code: str = "INVALID_LOCATION_INPUT") -> None:
+    raise HTTPException(
+        status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail={
+            "error": "LOCATION_PARSE_FAILED",
+            "error_code": error_code,
+        },
+    )
 
 # --- Helper for Error ID ---
 def get_req_id(request: Request) -> Optional[str]:
@@ -276,14 +310,17 @@ async def parse_location(data: ParseLocationRequest):
                 "input_kind": parsed.input_kind,
             },
         )
+    except LocationResolutionBlockedError:
+        _raise_location_resolution_blocked_http_exception()
     except LocationParseError as exc:
-        raise HTTPException(
-            status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail={
-                "error": "LOCATION_PARSE_FAILED",
-                "error_code": exc.error_code,
-            },
-        ) from exc
+        _raise_location_parse_http_exception(exc.error_code)
+    except Exception as exc:
+        logger.exception(
+            "parse_location_unexpected_parser_failure",
+            error=str(exc),
+            location_input=data.location_input[:120],
+        )
+        _raise_location_parse_http_exception()
 
 @router.post("/search", response_model=SearchResponse)
 async def search(
@@ -305,7 +342,19 @@ async def search(
         entitlement_stale = getattr(request.state, "entitlement_stale", False)
         daily_limit = int(getattr(request.state, "daily_limit", 3) or 3)
         if data.location_input:
-            parsed_input = parse_location_input(data.location_input)
+            try:
+                parsed_input = parse_location_input(data.location_input)
+            except LocationResolutionBlockedError:
+                _raise_location_resolution_blocked_http_exception()
+            except LocationParseError as exc:
+                _raise_location_parse_http_exception(exc.error_code)
+            except Exception as exc:
+                logger.exception(
+                    "search_route_unexpected_location_parse_failure",
+                    error=str(exc),
+                    has_location_input=bool(data.location_input),
+                )
+                _raise_location_parse_http_exception()
             data.lat = parsed_input.latitude
             data.lon = parsed_input.longitude
         else:

@@ -48,9 +48,9 @@ uv run python check_no_session_import.py
 
 # Run tests
 uv run pytest tests/
-uv run python tests/test_quota_logic.py       # quota key scoping
-uv run python tests/test_middleware_order.py  # middleware execution order
-uv run python tests/test_ugc_plan_v2.py       # UGC dedup and validation
+uv run pytest tests/test_quota_logic.py       # quota key scoping
+uv run pytest tests/test_middleware_order.py  # middleware execution order
+uv run pytest tests/test_ugc_plan_v2.py       # UGC dedup and validation
 
 # Health checks
 curl http://localhost:8000/health
