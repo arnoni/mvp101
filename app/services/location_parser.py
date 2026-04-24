@@ -107,6 +107,18 @@ def validate_lat_lng(lat: float, lng: float) -> tuple[float, float]:
     return lat, lng
 
 
+def _is_likely_google_block_page_coordinate_pair(lat: float, lng: float) -> bool:
+    # Google serves default US datacenter locations when bot-blocked (e.g., Ashburn, VA or Seattle, WA)
+    known_datacenters = [
+        (39.026799, -77.844326), # Ashburn, VA
+        (47.618696, -121.899783), # Seattle, WA (approx)
+    ]
+    for center_lat, center_lng in known_datacenters:
+        if abs(lat - center_lat) < 0.05 and abs(lng - center_lng) < 0.05:
+            return True
+    return False
+
+
 def parse_decimal_pair(raw: str) -> ParsedLocationInput:
     normalized = _normalize_raw(raw)
     if re.fullmatch(r"\d+,\d+\s+\d+,\d+", normalized):
@@ -456,6 +468,8 @@ def parse_google_maps_url(raw: str) -> ParsedLocationInput:
         resolved = resolve_google_maps_short_url(normalized)
         try:
             lat, lng, method = extract_lat_lng_from_google_maps_url(resolved)
+            if _is_likely_google_block_page_coordinate_pair(lat, lng):
+                raise LocationResolutionBlockedError(_BLOCKED_RESOLUTION_MESSAGE)
         except MalformedLocationInputError as exc:
             details = _format_resolution_event_details(
                 stage="extract_coordinates_failed_after_resolution",
