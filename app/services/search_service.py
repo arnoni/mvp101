@@ -16,6 +16,7 @@ class SearchDependencies:
     redis: Optional[object]
     precompute_repo: object
     demand_service: object
+    poi_service: Optional[object] = None
 
 
 class SearchService:
@@ -99,6 +100,15 @@ class SearchService:
             demand = None
             if request.target in (SearchTarget.CONSTRUCTION, SearchTarget.BOTH):
                 construction_score = min(100, len(candidates) * 10)
+                if self._deps.poi_service is not None:
+                    bins = await self._deps.poi_service.get_construction_distance_bins(request.lat, request.lon)
+                    weighted = (
+                        int(bins.get("0_10", 0)) * 4
+                        + int(bins.get("10_20", 0)) * 3
+                        + int(bins.get("20_30", 0)) * 2
+                        + int(bins.get("30_40", 0)) * 1
+                    )
+                    construction_score = min(100, weighted * 10)
                 construction = GaugeResult(
                     score=construction_score,
                     coord_key=coord_key,

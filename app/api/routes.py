@@ -22,7 +22,7 @@ from app.services.bucket_engine import BucketEngine
 from app.services.precompute_repo import PrecomputeRepository
 from app.services.demand_service import DemandService
 from app.services.i18n import get_translations
-from app.core.config import is_inside_da_nang_bbox
+from app.core.config import is_inside_app_bbox
 from app.services.location_parser import (
     InvalidCoordinateRangeError,
     LocationResolutionBlockedError,
@@ -378,6 +378,14 @@ async def search(
                 longitude=data.lon,
                 resolution_method="search_lat_lon",
             )
+        if not is_inside_app_bbox(data.lat, data.lon):
+            raise HTTPException(
+                status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=ErrorResponse(
+                    error="OUT_OF_BOUNDS",
+                    detail="Location is outside supported bounding box.",
+                ).model_dump(),
+            )
         area_code = AreaBucketer.get_area_code(data.lat, data.lon)
         check_types = ["construction", "demand"] if data.target == SearchTarget.BOTH else [data.target.value]
 
@@ -425,6 +433,7 @@ async def search(
                 redis=getattr(request.app.state, "redis", None),
                 precompute_repo=precompute_repo,
                 demand_service=demand_service,
+                poi_service=getattr(request.app.state, "poi_service", None),
             )
         )
         response_payload = await service.run(
@@ -613,7 +622,7 @@ async def ugc_report_submit(
     tier = getattr(request.state, "tier", TierStatus.FREE)
     entitlement_stale = getattr(request.state, "entitlement_stale", False)
     daily_limit = int(getattr(request.state, "daily_limit", 3) or 3)
-    if not is_inside_da_nang_bbox(data.lat, data.lon):
+    if not is_inside_app_bbox(data.lat, data.lon):
         raise HTTPException(
             status_code=http_status.HTTP_400_BAD_REQUEST,
             detail=ErrorResponse(error="OUT_OF_BOUNDS", detail="Coordinates outside allowed area.").model_dump()

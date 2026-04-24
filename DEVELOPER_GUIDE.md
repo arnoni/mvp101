@@ -362,7 +362,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS ugc_reports_public_id_uq
 │   ├── utils/          # Helpers (Haversine, security, etc.)
 │   ├── main.py         # Entry point & lifespan management
 │   └── logging.py      # Structured logging config
-├── static/             # Assets (images, css, js) & MasterList.json
+├── static/             # Assets (images, css, js)
 ├── templates/          # Jinja2 HTML templates
 └── requirements.txt    # Python dependencies
 ```
