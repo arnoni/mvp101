@@ -111,6 +111,7 @@ def _is_likely_google_block_page_coordinate_pair(lat: float, lng: float) -> bool
     # Google serves default US datacenter locations when bot-blocked (e.g., Ashburn, VA or Seattle, WA)
     known_datacenters = [
         (39.026799, -77.844326), # Ashburn, VA
+        (39.043076, -77.489766), # Ashburn, VA (Alternate)
         (47.618696, -121.899783), # Seattle, WA (approx)
     ]
     for center_lat, center_lng in known_datacenters:
