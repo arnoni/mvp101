@@ -17,7 +17,7 @@ _SHORT_HOSTS = {"maps.app.goo.gl", "goo.gl", "g.page"}
 logger = structlog.get_logger(__name__)
 _BLOCKED_RESOLUTION_MESSAGE = (
     "This Google Maps short link could not be resolved automatically. Please paste the full Google Maps URL, "
-    "coordinates."
+    "or type-in the coordinates."
 )
 
 
