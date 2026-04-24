@@ -92,7 +92,9 @@ document.addEventListener("DOMContentLoaded", () => {
     demandReady: els.demMsg?.dataset.labelReady || document.body.dataset.labelReady || (els.demMsg?.textContent || "").trim(),
     demandLocked: els.demMsg?.dataset.labelLocked || document.body.dataset.labelPaidRequired || (els.demMsg?.textContent || "").trim(),
     parsedAs: document.body.dataset.labelParsedAs || "Parsed as:",
-    parsingLink: document.body.dataset.labelParsingLink || "Parsing link..."
+    parsingLink: document.body.dataset.labelParsingLink || "Parsing link...",
+    errorShortUrlBlocked: document.body.dataset.labelErrorShortUrlBlocked || "We could not open this short Google Maps link due to access restrictions. Please open it in Google Maps, copy the full URL, and try again.",
+    errorLocationNotSupported: document.body.dataset.labelErrorLocationNotSupported || "This location is outside supported regions. Please use a location inside supported coverage areas."
   };
 
   function getParserErrorMessage(payload, status) {
@@ -102,11 +104,11 @@ document.addEventListener("DOMContentLoaded", () => {
     const errorCode = inner?.error_code;
     const msg = inner?.message;
 
-    if (errorCode === "SHORT_URL_RESOLUTION_BLOCKED" && msg) {
-      return msg;
+    if (errorCode === "SHORT_URL_RESOLUTION_BLOCKED") {
+      return labels.errorShortUrlBlocked || msg || "We could not open this short Google Maps link due to access restrictions. Please open it in Google Maps, copy the full URL, and try again.";
     }
-    if (errorCode === "LOCATION_NOT_SUPPORTED" && msg) {
-      return msg;
+    if (errorCode === "LOCATION_NOT_SUPPORTED") {
+      return labels.errorLocationNotSupported || msg || "This location is outside supported regions. Please use a location inside supported coverage areas.";
     }
     if (errorCode === "UNSUPPORTED_LOCATION_INPUT") {
       return "Please use a Google Maps link or latitude/longitude coordinates.";

@@ -18,6 +18,8 @@
   data-label-demand-locked="{{ t.get('locked', 'Locked') }} 🔒"
   data-label-parsed-as="{{ t.get('parsed_as', 'Parsed as:') }}"
   data-label-parsing-link="{{ t.get('parsing_link', 'Parsing link...') }}"
+  data-label-error-short-url-blocked="{{ t.get('error_short_url_blocked', 'We could not open this short Google Maps link due to access restrictions. Please open it in Google Maps, copy the full URL, and try again.') }}"
+  data-label-error-location-not-supported="{{ t.get('error_location_not_supported', 'This location is outside supported regions. Please use a location inside supported coverage areas.') }}"
   data-turnstile-sitekey="{{ turnstile_site_key }}"
   data-turnstile-required="{{ 'true' if initial_turnstile_required else 'false' }}"
   data-current-lang="{{ current_lang }}">

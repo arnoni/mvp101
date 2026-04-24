@@ -136,7 +136,9 @@ TRANSLATIONS = {
         "about_legal": "Legal",
         "coordinates_not_set": "Coordinates not set",
         "parsed_as": "Parsed as:",
-        "parsing_link": "Parsing link..."
+        "parsing_link": "Parsing link...",
+        "error_short_url_blocked": "We could not open this short Google Maps link due to access restrictions. Please open it in Google Maps, copy the full URL, and try again.",
+        "error_location_not_supported": "This location is outside supported regions. Please use a location inside supported coverage areas."
     },
     "es": {
         "title": "DillDrill",
@@ -270,7 +272,9 @@ TRANSLATIONS = {
         "about_legal": "Legal",
         "coordinates_not_set": "Coordenadas no establecidas",
         "parsed_as": "Interpretado como:",
-        "parsing_link": "Analizando enlace..."
+        "parsing_link": "Analizando enlace...",
+        "error_short_url_blocked": "No pudimos abrir este enlace corto de Google Maps debido a restricciones de acceso. Ábrelo en Google Maps, copia la URL completa e inténtalo de nuevo.",
+        "error_location_not_supported": "Esta ubicación está fuera de las regiones compatibles. Usa una ubicación dentro de las áreas de cobertura compatibles."
     },
     "ru": {
         "title": "DillDrill",
@@ -404,7 +408,9 @@ TRANSLATIONS = {
         "about_legal": "Legal",
         "coordinates_not_set": "Координаты не заданы",
         "parsed_as": "Распознано как:",
-        "parsing_link": "Разбор ссылки..."
+        "parsing_link": "Разбор ссылки...",
+        "error_short_url_blocked": "Не удалось открыть эту короткую ссылку Google Maps из‑за ограничений доступа. Откройте её в Google Maps, скопируйте полный URL и попробуйте снова.",
+        "error_location_not_supported": "Это местоположение находится вне поддерживаемых регионов. Используйте точку в пределах поддерживаемых зон покрытия."
     },
     "ko": {
         "title": "DillDrill",
@@ -538,7 +544,9 @@ TRANSLATIONS = {
         "about_legal": "Legal",
         "coordinates_not_set": "좌표가 설정되지 않음",
         "parsed_as": "해석 결과:",
-        "parsing_link": "링크를 분석하는 중..."
+        "parsing_link": "링크를 분석하는 중...",
+        "error_short_url_blocked": "접근 제한으로 인해 이 Google 지도 단축 링크를 열 수 없습니다. Google 지도에서 링크를 열고 전체 URL을 복사한 뒤 다시 시도해 주세요.",
+        "error_location_not_supported": "이 위치는 지원 지역 밖에 있습니다. 지원되는 커버리지 지역 내 위치를 사용해 주세요."
     },
     "fr": {
         "title": "DillDrill",
@@ -672,7 +680,9 @@ TRANSLATIONS = {
         "about_legal": "Legal",
         "coordinates_not_set": "Coordonnées non définies",
         "parsed_as": "Interprété comme :",
-        "parsing_link": "Analyse du lien..."
+        "parsing_link": "Analyse du lien...",
+        "error_short_url_blocked": "Impossible d’ouvrir ce lien court Google Maps en raison de restrictions d’accès. Ouvrez-le dans Google Maps, copiez l’URL complète, puis réessayez.",
+        "error_location_not_supported": "Cet emplacement est en dehors des régions prises en charge. Veuillez utiliser un emplacement dans une zone couverte."
     },
     "de": {
         "title": "DillDrill",
@@ -806,7 +816,9 @@ TRANSLATIONS = {
         "about_legal": "Legal",
         "coordinates_not_set": "Koordinaten nicht festgelegt",
         "parsed_as": "Erkannt als:",
-        "parsing_link": "Link wird analysiert..."
+        "parsing_link": "Link wird analysiert...",
+        "error_short_url_blocked": "Dieser kurze Google-Maps-Link konnte wegen Zugriffsbeschränkungen nicht geöffnet werden. Öffnen Sie ihn in Google Maps, kopieren Sie die vollständige URL und versuchen Sie es erneut.",
+        "error_location_not_supported": "Dieser Standort liegt außerhalb der unterstützten Regionen. Bitte verwenden Sie einen Standort innerhalb der unterstützten Abdeckung."
     },
     "zh": {
         "title": "DillDrill",
@@ -940,7 +952,9 @@ TRANSLATIONS = {
         "about_legal": "Legal",
         "coordinates_not_set": "坐标未设置",
         "parsed_as": "解析为：",
-        "parsing_link": "正在解析链接..."
+        "parsing_link": "正在解析链接...",
+        "error_short_url_blocked": "由于访问限制，无法打开该 Google 地图短链接。请在 Google 地图中打开它，复制完整 URL 后重试。",
+        "error_location_not_supported": "该位置不在支持的区域内。请使用位于支持覆盖范围内的位置。"
     },
     "ja": {
         "title": "DillDrill",
@@ -1074,7 +1088,9 @@ TRANSLATIONS = {
         "about_legal": "Legal",
         "coordinates_not_set": "座標未設定",
         "parsed_as": "解析結果:",
-        "parsing_link": "リンクを解析中..."
+        "parsing_link": "リンクを解析中...",
+        "error_short_url_blocked": "アクセス制限のため、この Google マップ短縮リンクを開けませんでした。Google マップで開いて完全な URL をコピーし、もう一度お試しください。",
+        "error_location_not_supported": "この場所は対応地域外です。対応カバレッジ内の場所を指定してください。"
     }
 }
 
