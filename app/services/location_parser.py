@@ -3,18 +3,18 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 import html
-import logging
 from typing import Literal
 import ipaddress
 import re
 from urllib.parse import urlparse, parse_qs, unquote, urljoin
 
 import httpx
+import structlog
 
 MAX_LOCATION_INPUT_LEN = 2048
 INPUT_KIND = Literal["decimal_pair", "degree_pair", "google_maps_url", "google_maps_short_url"]
 _SHORT_HOSTS = {"maps.app.goo.gl", "goo.gl", "g.page"}
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 _BLOCKED_RESOLUTION_MESSAGE = (
     "This Google Maps short link could not be resolved automatically. Please paste the full Google Maps URL, "
     "coordinates."
@@ -229,9 +229,13 @@ def _extract_pair(value: str | None) -> tuple[float, float] | None:
     match = re.search(r"([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)", value)
     if not match:
         return None
-    lat, lng = float(match.group(1)), float(match.group(2))
-    validate_lat_lng(lat, lng)
-    return lat, lng
+    try:
+        lat, lng = float(match.group(1)), float(match.group(2))
+        validate_lat_lng(lat, lng)
+        return lat, lng
+    except (ValueError, InvalidCoordinateRangeError) as exc:
+        logger.info("extract_pair_failed", value=value[:200], error=str(exc))
+        return None
 
 
 def _is_private_or_local_host(host: str) -> bool:
@@ -333,24 +337,35 @@ def _extract_lat_lng_from_google_maps_html(body: str | None) -> tuple[float, flo
         match = re.search(pattern, decoded_body)
         if not match:
             continue
-        lat, lng = float(match.group(1)), float(match.group(2))
-        validate_lat_lng(lat, lng)
-        return lat, lng, method
+        try:
+            lat, lng = float(match.group(1)), float(match.group(2))
+            validate_lat_lng(lat, lng)
+            return lat, lng, method
+        except (ValueError, InvalidCoordinateRangeError) as exc:
+            logger.info("html_coord_extraction_failed", pattern=method, matched_groups=[match.group(1), match.group(2)], error=str(exc))
+            continue
+    logger.info("html_coord_extraction_no_match", body_length=len(decoded_body))
     return None
 
 
 def _extract_html_redirect_url(body: str | None) -> str | None:
     if not body:
         return None
-    # Meta refresh
-    meta_match = re.search(r'http-equiv=["\']?refresh["\']?[^>]*content=["\']?\d+;\s*url\s*=\s*([^"\'>\s]+)', body, flags=re.IGNORECASE)
-    # JS redirect
-    js_match = re.search(r'(?:window\.)?location(?:\.href\s*=\s*|\.replace\(\s*)["\']([^"\']+)["\']', body, flags=re.IGNORECASE)
-    
-    extracted = (meta_match and meta_match.group(1)) or (js_match and js_match.group(1))
-    if extracted:
-        return html.unescape(extracted.strip().strip("'\""))
-    return None
+    try:
+        # Meta refresh
+        meta_match = re.search(r'http-equiv=["\']?refresh["\']?[^>]*content=["\']?\d+;\s*url\s*=\s*([^"\'>\s]+)', body, flags=re.IGNORECASE)
+        # JS redirect
+        js_match = re.search(r'(?:window\.)?location(?:\.href\s*=\s*|\.replace\(\s*)["\']([^"\']+)["\']', body, flags=re.IGNORECASE)
+
+        extracted = (meta_match and meta_match.group(1)) or (js_match and js_match.group(1))
+        if extracted:
+            result = html.unescape(extracted.strip().strip("'\"" ))
+            logger.info("html_redirect_url_extracted", source="meta_refresh" if meta_match else "js_location", extracted_url=result[:300])
+            return result
+        return None
+    except Exception as exc:
+        logger.info("html_redirect_extraction_error", error=str(exc), body_length=len(body))
+        return None
 
 
 def resolve_google_maps_short_url(raw: str, timeout_seconds: float = 4.0) -> str:
@@ -372,17 +387,13 @@ def resolve_google_maps_short_url(raw: str, timeout_seconds: float = 4.0) -> str
 
     def _log_attempt(success: bool, failure_reason: str | None, http_status: int | None) -> None:
         logger.info(
-            json.dumps(
-                {
-                    "event": "location_resolve_attempt",
-                    "input_type": "google_short_url",
-                    "resolver_strategy": "redirect_follow",
-                    "success": success,
-                    "failure_reason": failure_reason,
-                    "http_status": http_status,
-                    "provider": "google",
-                }
-            )
+            "location_resolve_attempt",
+            input_type="google_short_url",
+            resolver_strategy="redirect_follow",
+            success=success,
+            failure_reason=failure_reason,
+            http_status=http_status,
+            provider="google",
         )
 
     try:
@@ -728,12 +739,9 @@ def parse_location_input(raw: str) -> ParsedLocationInput:
     if not (15.9 <= parsed.latitude <= 16.3 and 107.8 <= parsed.longitude <= 108.4):
         logger.info(
             "location_outside_supported_region",
-            extra={
-                "event": "location_outside_supported_region",
-                "latitude": parsed.latitude,
-                "longitude": parsed.longitude,
-                "supported_region": "Da Nang, Vietnam"
-            }
+            latitude=parsed.latitude,
+            longitude=parsed.longitude,
+            supported_region="Da Nang, Vietnam",
         )
         raise LocationNotSupportedError("This location is not supported currently")
 

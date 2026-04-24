@@ -96,8 +96,11 @@ document.addEventListener("DOMContentLoaded", () => {
   };
 
   function getParserErrorMessage(payload, status) {
-    const errorCode = payload?.detail?.error_code || payload?.error_code;
-    const msg = payload?.detail?.message || payload?.message;
+    // The middleware wraps HTTPException as: { detail: { error: "HTTP_ERROR", detail: { error_code, message }, status_code } }
+    // Support both wrapped and unwrapped forms.
+    const inner = payload?.detail?.detail || payload?.detail || payload || {};
+    const errorCode = inner?.error_code;
+    const msg = inner?.message;
 
     if (errorCode === "SHORT_URL_RESOLUTION_BLOCKED" && msg) {
       return msg;
@@ -131,28 +134,64 @@ document.addEventListener("DOMContentLoaded", () => {
       });
     } catch (networkErr) {
       if (networkErr?.name === "AbortError") throw networkErr;
-      throw new Error("Could not reach the parser service to expand this Google Maps short link. Please try again.");
+      console.warn(JSON.stringify({
+        event: "parser_network_error",
+        error: networkErr?.message,
+        input_length: raw?.length
+      }));
+      throw new Error("Could not reach the parser service. Please check your connection and try again.");
     }
+
     let payload = null;
     try {
       payload = await response.json();
-    } catch {
+    } catch (jsonErr) {
+      console.warn(JSON.stringify({
+        event: "parser_response_not_json",
+        http_status: response.status,
+        error: jsonErr?.message
+      }));
       if (!response.ok) {
         throw new Error(`Parser service returned HTTP ${response.status}.`);
       }
       throw new Error("Parser service returned an unreadable response.");
     }
+
     if (!response.ok) {
-      throw new Error(getParserErrorMessage(payload, response.status));
+      const msg = getParserErrorMessage(payload, response.status);
+      console.warn(JSON.stringify({
+        event: "parser_error_response",
+        http_status: response.status,
+        error_code: payload?.detail?.detail?.error_code || payload?.detail?.error_code || null,
+        message: msg
+      }));
+      throw new Error(msg);
     }
-    if (!payload?.ok || !payload?.normalized) {
+
+    if (!payload?.ok) {
+      console.warn(JSON.stringify({
+        event: "parser_payload_not_ok",
+        http_status: response.status,
+        payload_keys: payload ? Object.keys(payload) : null
+      }));
+      throw new Error("The parser returned an unexpected response. Please try again.");
+    }
+
+    const lat = Number(payload.normalized?.latitude);
+    const lng = Number(payload.normalized?.longitude);
+    const normalizedText = payload.normalized?.display;
+
+    if (!payload.normalized || isNaN(lat) || isNaN(lng)) {
+      console.warn(JSON.stringify({
+        event: "parser_missing_coordinates",
+        has_normalized: !!payload.normalized,
+        lat_raw: payload.normalized?.latitude,
+        lng_raw: payload.normalized?.longitude
+      }));
       throw new Error("The parser could not return coordinates for this location input.");
     }
-    return {
-      lat: Number(payload.normalized.latitude),
-      lng: Number(payload.normalized.longitude),
-      normalizedText: payload.normalized.display
-    };
+
+    return { lat, lng, normalizedText };
   }
 
   AccessState.readDomAccess();
