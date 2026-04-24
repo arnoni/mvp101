@@ -88,12 +88,12 @@ async def lifespan(app: FastAPI):
     # Always ensure quota_repo exists to avoid AttributeErrors in PolicyEngine
     app.state.quota_repo = QuotaRepository(None) 
     
-    # Debug: Check environment variables
-    import os
-    print("UPSTASH_REDIS_URL present:", bool(os.getenv("UPSTASH_REDIS_URL"))) 
-    print("UPSTASH_REDIS_REST_URL present:", bool(os.getenv("UPSTASH_REDIS_REST_URL"))) 
-    print("UPSTASH_REDIS_REST_TOKEN present:", bool(os.getenv("UPSTASH_REDIS_REST_TOKEN"))) 
-    print("REST URL prefix:", (os.getenv("UPSTASH_REDIS_REST_URL") or "")[:40])
+    logger.debug(
+        "redis_env_presence",
+        upstash_redis_url_present=bool(os.getenv("UPSTASH_REDIS_URL")),
+        upstash_redis_rest_url_present=bool(os.getenv("UPSTASH_REDIS_REST_URL")),
+        upstash_redis_rest_token_present=bool(os.getenv("UPSTASH_REDIS_REST_TOKEN")),
+    )
 
     # We prefer the REST client in Serverless (Vercel)
     rest_url = settings.UPSTASH_REDIS_REST_URL
@@ -102,10 +102,8 @@ async def lifespan(app: FastAPI):
     if settings.ENABLE_REDIS and rest_url and rest_token:
         try:
             app.state.redis = Redis(url=rest_url, token=rest_token)
-            print("About to call redis.ping()")
             import asyncio
             pong = await asyncio.wait_for(app.state.redis.ping(), timeout=10)
-            print("redis.ping() finished:", pong)
             if pong != "PONG":
                  # Upstash might return True or "PONG" depending on client
                  if not pong: raise RuntimeError("Redis ping failed")

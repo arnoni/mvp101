@@ -3,8 +3,9 @@
 # Implements TSD Section 10: Constraints & Limitations (Da Nang BBox)
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field
+from pydantic import Field, field_validator
 from typing import Any, Dict, List, Optional
+import json
 
 class Settings(BaseSettings):
     # Implements TSD Section 5: Executive Summary
@@ -35,11 +36,54 @@ class Settings(BaseSettings):
     APP_ORIGIN: Optional[str] = Field(None, description="Allowed origin for CSRF checks, e.g. https://yourdomain.com")
 
     # --- Constraints & Limitations (TSD Section 10) ---
-    # Da Nang Bounding Box: 16.00–16.12 N, 108.10–108.30 E
+    # Backward-compatible legacy key (prefer APP_BOUNDING_BOX).
     DA_NANG_BBOX: List[float] = Field(
         [108.10, 16.00, 108.30, 16.12], # [min_lon, min_lat, max_lon, max_lat]
         description="Bounding box for Da Nang area [lon_min, lat_min, lon_max, lat_max]"
     )
+    APP_BOUNDING_BOX: List[float] = Field(
+        [108.10, 16.00, 108.30, 16.12],  # [min_lon, min_lat, max_lon, max_lat]
+        description="Application bounding box [lon_min, lat_min, lon_max, lat_max]"
+    )
+
+    @field_validator("APP_BOUNDING_BOX", mode="before")
+    @classmethod
+    def _parse_app_bounding_box(cls, value: Any) -> List[float]:
+        """
+        Accept APP_BOUNDING_BOX from env in multiple formats:
+        - JSON array string: "[108.1,16.0,108.3,16.12]"
+        - CSV string: "108.1,16.0,108.3,16.12"
+        - Python list/tuple
+        """
+        if value is None:
+            return [108.10, 16.00, 108.30, 16.12]
+
+        parsed: Any = value
+        if isinstance(value, str):
+            raw = value.strip()
+            if not raw:
+                return [108.10, 16.00, 108.30, 16.12]
+            if raw.startswith("[") and raw.endswith("]"):
+                parsed = json.loads(raw)
+            else:
+                parsed = [part.strip() for part in raw.split(",")]
+
+        if isinstance(parsed, tuple):
+            parsed = list(parsed)
+
+        if not isinstance(parsed, list) or len(parsed) != 4:
+            raise ValueError("APP_BOUNDING_BOX must contain exactly 4 numeric values: min_lon,min_lat,max_lon,max_lat")
+
+        try:
+            bbox = [float(v) for v in parsed]
+        except (TypeError, ValueError) as exc:
+            raise ValueError("APP_BOUNDING_BOX values must be numeric") from exc
+
+        min_lon, min_lat, max_lon, max_lat = bbox
+        if min_lon >= max_lon or min_lat >= max_lat:
+            raise ValueError("APP_BOUNDING_BOX min values must be less than max values")
+
+        return bbox
     
     # --- Other Settings ---
     # Rate limit in seconds (1 req/IP/24h = 86400 seconds)
@@ -133,4 +177,10 @@ settings = Settings()
 def is_inside_da_nang_bbox(lat: float, lon: float) -> bool:
     """Implements TSD Section 10: Only Da Nang bounding box accepted."""
     min_lon, min_lat, max_lon, max_lat = settings.DA_NANG_BBOX
+    return min_lat <= lat <= max_lat and min_lon <= lon <= max_lon
+
+
+def is_inside_app_bbox(lat: float, lon: float) -> bool:
+    """Checks if coordinates are inside configured APP_BOUNDING_BOX."""
+    min_lon, min_lat, max_lon, max_lat = settings.APP_BOUNDING_BOX
     return min_lat <= lat <= max_lat and min_lon <= lon <= max_lon

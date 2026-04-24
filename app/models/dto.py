@@ -4,21 +4,6 @@
 from pydantic import BaseModel, Field, HttpUrl, ConfigDict, model_validator
 from typing import List, Optional
 
-# --- Internal Data Models (MasterList) ---
-
-class POI(BaseModel):
-    """Internal Point of Interest model from MasterList.json."""
-    id: str = Field(..., description="Unique site identifier.")
-    name: str = Field(..., description="Public name of the project.")
-    lat: float = Field(..., description="Latitude.")
-    lon: float = Field(..., description="Longitude.")
-    images: List[str] = Field(default_factory=list, description="List of image filenames.")
-    internal_notes: Optional[str] = Field(None, description="Private notes (never exposed).")
-
-class MasterList(BaseModel):
-    """Root model for MasterList.json."""
-    points: List[POI]
-
 # --- Precompute Models ---
 
 class PrecomputeCandidate(BaseModel):
