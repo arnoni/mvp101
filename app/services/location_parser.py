@@ -326,9 +326,9 @@ def _extract_html_redirect_url(body: str | None) -> str | None:
     if not body:
         return None
     # Meta refresh
-    meta_match = re.search(r'url\s*=\s*([^"\']+)', body, flags=re.IGNORECASE)
+    meta_match = re.search(r'http-equiv=["\']?refresh["\']?[^>]*content=["\']?\d+;\s*url\s*=\s*([^"\'>\s]+)', body, flags=re.IGNORECASE)
     # JS redirect
-    js_match = re.search(r'(?:window\.)?location(?:\.href|\.replace\()?.*?["\']([^"\']+)["\']', body, flags=re.IGNORECASE)
+    js_match = re.search(r'(?:window\.)?location(?:\.href\s*=\s*|\.replace\(\s*)["\']([^"\']+)["\']', body, flags=re.IGNORECASE)
     
     extracted = (meta_match and meta_match.group(1)) or (js_match and js_match.group(1))
     if extracted:
