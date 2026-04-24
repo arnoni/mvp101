@@ -1,17 +1,23 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import html
+import json
+import logging
 from typing import Literal
 import ipaddress
 import re
-from urllib.parse import urlparse, parse_qs, unquote, urljoin
+from urllib.parse import urlparse, parse_qs, unquote
 
 import httpx
 
 MAX_LOCATION_INPUT_LEN = 2048
 INPUT_KIND = Literal["decimal_pair", "degree_pair", "google_maps_url", "google_maps_short_url"]
 _SHORT_HOSTS = {"maps.app.goo.gl", "goo.gl", "g.page"}
+logger = logging.getLogger(__name__)
+_BLOCKED_RESOLUTION_MESSAGE = (
+    "This Google Maps short link could not be resolved automatically. Please paste the full address, "
+    "coordinates, or open the link and share the location text."
+)
 
 
 @dataclass(frozen=True)
@@ -45,10 +51,8 @@ class MalformedLocationInputError(LocationParseError):
     error_code = "MALFORMED_LOCATION_INPUT"
 
 
-def _is_likely_google_block_page_coordinate_pair(lat: float, lng: float) -> bool:
-    # Observed fallback coordinates from Google consent/bot-protection pages
-    # frequently resolve to Ashburn, VA around (39.026799, -77.844326).
-    return abs(lat - 39.026799) <= 0.01 and abs(lng - (-77.844326)) <= 0.01
+class LocationResolutionBlockedError(LocationParseError):
+    error_code = "SHORT_URL_RESOLUTION_BLOCKED"
 
 
 def _format_resolution_event_details(
@@ -289,73 +293,6 @@ def extract_lat_lng_from_google_maps_url(url: str) -> tuple[float, float, str]:
     )
 
 
-def _extract_lat_lng_from_google_maps_html(body: str | None) -> tuple[float, float, str] | None:
-    if not body:
-        return None
-
-    decoded_body = unquote(body)
-    patterns = (
-        (r"!3d([+-]?\d+(?:\.\d+)?)!4d([+-]?\d+(?:\.\d+)?)", "html_place_3d4d"),
-        (r"@([+-]?\d+(?:\.\d+)?),([+-]?\d+(?:\.\d+)?)", "html_viewport_center"),
-        (r'"lat"\s*:\s*([+-]?\d+(?:\.\d+)?)\s*,\s*"lng"\s*:\s*([+-]?\d+(?:\.\d+)?)', "html_lat_lng_json"),
-        (
-            r"(?:center|query|ll|destination|origin)=([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)",
-            "html_query_pair",
-        ),
-        (
-            r'"latitude"\s*:\s*([+-]?\d+(?:\.\d+)?)\s*,\s*"longitude"\s*:\s*([+-]?\d+(?:\.\d+)?)',
-            "html_latitude_longitude_json",
-        ),
-    )
-    for pattern, method in patterns:
-        match = re.search(pattern, decoded_body)
-        if not match:
-            continue
-        lat, lng = float(match.group(1)), float(match.group(2))
-        validate_lat_lng(lat, lng)
-        return lat, lng, method
-    return None
-
-
-def _extract_html_redirect_url(body: str | None) -> str | None:
-    if not body:
-        return None
-
-    meta_refresh = re.search(
-        r'<meta[^>]*http-equiv\s*=\s*["\']?refresh["\']?[^>]*content\s*=\s*["\'][^"\']*;\s*url\s*=\s*([^"\']+)["\']',
-        body,
-        flags=re.IGNORECASE,
-    )
-    if meta_refresh:
-        return html.unescape(meta_refresh.group(1).strip().strip("'\""))
-
-    content_first = re.search(
-        r'<meta[^>]*content\s*=\s*["\'][^"\']*;\s*url\s*=\s*([^"\']+)["\'][^>]*http-equiv\s*=\s*["\']?refresh["\']?',
-        body,
-        flags=re.IGNORECASE,
-    )
-    if content_first:
-        return html.unescape(content_first.group(1).strip().strip("'\""))
-
-    js_redirect = re.search(
-        r"""(?:window\.)?location(?:\.href)?\s*=\s*["']([^"']+)["']""",
-        body,
-        flags=re.IGNORECASE,
-    )
-    if js_redirect:
-        return html.unescape(js_redirect.group(1).strip())
-
-    js_replace = re.search(
-        r"""(?:window\.)?location\.replace\(\s*["']([^"']+)["']\s*\)""",
-        body,
-        flags=re.IGNORECASE,
-    )
-    if js_replace:
-        return html.unescape(js_replace.group(1).strip())
-
-    return None
-
-
 def resolve_google_maps_short_url(raw: str, timeout_seconds: float = 4.0) -> str:
     normalized = _normalize_raw(raw)
     parsed = urlparse(normalized)
@@ -367,105 +304,77 @@ def resolve_google_maps_short_url(raw: str, timeout_seconds: float = 4.0) -> str
 
     headers = {
         "User-Agent": (
-            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
         ),
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
     }
-    max_redirects = 10
-    max_html_redirects = 3
-    html_redirect_hops = 0
-    current_url = normalized
+
+    def _log_attempt(success: bool, failure_reason: str | None, http_status: int | None) -> None:
+        logger.info(
+            json.dumps(
+                {
+                    "event": "location_resolve_attempt",
+                    "input_type": "google_short_url",
+                    "resolver_strategy": "redirect_follow",
+                    "success": success,
+                    "failure_reason": failure_reason,
+                    "http_status": http_status,
+                    "provider": "google",
+                }
+            )
+        )
+
     try:
         with httpx.Client(timeout=timeout_seconds, follow_redirects=True, headers=headers) as client:
-            for redirect_count in range(max_redirects + 1):
-                host, path = _validate_redirect_target(current_url, allow_short_hosts=True)
-                if host in _SHORT_HOSTS and not _is_supported_short_path(host, path):
-                    raise UnsupportedLocationInputError("This Google short link format is not supported.")
-                response = client.get(current_url)
-                location = response.headers.get("location")
-                if response.is_redirect or response.is_informational:
-                    if not location:
-                        details = _format_resolution_event_details(
-                            stage="redirect_missing_location",
-                            short_url=normalized,
-                            current_url=current_url,
-                            response_url=str(response.url),
-                            status_code=response.status_code,
-                            redirect_hop=redirect_count,
-                        )
-                        raise ShortUrlResolutionError(
-                            "Redirect response from short link did not include a Location header. "
-                            f"Event details: {details}."
-                        )
-                    current_url = urljoin(str(response.url), location)
-                    continue
-                try:
-                    response.raise_for_status()
-                except httpx.HTTPStatusError as exc:
-                    status = exc.response.status_code if exc.response is not None else "unknown"
-                    details = _format_resolution_event_details(
-                        stage="http_error_status",
-                        short_url=normalized,
-                        current_url=current_url,
-                        response_url=str(response.url),
-                        status_code=status,
-                        redirect_hop=redirect_count,
-                    )
-                    raise ShortUrlResolutionError(
-                        f"Google Maps short link returned HTTP {status} while resolving redirects. "
-                        f"Event details: {details}."
-                    ) from exc
-                final_url = str(response.url)
-                if not final_url:
-                    details = _format_resolution_event_details(
-                        stage="empty_final_url",
-                        short_url=normalized,
-                        current_url=current_url,
-                        response_url=str(response.url),
-                        status_code=response.status_code,
-                        redirect_hop=redirect_count,
-                    )
-                    raise ShortUrlResolutionError(
-                        "Google Maps short link resolved to an empty URL. "
-                        f"Event details: {details}."
-                    )
-                _validate_redirect_target(final_url, allow_short_hosts=False)
-                try:
-                    extract_lat_lng_from_google_maps_url(final_url)
-                    return final_url
-                except MalformedLocationInputError:
-                    pass
-                html_redirect_url = _extract_html_redirect_url(getattr(response, "text", None))
-                if html_redirect_url:
-                    html_redirect_hops += 1
-                    if html_redirect_hops > max_html_redirects:
-                        raise MalformedLocationInputError(
-                            "Resolved page appears to be stuck in recursive HTML redirects; "
-                            "could not reach a stable Google Maps destination."
-                        )
-                    current_url = urljoin(final_url, html_redirect_url)
-                    _validate_redirect_target(current_url, allow_short_hosts=False)
-                    continue
+            response = client.get(normalized)
+            response.raise_for_status()
 
-                html_pair = _extract_lat_lng_from_google_maps_html(getattr(response, "text", None))
-                if html_pair:
-                    lat, lng, _ = html_pair
-                    if _is_likely_google_block_page_coordinate_pair(lat, lng):
-                        raise MalformedLocationInputError(
-                            "Resolved page appears to be blocked/bot-protection content from Google; "
-                            "could not extract destination coordinates."
-                        )
-                    return f"https://www.google.com/maps/search/?api=1&query={lat},{lng}"
-                return final_url
-            raise ShortUrlResolutionError(f"Google Maps short link exceeded redirect limit ({max_redirects}).")
+            for hop in response.history:
+                hop_url = str(hop.url)
+                hop_host, hop_path = _validate_redirect_target(hop_url, allow_short_hosts=True)
+                if hop_host in _SHORT_HOSTS and not _is_supported_short_path(hop_host, hop_path):
+                    raise UnsupportedLocationInputError("This Google short link format is not supported.")
+
+            final_url = str(response.url)
+            final_host, _ = _validate_redirect_target(final_url, allow_short_hosts=False)
+            if final_host == "consent.google.com" or "consent.google.com" in final_url:
+                _log_attempt(False, "bot_page_encountered", response.status_code)
+                raise LocationResolutionBlockedError(_BLOCKED_RESOLUTION_MESSAGE)
+
+            try:
+                extract_lat_lng_from_google_maps_url(final_url)
+            except MalformedLocationInputError as exc:
+                body_lower = (getattr(response, "text", "") or "").lower()
+                blocked_markers = ("consent.google", "unusual traffic", "detected unusual", "/sorry/")
+                failure_reason = "bot_page_encountered" if any(marker in body_lower for marker in blocked_markers) else "coordinates_not_found"
+                _log_attempt(False, failure_reason, response.status_code)
+                raise LocationResolutionBlockedError(_BLOCKED_RESOLUTION_MESSAGE) from exc
+
+            _log_attempt(True, None, response.status_code)
+            return final_url
     except httpx.TimeoutException as exc:
+        _log_attempt(False, "timeout", None)
         raise ShortUrlResolutionError(
             "Google Maps short link resolution timed out. Please check your connection and try again."
         ) from exc
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code if exc.response is not None else None
+        _log_attempt(False, "http_error", status)
+        raise ShortUrlResolutionError(
+            f"Google Maps short link returned HTTP {status} while resolving redirects."
+        ) from exc
     except httpx.RequestError as exc:
+        _log_attempt(False, "request_error", None)
         raise ShortUrlResolutionError(
             "Failed to resolve the Google Maps short link due to a network/protocol error."
+        ) from exc
+    except (LocationResolutionBlockedError, ShortUrlResolutionError, UnsupportedLocationInputError):
+        raise
+    except Exception as exc:
+        _log_attempt(False, "unexpected_error", None)
+        raise ShortUrlResolutionError(
+            "Failed to resolve the Google Maps short link due to an unexpected resolver error."
         ) from exc
 
 
