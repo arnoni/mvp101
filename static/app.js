@@ -102,6 +102,9 @@ document.addEventListener("DOMContentLoaded", () => {
     if (errorCode === "SHORT_URL_RESOLUTION_BLOCKED" && msg) {
       return msg;
     }
+    if (errorCode === "LOCATION_NOT_SUPPORTED" && msg) {
+      return msg;
+    }
     if (errorCode === "UNSUPPORTED_LOCATION_INPUT") {
       return "Please use a Google Maps link or latitude/longitude coordinates.";
     }

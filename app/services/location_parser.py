@@ -44,6 +44,10 @@ class InvalidCoordinateRangeError(LocationParseError):
     error_code = "INVALID_COORDINATE_RANGE"
 
 
+class LocationNotSupportedError(LocationParseError):
+    error_code = "LOCATION_NOT_SUPPORTED"
+
+
 class ShortUrlResolutionError(LocationParseError):
     error_code = "SHORT_URL_RESOLUTION_FAILED"
 
@@ -507,6 +511,205 @@ def parse_google_maps_url(raw: str) -> ParsedLocationInput:
     )
 
 
+def _extract_lat_lng_from_google_maps_html(body: str | None) -> tuple[float, float, str] | None:
+    if not body:
+        return None
+
+    decoded_body = unquote(body)
+    patterns = (
+        (r"!3d([+-]?\d+(?:\.\d+)?)!4d([+-]?\d+(?:\.\d+)?)", "html_place_3d4d"),
+        (r"@([+-]?\d+(?:\.\d+)?),([+-]?\d+(?:\.\d+)?)", "html_viewport_center"),
+        (r'"lat"\s*:\s*([+-]?\d+(?:\.\d+)?)\s*,\s*"lng"\s*:\s*([+-]?\d+(?:\.\d+)?)', "html_lat_lng_json"),
+        (
+            r"(?:center|query|ll|destination|origin)=([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)",
+            "html_query_pair",
+        ),
+        (
+            r'"latitude"\s*:\s*([+-]?\d+(?:\.\d+)?)\s*,\s*"longitude"\s*:\s*([+-]?\d+(?:\.\d+)?)',
+            "html_latitude_longitude_json",
+        ),
+    )
+    for pattern, method in patterns:
+        match = re.search(pattern, decoded_body)
+        if not match:
+            continue
+        lat, lng = float(match.group(1)), float(match.group(2))
+        validate_lat_lng(lat, lng)
+        return lat, lng, method
+    return None
+
+
+def _extract_html_redirect_url(body: str | None) -> str | None:
+    if not body:
+        return None
+    # Meta refresh
+    meta_match = re.search(r'http-equiv=["\']?refresh["\']?[^>]*content=["\']?\d+;\s*url\s*=\s*([^"\'>\s]+)', body, flags=re.IGNORECASE)
+    # JS redirect
+    js_match = re.search(r'(?:window\.)?location(?:\.href\s*=\s*|\.replace\(\s*)["\']([^"\']+)["\']', body, flags=re.IGNORECASE)
+    
+    extracted = (meta_match and meta_match.group(1)) or (js_match and js_match.group(1))
+    if extracted:
+        return html.unescape(extracted.strip().strip("'\""))
+    return None
+
+
+def resolve_google_maps_short_url(raw: str, timeout_seconds: float = 4.0) -> str:
+    normalized = _normalize_raw(raw)
+    parsed = urlparse(normalized)
+    host = (parsed.hostname or "").lower()
+    if host not in _SHORT_HOSTS:
+        raise UnsupportedLocationInputError("This URL is not a supported Google Maps short link.")
+    if not _is_supported_short_path(host, parsed.path):
+        raise UnsupportedLocationInputError("This Google short link format is not supported.")
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    }
+
+    def _log_attempt(success: bool, failure_reason: str | None, http_status: int | None) -> None:
+        logger.info(
+            json.dumps(
+                {
+                    "event": "location_resolve_attempt",
+                    "input_type": "google_short_url",
+                    "resolver_strategy": "redirect_follow",
+                    "success": success,
+                    "failure_reason": failure_reason,
+                    "http_status": http_status,
+                    "provider": "google",
+                }
+            )
+        )
+
+    try:
+        MAX_HTML_REDIRECTS = 3
+        html_redirect_hops = 0
+        current_url = normalized
+
+        with httpx.Client(timeout=timeout_seconds, follow_redirects=True, headers=headers) as client:
+            while True:
+                response = client.get(current_url)
+                response.raise_for_status()
+
+                for hop in response.history:
+                    hop_url = str(hop.url)
+                    hop_host, hop_path = _validate_redirect_target(hop_url, allow_short_hosts=True)
+                    if hop_host in _SHORT_HOSTS and not _is_supported_short_path(hop_host, hop_path):
+                        raise UnsupportedLocationInputError("This Google short link format is not supported.")
+
+                final_url = str(response.url)
+                final_host, _ = _validate_redirect_target(final_url, allow_short_hosts=False)
+                
+                body = getattr(response, "text", "")
+                html_redirect_url = _extract_html_redirect_url(body)
+                
+                if html_redirect_url:
+                    html_redirect_hops += 1
+                    if html_redirect_hops > MAX_HTML_REDIRECTS:
+                        _log_attempt(False, "max_html_redirects_exceeded", response.status_code)
+                        raise LocationResolutionBlockedError(_BLOCKED_RESOLUTION_MESSAGE)
+                    
+                    current_url = urljoin(final_url, html_redirect_url)
+                    _validate_redirect_target(current_url, allow_short_hosts=False)
+                    continue
+
+                body_lower = body.lower()
+                blocked_markers = ("consent.google", "unusual traffic", "detected unusual", "/sorry/")
+                if final_host == "consent.google.com" or "consent.google.com" in final_url or any(marker in body_lower for marker in blocked_markers):
+                    _log_attempt(False, "bot_page_encountered", response.status_code)
+                    raise LocationResolutionBlockedError(_BLOCKED_RESOLUTION_MESSAGE)
+
+                try:
+                    lat, lng, _ = extract_lat_lng_from_google_maps_url(final_url)
+                    if _is_likely_google_block_page_coordinate_pair(lat, lng):
+                        _log_attempt(False, "bot_page_datacenter_coords", response.status_code)
+                        raise LocationResolutionBlockedError(_BLOCKED_RESOLUTION_MESSAGE)
+                    _log_attempt(True, None, response.status_code)
+                    return final_url
+                except MalformedLocationInputError as exc:
+                    html_pair = _extract_lat_lng_from_google_maps_html(body)
+                    if html_pair:
+                        lat, lng, _ = html_pair
+                        if _is_likely_google_block_page_coordinate_pair(lat, lng):
+                            _log_attempt(False, "bot_page_datacenter_coords", response.status_code)
+                            raise LocationResolutionBlockedError(_BLOCKED_RESOLUTION_MESSAGE)
+                        _log_attempt(True, None, response.status_code)
+                        return f"https://www.google.com/maps/search/?api=1&query={lat},{lng}"
+                    _log_attempt(False, "coordinates_not_found", response.status_code)
+                    raise LocationResolutionBlockedError(_BLOCKED_RESOLUTION_MESSAGE) from exc
+    except httpx.TimeoutException as exc:
+        _log_attempt(False, "timeout", None)
+        raise ShortUrlResolutionError(
+            "Google Maps short link resolution timed out. Please check your connection and try again."
+        ) from exc
+    except httpx.HTTPStatusError as exc:
+        status = exc.response.status_code if exc.response is not None else None
+        _log_attempt(False, "http_error", status)
+        raise ShortUrlResolutionError(
+            f"Google Maps short link returned HTTP {status} while resolving redirects."
+        ) from exc
+    except httpx.RequestError as exc:
+        _log_attempt(False, "request_error", None)
+        raise ShortUrlResolutionError(
+            "Failed to resolve the Google Maps short link due to a network/protocol error."
+        ) from exc
+    except (LocationResolutionBlockedError, ShortUrlResolutionError, UnsupportedLocationInputError):
+        raise
+    except Exception as exc:
+        _log_attempt(False, "unexpected_error", None)
+        raise ShortUrlResolutionError(
+            "Failed to resolve the Google Maps short link due to an unexpected resolver error."
+        ) from exc
+
+
+def parse_google_maps_url(raw: str) -> ParsedLocationInput:
+    normalized = _normalize_raw(raw)
+    parsed = urlparse(normalized)
+    host = (parsed.hostname or "").lower()
+    if not _is_supported_google_host(host):
+        raise UnsupportedLocationInputError("Only Google Maps URLs are supported.")
+
+    if host in _SHORT_HOSTS:
+        if not _is_supported_short_path(host, parsed.path):
+            raise UnsupportedLocationInputError("Only Google Maps short URLs are supported.")
+        resolved = resolve_google_maps_short_url(normalized)
+        try:
+            lat, lng, method = extract_lat_lng_from_google_maps_url(resolved)
+        except MalformedLocationInputError as exc:
+            details = _format_resolution_event_details(
+                stage="extract_coordinates_failed_after_resolution",
+                short_url=normalized,
+                final_url=resolved,
+            )
+            raise MalformedLocationInputError(
+                "Could not extract coordinates from the resolved Google Maps short URL. "
+                f"Event details: {details}."
+            ) from exc
+        return ParsedLocationInput(
+            input_kind="google_maps_short_url",
+            original_input=raw,
+            normalized_input=f"{lat:.6f}, {lng:.6f}",
+            latitude=lat,
+            longitude=lng,
+            source_url=resolved,
+            resolution_method=method,
+        )
+
+    lat, lng, method = extract_lat_lng_from_google_maps_url(normalized)
+    return ParsedLocationInput(
+        input_kind="google_maps_url",
+        original_input=raw,
+        normalized_input=f"{lat:.6f}, {lng:.6f}",
+        latitude=lat,
+        longitude=lng,
+        source_url=normalized,
+        resolution_method=method,
+    )
+
 def parse_location_input(raw: str) -> ParsedLocationInput:
     normalized = _normalize_raw(raw)
     _validate_raw(normalized)
@@ -514,12 +717,24 @@ def parse_location_input(raw: str) -> ParsedLocationInput:
     if re.fullmatch(r"[+-]?\d+(?:\.\d+)?\s*,\s*[+-]?\d+(?:\.\d+)?", normalized) or re.fullmatch(
         r"[+-]?\d+(?:\.\d+)?\s+[+-]?\d+(?:\.\d+)?", normalized
     ):
-        return parse_decimal_pair(normalized)
+        parsed = parse_decimal_pair(normalized)
+    elif "°" in normalized and re.search(r"[NSEW]", normalized, re.IGNORECASE):
+        parsed = parse_degree_pair(normalized)
+    elif re.match(r"^https?://", normalized, re.IGNORECASE):
+        parsed = parse_google_maps_url(normalized)
+    else:
+        raise UnsupportedLocationInputError("Unsupported location input format.")
 
-    if "°" in normalized and re.search(r"[NSEW]", normalized, re.IGNORECASE):
-        return parse_degree_pair(normalized)
+    if not (15.9 <= parsed.latitude <= 16.3 and 107.8 <= parsed.longitude <= 108.4):
+        logger.info(
+            "location_outside_supported_region",
+            extra={
+                "event": "location_outside_supported_region",
+                "latitude": parsed.latitude,
+                "longitude": parsed.longitude,
+                "supported_region": "Da Nang, Vietnam"
+            }
+        )
+        raise LocationNotSupportedError("This location is not supported currently")
 
-    if re.match(r"^https?://", normalized, re.IGNORECASE):
-        return parse_google_maps_url(normalized)
-
-    raise UnsupportedLocationInputError("Unsupported location input format.")
+    return parsed

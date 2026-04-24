@@ -24,9 +24,14 @@ from app.services.demand_service import DemandService
 from app.services.i18n import get_translations
 from app.core.config import is_inside_da_nang_bbox
 from app.services.location_parser import (
+    InvalidCoordinateRangeError,
     LocationResolutionBlockedError,
-    LocationParseError,
+    MalformedLocationInputError,
     ParsedLocationInput,
+    ShortUrlResolutionError,
+    UnsupportedLocationInputError,
+    LocationNotSupportedError,
+    LocationParseError,
     parse_location_input,
 )
 from app.services.query_history_repository import QueryHistoryEvent, QueryHistoryRepository
@@ -54,6 +59,16 @@ def _raise_location_parse_http_exception(error_code: str = "INVALID_LOCATION_INP
         detail={
             "error": "LOCATION_PARSE_FAILED",
             "error_code": error_code,
+        }
+    )
+
+def _raise_location_not_supported_http_exception(msg: str) -> None:
+    raise HTTPException(
+        status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+        detail={
+            "error": "LOCATION_PARSE_FAILED",
+            "error_code": "LOCATION_NOT_SUPPORTED",
+            "message": msg
         }
     )
 
@@ -299,8 +314,12 @@ async def parse_location(data: ParseLocationRequest):
                 "input_kind": parsed.input_kind,
             },
         )
+    except ShortUrlResolutionError as exc:
+        _raise_location_parse_http_exception("SHORT_URL_RESOLUTION_FAILED")
     except LocationResolutionBlockedError as exc:
         _raise_location_resolution_blocked_http_exception(str(exc))
+    except LocationNotSupportedError as exc:
+        _raise_location_not_supported_http_exception(str(exc))
     except LocationParseError as exc:
         _raise_location_parse_http_exception(exc.error_code)
     except Exception as exc:
@@ -333,8 +352,12 @@ async def search(
         if data.location_input:
             try:
                 parsed_input = parse_location_input(data.location_input)
+            except ShortUrlResolutionError as exc:
+                _raise_location_parse_http_exception("SHORT_URL_RESOLUTION_FAILED")
             except LocationResolutionBlockedError as exc:
                 _raise_location_resolution_blocked_http_exception(str(exc))
+            except LocationNotSupportedError as exc:
+                _raise_location_not_supported_http_exception(str(exc))
             except LocationParseError as exc:
                 _raise_location_parse_http_exception(exc.error_code)
             except Exception as exc:
