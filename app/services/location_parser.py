@@ -15,8 +15,8 @@ INPUT_KIND = Literal["decimal_pair", "degree_pair", "google_maps_url", "google_m
 _SHORT_HOSTS = {"maps.app.goo.gl", "goo.gl", "g.page"}
 logger = logging.getLogger(__name__)
 _BLOCKED_RESOLUTION_MESSAGE = (
-    "This Google Maps short link could not be resolved automatically. Please paste the full address, "
-    "coordinates, or open the link and share the location text."
+    "This Google Maps short link could not be resolved automatically. Please paste the full Google Maps URL, "
+    "coordinates."
 )
 
 
