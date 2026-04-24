@@ -2,11 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import html
 import logging
 from typing import Literal
 import ipaddress
 import re
-from urllib.parse import urlparse, parse_qs, unquote
+from urllib.parse import urlparse, parse_qs, unquote, urljoin
 
 import httpx
 
@@ -293,6 +294,20 @@ def extract_lat_lng_from_google_maps_url(url: str) -> tuple[float, float, str]:
     )
 
 
+def _extract_html_redirect_url(body: str | None) -> str | None:
+    if not body:
+        return None
+    # Meta refresh
+    meta_match = re.search(r'url\s*=\s*([^"\']+)', body, flags=re.IGNORECASE)
+    # JS redirect
+    js_match = re.search(r'(?:window\.)?location(?:\.href|\.replace\()?.*?["\']([^"\']+)["\']', body, flags=re.IGNORECASE)
+    
+    extracted = (meta_match and meta_match.group(1)) or (js_match and js_match.group(1))
+    if extracted:
+        return html.unescape(extracted.strip().strip("'\""))
+    return None
+
+
 def resolve_google_maps_short_url(raw: str, timeout_seconds: float = 4.0) -> str:
     normalized = _normalize_raw(raw)
     parsed = urlparse(normalized)
@@ -326,33 +341,51 @@ def resolve_google_maps_short_url(raw: str, timeout_seconds: float = 4.0) -> str
         )
 
     try:
+        MAX_HTML_REDIRECTS = 3
+        html_redirect_hops = 0
+        current_url = normalized
+
         with httpx.Client(timeout=timeout_seconds, follow_redirects=True, headers=headers) as client:
-            response = client.get(normalized)
-            response.raise_for_status()
+            while True:
+                response = client.get(current_url)
+                response.raise_for_status()
 
-            for hop in response.history:
-                hop_url = str(hop.url)
-                hop_host, hop_path = _validate_redirect_target(hop_url, allow_short_hosts=True)
-                if hop_host in _SHORT_HOSTS and not _is_supported_short_path(hop_host, hop_path):
-                    raise UnsupportedLocationInputError("This Google short link format is not supported.")
+                for hop in response.history:
+                    hop_url = str(hop.url)
+                    hop_host, hop_path = _validate_redirect_target(hop_url, allow_short_hosts=True)
+                    if hop_host in _SHORT_HOSTS and not _is_supported_short_path(hop_host, hop_path):
+                        raise UnsupportedLocationInputError("This Google short link format is not supported.")
 
-            final_url = str(response.url)
-            final_host, _ = _validate_redirect_target(final_url, allow_short_hosts=False)
-            if final_host == "consent.google.com" or "consent.google.com" in final_url:
-                _log_attempt(False, "bot_page_encountered", response.status_code)
-                raise LocationResolutionBlockedError(_BLOCKED_RESOLUTION_MESSAGE)
+                final_url = str(response.url)
+                final_host, _ = _validate_redirect_target(final_url, allow_short_hosts=False)
+                
+                body = getattr(response, "text", "")
+                html_redirect_url = _extract_html_redirect_url(body)
+                
+                if html_redirect_url:
+                    html_redirect_hops += 1
+                    if html_redirect_hops > MAX_HTML_REDIRECTS:
+                        _log_attempt(False, "max_html_redirects_exceeded", response.status_code)
+                        raise LocationResolutionBlockedError(_BLOCKED_RESOLUTION_MESSAGE)
+                    
+                    current_url = urljoin(final_url, html_redirect_url)
+                    _validate_redirect_target(current_url, allow_short_hosts=False)
+                    continue
 
-            try:
-                extract_lat_lng_from_google_maps_url(final_url)
-            except MalformedLocationInputError as exc:
-                body_lower = (getattr(response, "text", "") or "").lower()
+                body_lower = body.lower()
                 blocked_markers = ("consent.google", "unusual traffic", "detected unusual", "/sorry/")
-                failure_reason = "bot_page_encountered" if any(marker in body_lower for marker in blocked_markers) else "coordinates_not_found"
-                _log_attempt(False, failure_reason, response.status_code)
-                raise LocationResolutionBlockedError(_BLOCKED_RESOLUTION_MESSAGE) from exc
+                if final_host == "consent.google.com" or "consent.google.com" in final_url or any(marker in body_lower for marker in blocked_markers):
+                    _log_attempt(False, "bot_page_encountered", response.status_code)
+                    raise LocationResolutionBlockedError(_BLOCKED_RESOLUTION_MESSAGE)
 
-            _log_attempt(True, None, response.status_code)
-            return final_url
+                try:
+                    extract_lat_lng_from_google_maps_url(final_url)
+                except MalformedLocationInputError as exc:
+                    _log_attempt(False, "coordinates_not_found", response.status_code)
+                    raise LocationResolutionBlockedError(_BLOCKED_RESOLUTION_MESSAGE) from exc
+
+                _log_attempt(True, None, response.status_code)
+                return final_url
     except httpx.TimeoutException as exc:
         _log_attempt(False, "timeout", None)
         raise ShortUrlResolutionError(
