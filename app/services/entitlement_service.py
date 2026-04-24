@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from upstash_redis.asyncio import Redis
 
 from app.core.keys import KeyBuilder
-from app.models.models import SimulatedBillingPlan, SimulatedUserPass
+from app.models.models import BillingPlan, SimulatedBillingPlan, SimulatedUserPass, UserPass
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +39,8 @@ class EntitlementService:
         redis_cli: Optional[Redis],
         db_engine: Optional[AsyncEngine],
         ttl_seconds: int = 600,
+        identity_kind: Optional[str] = None,
+        anon_cohort: Optional[str] = None,
     ) -> EntitlementResult:
         if not user_id:
             return EntitlementResult(tier=TierStatus.FREE, daily_limit=3, is_stale=True)
@@ -82,6 +84,37 @@ class EntitlementService:
 
         try:
             async with db_engine.connect() as conn:
+                if identity_kind == "anon":
+                    resolved_cohort = anon_cohort if anon_cohort in {"A", "B"} else "A"
+                    free_quota_exists_res = await conn.execute(
+                        text("SELECT to_regclass('public.free_quotas') IS NOT NULL AS exists")
+                    )
+                    free_quota_exists = bool(free_quota_exists_res.scalar())
+                    if free_quota_exists:
+                        anon_free_res = await conn.execute(
+                            text(
+                                """
+                                SELECT daily_limit
+                                FROM free_quotas
+                                WHERE cohort = :cohort
+                                LIMIT 1
+                                """
+                            ),
+                            {"cohort": resolved_cohort},
+                        )
+                        anon_free_row = anon_free_res.mappings().first()
+                        daily_limit = int(anon_free_row["daily_limit"]) if anon_free_row and anon_free_row.get("daily_limit") else 3
+                    else:
+                        daily_limit = 3
+                    return EntitlementResult(
+                        tier=TierStatus.FREE,
+                        active_plan_code=None,
+                        daily_limit=daily_limit,
+                        expires_at=None,
+                        is_stale=False,
+                        raw_data={"cohort": resolved_cohort},
+                    )
+
                 simulated_res = await conn.execute(
                     select(
                         SimulatedUserPass.plan_code,
@@ -104,6 +137,44 @@ class EntitlementService:
                         tier=TierStatus.SIMULATED_PAID,
                         active_plan_code=str(simulated_row.plan_code),
                         daily_limit=int(simulated_row.daily_limit),
+                        expires_at=expires_ts,
+                        is_stale=False,
+                    )
+                    await EntitlementService.cache_entitlement(
+                        user_id=user_id,
+                        tier=result.tier,
+                        redis_cli=redis_cli,
+                        active_plan_code=result.active_plan_code,
+                        daily_limit=result.daily_limit,
+                        expires_at=result.expires_at,
+                        ttl_seconds=ttl_seconds,
+                    )
+                    return result
+
+                paid_res = await conn.execute(
+                    select(
+                        UserPass.plan_code,
+                        UserPass.expires_at,
+                        BillingPlan.duration_days,
+                        BillingPlan.daily_limit,
+                    )
+                    .join(BillingPlan, BillingPlan.code == UserPass.plan_code)
+                    .where(
+                        UserPass.user_id == user_id,
+                        UserPass.status == "active",
+                        UserPass.expires_at > func.now(),
+                    )
+                    .order_by(UserPass.expires_at.desc())
+                    .limit(1)
+                )
+                paid_row = paid_res.first()
+                if paid_row:
+                    expires_ts = int(paid_row.expires_at.timestamp()) if paid_row.expires_at else None
+                    tier = TierStatus.PASS_3_DAY if int(paid_row.duration_days or 1) >= 3 else TierStatus.PASS_1_DAY
+                    result = EntitlementResult(
+                        tier=tier,
+                        active_plan_code=str(paid_row.plan_code),
+                        daily_limit=int(paid_row.daily_limit),
                         expires_at=expires_ts,
                         is_stale=False,
                     )

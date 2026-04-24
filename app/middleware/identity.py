@@ -1,6 +1,7 @@
 import json
 import uuid
 import logging
+import random
 import sentry_sdk
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -37,9 +38,11 @@ class IdentityMiddleware(BaseHTTPMiddleware):
                     user_id = data.get("user_id")
                     if user_id:
                         # SUCCESS: Paid Identity
+                        cohort_cookie = request.cookies.get("dd_ab_cohort")
                         request.state.identity_kind = "paid"
                         request.state.identity_id = user_id
                         request.state.session_id = session_cookie
+                        request.state.ab_cohort = cohort_cookie if cohort_cookie in {"A", "B"} else None
                         
                         # Backward Compatibility
                         request.state.user_id = user_id
@@ -47,6 +50,8 @@ class IdentityMiddleware(BaseHTTPMiddleware):
                         
                         sentry_sdk.set_user({"id": user_id})
                         sentry_sdk.set_tag("identity_kind", "paid")
+                        if request.state.ab_cohort:
+                            sentry_sdk.set_tag("ab_cohort", request.state.ab_cohort)
                         
                         return await call_next(request)
 
@@ -57,6 +62,9 @@ class IdentityMiddleware(BaseHTTPMiddleware):
         # 2. Try to resolve Anon (Free)
         anon_cookie = request.cookies.get(settings.ANON_COOKIE_NAME)
         anon_id = anon_cookie
+        cohort_cookie_name = "dd_ab_cohort"
+        cohort_cookie = request.cookies.get(cohort_cookie_name)
+        ab_cohort = cohort_cookie if cohort_cookie in {"A", "B"} else None
         
         # Validate UUID format
         if anon_id:
@@ -74,6 +82,9 @@ class IdentityMiddleware(BaseHTTPMiddleware):
         request.state.identity_kind = "anon"
         request.state.identity_id = anon_id
         request.state.session_id = None
+        if not ab_cohort:
+            ab_cohort = random.choice(["A", "B"])
+        request.state.ab_cohort = ab_cohort
         
         # Backward Compatibility
         request.state.anon_id = anon_id
@@ -81,6 +92,7 @@ class IdentityMiddleware(BaseHTTPMiddleware):
         
         sentry_sdk.set_user({"id": anon_id, "ip_address": "{{auto}}"})
         sentry_sdk.set_tag("identity_kind", "anon")
+        sentry_sdk.set_tag("ab_cohort", ab_cohort)
 
         response = await call_next(request)
         
@@ -94,6 +106,15 @@ class IdentityMiddleware(BaseHTTPMiddleware):
                 httponly=True,
                 secure=(settings.ENV == "production"),
                 samesite="lax"
+            )
+        if cohort_cookie not in {"A", "B"}:
+            response.set_cookie(
+                key=cohort_cookie_name,
+                value=ab_cohort,
+                max_age=63072000,  # 2 years
+                httponly=True,
+                secure=(settings.ENV == "production"),
+                samesite="lax",
             )
             
         return response

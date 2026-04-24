@@ -311,6 +311,7 @@ async def root(request: Request, lang: str = "en"):
         "initial_can_search": can_search,
         "initial_turnstile_required": turnstile_required,
         "initial_checks_today": checks_today,
+        "initial_daily_limit": daily_limit,
         "initial_tier": tier_str,
         "tier": tier_str,
         "demand_allowed": tier in {TierStatus.SIMULATED_PAID, TierStatus.PASS_1_DAY, TierStatus.PASS_3_DAY},
