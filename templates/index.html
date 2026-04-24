@@ -11,6 +11,7 @@
 </head>
 
 <body data-tier="{{ tier|default('free') }}" data-demand-allowed="{{ 'true' if demand_allowed else 'false' }}"
+  data-daily-limit="{{ initial_daily_limit|default(3) }}"
   data-label-go="{{ t.get('go', 'GO') }}" data-label-unlock="{{ t.get('unlock', 'Unlock') }}"
   data-label-active="{{ t.get('available', 'Available') }}" data-label-ready="{{ t.get('ready', 'Ready') }}"
   data-label-paid-required="{{ t.get('paid_pass_required', 'Research access required') }}"
@@ -22,7 +23,8 @@
   data-turnstile-required="{{ 'true' if initial_turnstile_required else 'false' }}"
   data-current-lang="{{ current_lang }}">
   <main class="app" id="app" data-tier="{{ tier|default('free') }}"
-    data-demand-allowed="{{ 'true' if demand_allowed else 'false' }}">
+    data-demand-allowed="{{ 'true' if demand_allowed else 'false' }}"
+    data-daily-limit="{{ initial_daily_limit|default(3) }}">
     <!-- HEADER -->
     <header class="topbar">
       <div class="pill status-pill" id="userMenuBtn" role="button" tabindex="0">{{ initial_tier|capitalize }}</div>
@@ -265,7 +267,7 @@
             <div class="info-title">⚠️ {{ t.get('limitations_title', 'Free Limitations') }}</div>
             <ul>
               <li>{{ t.get('limit_demand_locked', 'Demand checks locked') }}</li>
-              <li>{{ t.get('limit_rate_limited', 'Rate limited to 10/day') }}</li>
+              <li id="userDailyLimitItem" data-label-daily-usage="{{ t.get('daily_usage', 'Daily usage') }}">{{ t.get('daily_usage', 'Daily usage') }}: {{ initial_daily_limit|default(3) }}/day</li>
               <li>{{ t.get('limit_verification', 'Verification required') }}</li>
             </ul>
           </div>

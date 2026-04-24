@@ -127,12 +127,20 @@ class SessionMiddleware(BaseHTTPMiddleware):
 class EntitlementMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         identity_id = getattr(request.state, "identity_id", None)
+        identity_kind = getattr(request.state, "identity_kind", None)
+        ab_cohort = getattr(request.state, "ab_cohort", None)
 
         # Use the Redis client from app state if available
         redis_cli = getattr(request.app.state, "redis", None)
 
         db_engine = getattr(request.app.state, "db_engine", None)
-        result = await EntitlementService.get_tier(identity_id, redis_cli, db_engine)
+        result = await EntitlementService.get_tier(
+            identity_id,
+            redis_cli,
+            db_engine,
+            identity_kind=identity_kind,
+            anon_cohort=ab_cohort,
+        )
         request.state.tier = result.tier
         request.state.entitlement_stale = result.is_stale
         request.state.active_plan_code = result.active_plan_code

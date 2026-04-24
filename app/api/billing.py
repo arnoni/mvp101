@@ -1,5 +1,6 @@
 import logging
 import uuid
+import random
 
 from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import insert, select, func
@@ -66,6 +67,9 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
 
     email = payload.email.lower()
     anon_id = getattr(request.state, "anon_id", None)
+    ab_cohort = getattr(request.state, "ab_cohort", None)
+    if ab_cohort not in {"A", "B"}:
+        ab_cohort = random.choice(["A", "B"])
     session_id = request.cookies.get(settings.SESSION_COOKIE_NAME)
     effective_tier = _tier_to_funnel(getattr(request.state, "tier", TierStatus.FREE))
     ui_surface = payload.ui_surface.value if payload.ui_surface else UnlockUiSurface.HERO_UNLOCK_BUTTON.value
@@ -80,7 +84,7 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
 
         user_stmt = (
             pg_insert(User)
-            .values(email=email)
+            .values(email=email, ab_cohort=ab_cohort)
             .on_conflict_do_update(index_elements=[User.email], set_={"updated_at": func.now()})
             .returning(User.id)
         )
@@ -119,6 +123,7 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
                     user_id=user_id,
                     effective_tier=effective_tier,
                     selected_language=request.cookies.get("dd_lang") or "en",
+                    cohort=ab_cohort,
                     target_tier="simulated_paid",
                     transition_name="free_to_simulated_paid",
                     related_simulated_intent_id=simulated_intent_id,

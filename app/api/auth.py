@@ -3,6 +3,7 @@ import secrets
 import json
 import logging
 import hashlib
+import random
 import httpx
 from datetime import datetime, timezone
 from typing import Optional
@@ -432,6 +433,7 @@ async def login(
                                     user_id=user_id,
                                     effective_tier=_tier_to_funnel(getattr(request.state, "tier", TierStatus.FREE)),
                                     selected_language=request.cookies.get("dd_lang") or "en",
+                                    cohort=getattr(request.state, "ab_cohort", None),
                                     target_tier="simulated_paid",
                                     transition_name="free_to_simulated_paid",
                                     related_simulated_intent_id=latest_intent_id,
@@ -493,7 +495,14 @@ async def magic_landing(
 
                 user_result = await conn.execute(
                     pg_insert(User)
-                    .values(email=token_row.email.lower())
+                    .values(
+                        email=token_row.email.lower(),
+                        ab_cohort=(
+                            getattr(request.state, "ab_cohort", None)
+                            if getattr(request.state, "ab_cohort", None) in {"A", "B"}
+                            else random.choice(["A", "B"])
+                        ),
+                    )
                     .on_conflict_do_update(
                         index_elements=[User.email],
                         set_={"last_login": func.now(), "updated_at": func.now()},
@@ -549,6 +558,7 @@ async def magic_landing(
                                 user_id=user_row.id,
                                 effective_tier="simulated_paid",
                                 selected_language=request.cookies.get("dd_lang") or "en",
+                                cohort=getattr(request.state, "ab_cohort", None),
                                 target_tier="simulated_paid",
                                 transition_name="free_to_simulated_paid",
                                 related_simulated_intent_id=pending_intent.id,

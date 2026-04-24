@@ -1,5 +1,5 @@
 const AccessState = (() => {
-  let access = { tier: "free", demandAllowed: false };
+  let access = { tier: "free", demandAllowed: false, dailyLimit: 3 };
   const listeners = new Set();
 
   function emit() {
@@ -11,7 +11,9 @@ const AccessState = (() => {
     const bodyTier = document.body?.dataset.tier || "free";
     const appTier = appEl?.dataset.tier || bodyTier;
     const rawDemand = appEl?.dataset.demandAllowed ?? document.body?.dataset.demandAllowed ?? "false";
-    access = { tier: appTier, demandAllowed: rawDemand === "true" };
+    const rawDailyLimit = appEl?.dataset.dailyLimit ?? document.body?.dataset.dailyLimit ?? "3";
+    const parsedDailyLimit = Number.parseInt(rawDailyLimit, 10);
+    access = { tier: appTier, demandAllowed: rawDemand === "true", dailyLimit: Number.isFinite(parsedDailyLimit) ? parsedDailyLimit : 3 };
     emit();
   }
 
@@ -20,10 +22,12 @@ const AccessState = (() => {
     const demandAllowed = access.demandAllowed ? "true" : "false";
     document.body.dataset.demandAllowed = demandAllowed;
     document.body.dataset.tier = access.tier;
+    document.body.dataset.dailyLimit = String(access.dailyLimit ?? 3);
     const appEl = document.getElementById("app");
     if (appEl) {
       appEl.dataset.demandAllowed = demandAllowed;
       appEl.dataset.tier = access.tier;
+      appEl.dataset.dailyLimit = String(access.dailyLimit ?? 3);
     }
     emit();
   }
@@ -39,9 +43,13 @@ const AccessState = (() => {
   };
 })();
 
-function updateAccessState(isPaid, tier = null) {
+function updateAccessState(isPaid, tier = null, dailyLimit = null) {
   const normalizedTier = tier || (isPaid ? "paid" : "free");
-  AccessState.set({ tier: normalizedTier, demandAllowed: Boolean(isPaid) });
+  const next = { tier: normalizedTier, demandAllowed: Boolean(isPaid) };
+  if (Number.isFinite(dailyLimit)) {
+    next.dailyLimit = Math.max(1, Math.trunc(dailyLimit));
+  }
+  AccessState.set(next);
 }
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -1160,8 +1168,8 @@ const ModalSystem = (function() {
         });
       },
 
-      updateStatus(tier, demandAllowed) {
-        const access = { tier, demandAllowed };
+      updateStatus(tier, demandAllowed, dailyLimit = 3) {
+        const access = { tier, demandAllowed, dailyLimit };
         
         const badge = document.getElementById('userTierBadge');
         
@@ -1178,6 +1186,13 @@ const ModalSystem = (function() {
           demandStatus.textContent = access.demandAllowed ? unlockedLabel : lockedLabel;
           demandStatus.classList.toggle('available', access.demandAllowed);
           demandStatus.classList.toggle('locked', !access.demandAllowed);
+        }
+
+        const dailyLimitItem = document.getElementById('userDailyLimitItem');
+        if (dailyLimitItem) {
+          const usageLabel = dailyLimitItem.dataset.labelDailyUsage || 'Daily usage';
+          const resolvedDailyLimit = Number.isFinite(access.dailyLimit) ? access.dailyLimit : 3;
+          dailyLimitItem.textContent = `${usageLabel}: ${resolvedDailyLimit}/day`;
         }
 
         const upgradeBtn = document.getElementById('userUpgradeBtn');
@@ -1888,9 +1903,9 @@ const ModalSystem = (function() {
       core.init();
       Object.values(modals).forEach(m => m.init());
       const access = AccessState.get();
-      modals.user.updateStatus(access.tier, access.demandAllowed);
+      modals.user.updateStatus(access.tier, access.demandAllowed, access.dailyLimit);
       AccessState.subscribe((nextAccess) => {
-        modals.user.updateStatus(nextAccess.tier, nextAccess.demandAllowed);
+        modals.user.updateStatus(nextAccess.tier, nextAccess.demandAllowed, nextAccess.dailyLimit);
       });
     },
     
@@ -1918,8 +1933,8 @@ const ModalSystem = (function() {
       modals.report.updateSubmitState();
     },
     
-    updateAccess(tier, demandAllowed) {
-      updateAccessState(Boolean(demandAllowed), tier);
+    updateAccess(tier, demandAllowed, dailyLimit = null) {
+      updateAccessState(Boolean(demandAllowed), tier, dailyLimit);
     },
 
     notify(message, type = 'info') {
