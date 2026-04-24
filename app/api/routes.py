@@ -36,36 +36,24 @@ router = APIRouter()
 logger = structlog.get_logger(__name__)
 
 
-def _raise_location_resolution_blocked_http_exception() -> None:
+def _raise_location_resolution_blocked_http_exception(msg: str | None = None) -> None:
+    from app.services.location_parser import _BLOCKED_RESOLUTION_MESSAGE
     raise HTTPException(
         status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
-        detail={
-            "error": {
-                "code": "LOCATION_RESOLUTION_FAILED",
-                "reason": "SHORT_LINK_BLOCKED",
-                "message": "This map link could not be resolved automatically. Please paste the actual address or coordinates.",
-                "user_action": "PASTE_ADDRESS_OR_COORDINATES",
-                "field": "location",
-                "retryable": True,
-                "details": {
-                    "accepted_formats": [
-                        "address",
-                        "latitude_longitude",
-                        "full_google_maps_url",
-                    ]
-                },
-            }
-        },
+        detail=ErrorResponse(
+            error="LOCATION_RESOLUTION_FAILED",
+            detail=msg or _BLOCKED_RESOLUTION_MESSAGE
+        ).model_dump()
     )
 
 
 def _raise_location_parse_http_exception(error_code: str = "INVALID_LOCATION_INPUT") -> None:
     raise HTTPException(
         status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
-        detail={
-            "error": "LOCATION_PARSE_FAILED",
-            "error_code": error_code,
-        },
+        detail=ErrorResponse(
+            error="LOCATION_PARSE_FAILED",
+            detail=error_code,
+        ).model_dump()
     )
 
 # --- Helper for Error ID ---
@@ -310,8 +298,8 @@ async def parse_location(data: ParseLocationRequest):
                 "input_kind": parsed.input_kind,
             },
         )
-    except LocationResolutionBlockedError:
-        _raise_location_resolution_blocked_http_exception()
+    except LocationResolutionBlockedError as exc:
+        _raise_location_resolution_blocked_http_exception(str(exc))
     except LocationParseError as exc:
         _raise_location_parse_http_exception(exc.error_code)
     except Exception as exc:
@@ -344,8 +332,8 @@ async def search(
         if data.location_input:
             try:
                 parsed_input = parse_location_input(data.location_input)
-            except LocationResolutionBlockedError:
-                _raise_location_resolution_blocked_http_exception()
+            except LocationResolutionBlockedError as exc:
+                _raise_location_resolution_blocked_http_exception(str(exc))
             except LocationParseError as exc:
                 _raise_location_parse_http_exception(exc.error_code)
             except Exception as exc:
