@@ -656,11 +656,12 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
-      const score = construction.score !== undefined ? construction.score : 87;
+      const resolvedScore = Number(construction.score);
+      const score = Number.isFinite(resolvedScore) && resolvedScore > 0 ? resolvedScore : 87;
       state.construction = { status: "ready", score: score, coordKey: construction.coord_key || state.coords.key };
       console.log("Triggering animateGauge with score:", score);
       animateGauge(els.conBand, els.conNeedle, score);
-      els.conMsg.textContent = (construction && construction.message) || data.message || "Analysis complete";
+      els.conMsg.textContent = "Coming soon...";
 
     } catch (e) {
       if (e.name !== "AbortError") {
