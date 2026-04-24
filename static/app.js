@@ -97,6 +97,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
   function getParserErrorMessage(payload, status) {
     const errorCode = payload?.detail?.error_code || payload?.error_code;
+    const msg = payload?.detail?.message || payload?.message;
+
+    if (errorCode === "SHORT_URL_RESOLUTION_BLOCKED" && msg) {
+      return msg;
+    }
     if (errorCode === "UNSUPPORTED_LOCATION_INPUT") {
       return "Please use a Google Maps link or latitude/longitude coordinates.";
     }

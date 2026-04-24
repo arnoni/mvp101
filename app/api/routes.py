@@ -40,20 +40,21 @@ def _raise_location_resolution_blocked_http_exception(msg: str | None = None) ->
     from app.services.location_parser import _BLOCKED_RESOLUTION_MESSAGE
     raise HTTPException(
         status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
-        detail=ErrorResponse(
-            error="LOCATION_RESOLUTION_FAILED",
-            detail=msg or _BLOCKED_RESOLUTION_MESSAGE
-        ).model_dump()
+        detail={
+            "error": "LOCATION_RESOLUTION_FAILED",
+            "error_code": "SHORT_URL_RESOLUTION_BLOCKED",
+            "message": msg or _BLOCKED_RESOLUTION_MESSAGE
+        }
     )
 
 
 def _raise_location_parse_http_exception(error_code: str = "INVALID_LOCATION_INPUT") -> None:
     raise HTTPException(
         status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
-        detail=ErrorResponse(
-            error="LOCATION_PARSE_FAILED",
-            detail=error_code,
-        ).model_dump()
+        detail={
+            "error": "LOCATION_PARSE_FAILED",
+            "error_code": error_code,
+        }
     )
 
 # --- Helper for Error ID ---
