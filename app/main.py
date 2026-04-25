@@ -346,13 +346,29 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 @app.exception_handler(StarletteHTTPException)
 async def http_exception_handler(request: Request, exc: StarletteHTTPException):
+    error_id = str(uuid.uuid4())
+    detail_payload = exc.detail
+    if isinstance(exc.detail, dict):
+        detail_payload = exc.detail.get("detail", exc.detail)
+        error_id = str(exc.detail.get("error_id") or error_id)
+
+    if exc.status_code >= 500:
+        logger.error(
+            "HTTP_EXCEPTION_5XX (ID: %s): status=%s detail=%s url=%s",
+            error_id,
+            exc.status_code,
+            detail_payload,
+            str(request.url),
+        )
+
     return JSONResponse(
         status_code=exc.status_code,
         content={
             "detail": {
                 "error": "HTTP_ERROR",
-                "detail": exc.detail,
-                "status_code": exc.status_code
+                "detail": detail_payload,
+                "status_code": exc.status_code,
+                "error_id": error_id,
             }
         }
     )
@@ -408,8 +424,9 @@ async def global_exception_handler(request: Request, exc: Exception):
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={
             "detail": {
-                "error": "INTERNAL_SERVER_ERROR",
+                "error": "HTTP_ERROR",
                 "detail": "An unexpected error occurred. Our team has been notified. Please provide the Error ID if you contact support.",
+                "status_code": status.HTTP_500_INTERNAL_SERVER_ERROR,
                 "error_id": error_id
             }
         }

@@ -74,70 +74,85 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
     effective_tier = _tier_to_funnel(getattr(request.state, "tier", TierStatus.FREE))
     ui_surface = payload.ui_surface.value if payload.ui_surface else UnlockUiSurface.HERO_UNLOCK_BUTTON.value
 
-    async with db_engine.begin() as conn:
-        flag_result = await conn.execute(
-            select(FeatureFlag).where(FeatureFlag.key == SIMULATED_PAID_USERS_ALLOWED_FLAG).limit(1)
-        )
-        flag = flag_result.scalar_one_or_none()
-        if not flag or not flag.is_enabled:
-            raise HTTPException(status_code=403, detail="Simulated unlock is currently disabled")
-
-        user_stmt = (
-            pg_insert(User)
-            .values(email=email, ab_cohort=ab_cohort)
-            .on_conflict_do_update(index_elements=[User.email], set_={"updated_at": func.now()})
-            .returning(User.id)
-        )
-        user_result = await conn.execute(user_stmt)
-        user_id = user_result.scalar_one()
-
-        plan_result = await conn.execute(
-            select(SimulatedBillingPlan).where(
-                SimulatedBillingPlan.code == payload.plan,
-                SimulatedBillingPlan.is_active.is_(True),
-            ).limit(1)
-        )
-        plan = plan_result.scalar_one_or_none()
-        if not plan:
-            raise HTTPException(status_code=400, detail="Invalid or inactive simulated plan")
-
-        simulated_intent_id = str(uuid.uuid4())
-        await conn.execute(
-            insert(SimulatedPaymentIntent).values(
-                id=simulated_intent_id,
-                user_id=user_id,
-                plan_code=plan.code,
-                status="initiated",
-                source="simulated_paid",
-                upgraded_from_anon_id=anon_id,
+    try:
+        async with db_engine.begin() as conn:
+            flag_result = await conn.execute(
+                select(FeatureFlag.is_enabled)
+                .where(FeatureFlag.key == SIMULATED_PAID_USERS_ALLOWED_FLAG)
+                .limit(1)
             )
-        )
-        try:
+            flag_is_enabled = flag_result.scalar_one_or_none()
+            if not flag_is_enabled:
+                raise HTTPException(status_code=403, detail="Simulated unlock is currently disabled")
+
+            user_stmt = (
+                pg_insert(User)
+                .values(email=email, ab_cohort=ab_cohort)
+                .on_conflict_do_update(index_elements=[User.email], set_={"updated_at": func.now()})
+                .returning(User.id)
+            )
+            user_result = await conn.execute(user_stmt)
+            user_id = user_result.scalar_one()
+
+            plan_result = await conn.execute(
+                select(SimulatedBillingPlan.code).where(
+                    SimulatedBillingPlan.code == payload.plan,
+                    SimulatedBillingPlan.is_active.is_(True),
+                ).limit(1)
+            )
+            plan_code = plan_result.scalar_one_or_none()
+            if not plan_code:
+                raise HTTPException(status_code=400, detail="Invalid or inactive simulated plan")
+
+            simulated_intent_id = str(uuid.uuid4())
             await conn.execute(
-                insert(FunnelEvent).values(
-                    event_name="simulated_magic_requested",
-                    event_source="api",
-                    event_version=1,
-                    anon_id=anon_id,
-                    session_id=session_id,
+                insert(SimulatedPaymentIntent).values(
+                    id=simulated_intent_id,
                     user_id=user_id,
-                    effective_tier=effective_tier,
-                    selected_language=request.cookies.get("dd_lang") or "en",
-                    cohort=ab_cohort,
-                    target_tier="simulated_paid",
-                    transition_name="free_to_simulated_paid",
-                    related_simulated_intent_id=simulated_intent_id,
-                    ui_surface=ui_surface,
-                    metadata_json={"plan_code": plan.code},
+                    plan_code=plan_code,
+                    status="initiated",
+                    source="simulated_paid",
+                    upgraded_from_anon_id=anon_id,
                 )
             )
-        except Exception as event_err:
-            _report_funnel_failure(
-                route="/api/billing/unlock-intent",
-                event_name="simulated_magic_requested",
-                request=request,
-                exc=event_err,
-            )
+            try:
+                await conn.execute(
+                    insert(FunnelEvent).values(
+                        event_name="simulated_magic_requested",
+                        event_source="api",
+                        event_version=1,
+                        anon_id=anon_id,
+                        session_id=session_id,
+                        user_id=user_id,
+                        effective_tier=effective_tier,
+                        selected_language=request.cookies.get("dd_lang") or "en",
+                        cohort=ab_cohort,
+                        target_tier="simulated_paid",
+                        transition_name="free_to_simulated_paid",
+                        related_simulated_intent_id=simulated_intent_id,
+                        ui_surface=ui_surface,
+                        metadata_json={"plan_code": plan_code},
+                    )
+                )
+            except Exception as event_err:
+                _report_funnel_failure(
+                    route="/api/billing/unlock-intent",
+                    event_name="simulated_magic_requested",
+                    request=request,
+                    exc=event_err,
+                )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.error(
+            "unlock_intent_failed",
+            email=email,
+            anon_id=anon_id,
+            plan=payload.plan,
+            error_class=exc.__class__.__name__,
+            error_detail=str(exc),
+        )
+        raise
 
     app_origin = resolve_checkout_base(settings.APP_ORIGIN).rstrip("/")
     logger.info("SIMULATED_UNLOCK_INTENT_CREATED user=%s anon_id=%s plan=%s", email, anon_id, payload.plan)

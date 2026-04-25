@@ -1675,17 +1675,17 @@ const ModalSystem = (function() {
         const resendBtn = document.getElementById('resendLinkBtn');
         const hintEl = document.getElementById('resendTurnstileHint');
         if (!resendBtn) return;
+
+        const baseText = resendBtn.dataset.baseText || resendBtn.textContent.trim() || 'Resend Access Link';
+        resendBtn.dataset.baseText = baseText;
+
         const msLeft = state.unlock.resendCooldownUntil - Date.now();
         if (msLeft > 0) return;
 
         const token = document.querySelector('[name="cf-turnstile-response"]')?.value;
         const hasFreshToken = !!token && token !== state.unlock.lastTurnstileToken;
         resendBtn.disabled = !hasFreshToken;
-        if (!hasFreshToken) {
-          resendBtn.textContent = 'Securing...';
-        } else if (resendBtn.dataset.baseText) {
-          resendBtn.textContent = resendBtn.dataset.baseText;
-        }
+        resendBtn.textContent = baseText;
         if (hintEl) {
           hintEl.textContent = hasFreshToken
             ? 'Security check complete. You can resend now.'
@@ -1741,6 +1741,14 @@ const ModalSystem = (function() {
 
       handleSuccessfulLogin() {
         window.location.replace(`${window.location.pathname}?activated=1`);
+      },
+
+      formatSupportError(err, fallback = 'Research access setup failed. Please try again.') {
+        const rawMessage = (err?.message || '').trim();
+        const message = rawMessage || fallback;
+        const errorId = err?.errorId || err?.payload?.error_id || err?.payload?.detail?.error_id;
+        if (!errorId || /error id/i.test(message)) return message;
+        return `${message} (Error ID: ${errorId})`;
       },
 
       async proceedToPayment() {
@@ -1805,9 +1813,10 @@ const ModalSystem = (function() {
             if (btnText) btnText.textContent = 'Join Research ➔';
           }
           this.showStep(1);
-          errorEl.textContent = err.message || 'Research access setup failed. Please try again.';
+          errorEl.textContent = this.formatSupportError(err);
           // Reset Turnstile on failure 
           if (window.turnstile) turnstile.reset();
+          this.syncResendButtonState();
         }
       },
 
@@ -1866,6 +1875,7 @@ const ModalSystem = (function() {
         if (emailInput) emailInput.value = '';
         const errorEl = document.getElementById('purchaseEmailError');
         if (errorEl) errorEl.textContent = '';
+        this.syncResendButtonState();
         const proceedBtn = document.getElementById('proceedToPaymentBtn');
         if (proceedBtn) {
           utils.setButtonLoading(proceedBtn, false);
