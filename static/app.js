@@ -60,8 +60,8 @@ document.addEventListener("DOMContentLoaded", () => {
     construction: { status: "idle", coordKey: null, score: null },
     demand: { status: "idle", coordKey: null, score: null },
     verification: { required: false, passed: false, token: null, widgetId: null, renderAttempts: 0 },
-    modal: { active: null, step: "intent", email: "", plan: "1_day" },
-    unlock: { email: "", plan: "1_day", resendCooldownUntil: 0, lastTurnstileToken: null, checkoutSubmitting: false },
+    modal: { active: null, step: "intent", email: "", plan: "sim_1_day" },
+    unlock: { email: "", plan: "sim_1_day", resendCooldownUntil: 0, lastTurnstileToken: null, checkoutSubmitting: false },
     requests: { construction: null, demand: null, parsePreview: null },
     debounce: null
   };
@@ -857,7 +857,7 @@ const ModalSystem = (function() {
       note: ''
     },
     unlock: {
-      plan: '1_day',
+      plan: 'sim_1_day',
       email: ''
     },
     language: {
@@ -1584,6 +1584,13 @@ const ModalSystem = (function() {
       _resendTimer: null,
       _tokenWatcher: null,
       _turnstilePrewarmTriggered: false,
+      _lastDisabledPlanEventAt: 0,
+
+      emitAnalyticsEvent(eventName, payload) {
+        window.dispatchEvent(new CustomEvent('analytics:event', {
+          detail: { event_name: eventName, ...payload }
+        }));
+      },
 
       clearPendingCheckoutContext() {
         sessionStorage.removeItem('last_payment_intent_id');
@@ -1612,8 +1619,24 @@ const ModalSystem = (function() {
         });
 
         // Plan selection
+        planGrid?.addEventListener('pointerdown', (event) => {
+          const disabledCard = event.target?.closest?.('.plan-card:disabled');
+          if (!disabledCard) return;
+          const now = Date.now();
+          if (now - this._lastDisabledPlanEventAt < 250) return;
+          this._lastDisabledPlanEventAt = now;
+          this.emitAnalyticsEvent('disabled_access_level_clicked', {
+            ui_surface: 'join_research_access_modal',
+            access_level: '72_hour_preview',
+            reason: 'disabled_not_available_in_simulated_flow'
+          });
+        });
+
         planGrid?.querySelectorAll('[data-plan]').forEach(card => {
           card.addEventListener('click', () => {
+            if (card.disabled || card.getAttribute('aria-disabled') === 'true') {
+              return;
+            }
             planGrid.querySelectorAll('[data-plan]').forEach(el => {
               el.classList.remove('active');
               el.setAttribute('aria-checked', 'false');
@@ -1788,9 +1811,11 @@ const ModalSystem = (function() {
         this.showStep(2); // Show processing spinner 
 
         try {
+          const plan = 'sim_1_day';
+          state.unlock.plan = plan;
           const data = await utils.apiPost('/api/billing/unlock-intent', {
             email,
-            plan: state.unlock.plan,
+            plan,
             turnstile_token: turnstileToken
           });
 
@@ -1871,6 +1896,13 @@ const ModalSystem = (function() {
       reset() {
         this.showStep(1);
         state.unlock.checkoutSubmitting = false;
+        state.unlock.plan = 'sim_1_day';
+        const planGrid = document.getElementById('planGrid');
+        planGrid?.querySelectorAll('[data-plan]').forEach(card => {
+          const isDefault = card.dataset.plan === 'sim_1_day';
+          card.classList.toggle('active', isDefault);
+          card.setAttribute('aria-checked', isDefault ? 'true' : 'false');
+        });
         const emailInput = document.getElementById('purchaseEmail');
         if (emailInput) emailInput.value = '';
         const errorEl = document.getElementById('purchaseEmailError');

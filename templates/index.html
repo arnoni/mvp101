@@ -496,7 +496,7 @@
               <label class="field-label">1. {{ t.get('select_pass', 'Select Access Level') }}</label>
               <div class="plan-cards" id="planGrid" role="radiogroup">
                 <!-- 1 Day Pass (Active State) -->
-                <button type="button" class="plan-card active" data-plan="1_day" role="radio" aria-checked="true">
+                <button type="button" class="plan-card active" data-plan="sim_1_day" role="radio" aria-checked="true">
                   <div class="plan-header">
                     <span class="plan-name">{{ t.get('pass_1_day', '1 Day Pass') }}</span>
                     <span class="plan-check">
@@ -509,7 +509,8 @@
                 </button>
 
                 <!-- 3 Day Pass -->
-                <button type="button" class="plan-card" data-plan="3_day" role="radio" aria-checked="false">
+                <button type="button" class="plan-card plan-card-disabled" data-plan="sim_3_day" role="radio" aria-checked="false"
+                  disabled>
                   <div class="plan-header">
                     <span class="plan-name">{{ t.get('pass_3_day', '3 Day Pass') }}</span>
                     <span class="plan-check">
@@ -519,6 +520,7 @@
                     </span>
                   </div>
                   <div class="plan-desc">{{ t.get('pass_3_day_desc', 'Full access for 72 hours') }}</div>
+                  <div class="plan-disabled-label">{{ t.get('coming_soon', 'Coming soon') }}</div>
                 </button>
               </div>
             </div>
