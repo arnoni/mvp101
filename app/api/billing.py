@@ -3,7 +3,7 @@ import uuid
 import random
 
 from fastapi import APIRouter, HTTPException, Request
-from sqlalchemy import insert, select, func
+from sqlalchemy import insert, select, func, case
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from app.core.config import settings
@@ -17,6 +17,9 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 SIMULATED_PAID_USERS_ALLOWED_FLAG = "simulated_paid_users_allowed_flag"
+SIMULATED_PLAN_ALIAS_TO_HOURS = {
+    "sim_1_day": 24,
+}
 
 
 def _tier_to_funnel(tier: TierStatus | str | None) -> str:
@@ -94,12 +97,28 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
             user_result = await conn.execute(user_stmt)
             user_id = user_result.scalar_one()
 
-            plan_result = await conn.execute(
-                select(SimulatedBillingPlan.code).where(
-                    SimulatedBillingPlan.code == payload.plan,
-                    SimulatedBillingPlan.is_active.is_(True),
-                ).limit(1)
-            )
+            if payload.plan not in ["sim_1_day"]:
+                raise HTTPException(status_code=400, detail="Unsupported simulated access duration")
+
+            requested_duration_hours = SIMULATED_PLAN_ALIAS_TO_HOURS.get(payload.plan)
+            if requested_duration_hours is not None:
+                plan_result = await conn.execute(
+                    select(SimulatedBillingPlan.code).where(
+                        SimulatedBillingPlan.duration_hours == requested_duration_hours,
+                        SimulatedBillingPlan.is_active.is_(True),
+                        SimulatedBillingPlan.cohort.in_([ab_cohort, None]),
+                    ).order_by(
+                        case((SimulatedBillingPlan.cohort == ab_cohort, 0), else_=1),
+                        SimulatedBillingPlan.code.asc(),
+                    ).limit(1)
+                )
+            else:
+                plan_result = await conn.execute(
+                    select(SimulatedBillingPlan.code).where(
+                        SimulatedBillingPlan.code == payload.plan,
+                        SimulatedBillingPlan.is_active.is_(True),
+                    ).limit(1)
+                )
             plan_code = plan_result.scalar_one_or_none()
             if not plan_code:
                 raise HTTPException(status_code=400, detail="Invalid or inactive simulated plan")

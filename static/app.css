@@ -323,6 +323,33 @@ button { font-family: inherit; }
 .theme-navy .plan-card.active .plan-check {
   color: var(--border-active); /* Orange checkmark */
 }
+.theme-navy .plan-card.plan-card-disabled,
+.theme-navy .plan-card:disabled {
+  border-color: rgba(95, 117, 166, 0.45);
+  background: rgba(19, 33, 61, 0.6);
+  color: var(--text-secondary);
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.theme-navy .plan-card.plan-card-disabled:hover,
+.theme-navy .plan-card:disabled:hover {
+  border-color: rgba(95, 117, 166, 0.45);
+  background: rgba(19, 33, 61, 0.6);
+}
+.theme-navy .plan-card.plan-card-disabled .plan-check,
+.theme-navy .plan-card:disabled .plan-check {
+  color: transparent;
+}
+.theme-navy .plan-disabled-label {
+  display: inline-block;
+  margin-top: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #ffb067;
+  border: 1px solid rgba(255, 176, 103, 0.4);
+}
 
 /* Input Fields */
 .theme-navy .modal-input {
@@ -1016,6 +1043,10 @@ button { font-family: inherit; }
 .plan-card.active {
   border-color: var(--primary-color, #007bff);
   background: var(--primary-light, rgba(0,123,255,0.05));
+}
+.plan-card:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .plan-name {
