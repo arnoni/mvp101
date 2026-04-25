@@ -34,6 +34,8 @@ from app.services.location_parser import (
     LocationParseError,
     parse_location_input,
 )
+from app.services.location_input_classifier import classify_location_input
+from app.services.input_format_stats_service import increment_input_format_stats
 from app.services.query_history_repository import QueryHistoryEvent, QueryHistoryRepository
 import time
 
@@ -341,14 +343,44 @@ async def search(
     query_history_repo: QueryHistoryRepository = Depends(get_query_history_repo),
 ):
     try:
-        await protect_mutation(request)
-        started_at = time.perf_counter()
-
         anon_id = getattr(request.state, "anon_id", "unknown_anon")
         user_id = getattr(request.state, "user_id", None)
         tier = getattr(request.state, "tier", TierStatus.FREE)
         entitlement_stale = getattr(request.state, "entitlement_stale", False)
         daily_limit = int(getattr(request.state, "daily_limit", 3) or 3)
+
+        # Aggregate telemetry first so blocked/challenged attempts are still counted.
+        classification = classify_location_input(data.location_input or "")
+
+        target_mode = data.target.value if hasattr(data.target, "value") else str(data.target)
+        if user_id is None:
+            user_state = "anonymous"
+        elif tier == TierStatus.SIMULATED_PAID:
+            user_state = "simulated_paid"
+        elif tier in {TierStatus.PASS_1_DAY, TierStatus.PASS_3_DAY}:
+            user_state = "paid"
+        elif tier == TierStatus.FREE:
+            user_state = "registered"
+        else:
+            user_state = "unknown"
+
+        db_engine = getattr(request.app.state, "db_engine", None)
+        if db_engine:
+            try:
+                async with db_engine.begin() as conn:
+                    await increment_input_format_stats(
+                        conn,
+                        target_mode=target_mode,
+                        input_format=classification.input_format,
+                        input_parse_status=classification.parse_status,
+                        input_host=classification.input_host,
+                        user_state=user_state,
+                    )
+            except Exception:
+                logger.warning("input_format_stats_increment_failed", exc_info=True)
+
+        await protect_mutation(request)
+        started_at = time.perf_counter()
         if data.location_input:
             try:
                 parsed_input = parse_location_input(data.location_input)
