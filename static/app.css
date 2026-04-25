@@ -59,6 +59,7 @@ body {
 
 .section-title { text-align: center; font-size: 18px; font-weight: 700; margin-bottom: 12px; }
 .helper { text-align: center; color: var(--muted); font-size: 14px; margin-bottom: 14px; }
+.helper-warning { font-size: 12px; margin-top: -8px; margin-bottom: 12px; color: #b46a00; }
 .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); }
 .text-center { text-anchor: middle; }
 .text-left { text-anchor: start; }
