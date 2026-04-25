@@ -61,7 +61,8 @@
     <!-- INPUT STATE -->
     <section class="card input-card">
       <h2 class="sr-only">Location Entry</h2>
-      <p class="helper">{{ t.get('input_label', 'Paste coordinates or Google Maps link.') }}</p>
+      <p class="helper">{{ t.get('input_label', 'Enter decimal lat, lon or full Google Maps URL') }}</p>
+      <p class="helper helper-warning">{{ t.get('input_warning', 'Short links and place names are not supported.') }}</p>
       <form id="coordForm" novalidate>
         <label class="field field-full">
           <span>{{ t.get('location_input', 'Location') }}</span>
