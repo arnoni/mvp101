@@ -1,6 +1,6 @@
-import logging
 import uuid
 import random
+import structlog
 
 from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import insert, select, func
@@ -10,11 +10,13 @@ from app.core.config import settings
 from app.models.models import FeatureFlag, FunnelEvent, SimulatedBillingPlan, SimulatedPaymentIntent, User
 from app.schemas.billing import UnlockIntentRequest, UnlockIntentResponse, UnlockUiSurface
 from app.services.entitlement_service import TierStatus
+from app.services.magic_auth_service import MagicAuthService, PaymentGatewayFactory
 from app.utils.security import get_client_ip, protect_mutation, verify_turnstile
 from app.utils.url import resolve_checkout_base
+from email_service import EmailService
 
 router = APIRouter()
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 
 SIMULATED_PAID_USERS_ALLOWED_FLAG = "simulated_paid_users_allowed_flag"
 
@@ -73,6 +75,7 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
     session_id = request.cookies.get(settings.SESSION_COOKIE_NAME)
     effective_tier = _tier_to_funnel(getattr(request.state, "tier", TierStatus.FREE))
     ui_surface = payload.ui_surface.value if payload.ui_surface else UnlockUiSurface.HERO_UNLOCK_BUTTON.value
+    app_origin = resolve_checkout_base(settings.APP_ORIGIN).rstrip("/")
 
     try:
         async with db_engine.begin() as conn:
@@ -83,7 +86,14 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
             )
             flag_is_enabled = flag_result.scalar_one_or_none()
             if not flag_is_enabled:
-                raise HTTPException(status_code=403, detail="Simulated unlock is currently disabled")
+                logger.info("simulated_unlock_declined_flag_disabled", email=email, anon_id=anon_id)
+                return UnlockIntentResponse(
+                    ok=False,
+                    status="simulated_unlock_disabled",
+                    intent_id="",
+                    message="Simulated unlock is currently disabled",
+                    checkout_url=None,
+                )
 
             user_stmt = (
                 pg_insert(User)
@@ -131,7 +141,7 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
                         transition_name="free_to_simulated_paid",
                         related_simulated_intent_id=simulated_intent_id,
                         ui_surface=ui_surface,
-                        metadata_json={"plan_code": plan_code},
+                        metadata_json={"plan_code": plan_code, "email": email},
                     )
                 )
             except Exception as event_err:
@@ -144,20 +154,73 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
     except HTTPException:
         raise
     except Exception as exc:
-        logger.error(
-            "unlock_intent_failed",
-            email=email,
-            anon_id=anon_id,
-            plan=payload.plan,
-            error_class=exc.__class__.__name__,
-            error_detail=str(exc),
-        )
+        logger.error("unlock_intent_failed", email=email, anon_id=anon_id, plan=payload.plan, error_class=exc.__class__.__name__, error_detail=str(exc))
         raise
 
-    app_origin = resolve_checkout_base(settings.APP_ORIGIN).rstrip("/")
+    email_sent = False
+    try:
+        redis_cli = getattr(request.app.state, "redis", None)
+        auth_service = MagicAuthService(
+            db=db_engine,
+            redis=redis_cli,
+            payment_factory=PaymentGatewayFactory(),
+        )
+        token = await auth_service.create_magic_link(email=email)
+        magic_link = f"{app_origin}/api/auth/magic?token={token}"
+        email_service = EmailService()
+        email_sent = bool(
+            await email_service.send_magic_link(
+                email=email,
+                magic_link=magic_link,
+                expire_minutes=settings.MAGICLINK_EXPIRY_MINUTES,
+            )
+        )
+    except Exception as exc:
+        logger.error("unlock_intent_magic_email_failed", email=email, anon_id=anon_id, error_class=exc.__class__.__name__, error_detail=str(exc))
+
+    if email_sent:
+        try:
+            async with db_engine.begin() as conn:
+                update_result = await conn.execute(
+                    SimulatedPaymentIntent.__table__.update()
+                    .where(
+                        SimulatedPaymentIntent.id == simulated_intent_id,
+                        SimulatedPaymentIntent.status == "initiated",
+                    )
+                    .values(status="magic_sent", updated_at=func.now())
+                )
+                if (update_result.rowcount or 0) > 0:
+                    await conn.execute(
+                        insert(FunnelEvent).values(
+                            event_name="simulated_magic_sent",
+                            event_source="api",
+                            event_version=1,
+                            anon_id=anon_id,
+                            session_id=session_id,
+                            user_id=user_id,
+                            effective_tier=effective_tier,
+                            selected_language=request.cookies.get("dd_lang") or "en",
+                            cohort=ab_cohort,
+                            target_tier="simulated_paid",
+                            transition_name="free_to_simulated_paid",
+                            related_simulated_intent_id=simulated_intent_id,
+                            ui_surface=ui_surface,
+                            metadata_json={"email": email},
+                        )
+                    )
+        except Exception as event_err:
+            _report_funnel_failure(
+                route="/api/billing/unlock-intent",
+                event_name="simulated_magic_sent",
+                request=request,
+                exc=event_err,
+            )
+
     logger.info("SIMULATED_UNLOCK_INTENT_CREATED user=%s anon_id=%s plan=%s", email, anon_id, payload.plan)
     return UnlockIntentResponse(
-        checkout_url=f"{app_origin}/?simulated_unlock=initiated",
+        ok=True,
+        status="magic_link_sent" if email_sent else "intent_created",
         intent_id=simulated_intent_id,
-        message="Simulated unlock initiated",
+        message="If this email is eligible, we sent a new access link." if email_sent else "Intent created.",
+        checkout_url=f"{app_origin}/?simulated_unlock=initiated",
     )

@@ -377,7 +377,14 @@ async def search(
                         user_state=user_state,
                     )
             except Exception:
-                logger.warning("input_format_stats_increment_failed", exc_info=True)
+                logger.warning(
+                    "input_format_stats_increment_failed",
+                    target_mode=target_mode,
+                    input_format=classification.input_format,
+                    input_parse_status=classification.parse_status,
+                    user_state=user_state,
+                    exc_info=True,
+                )
 
         await protect_mutation(request)
         started_at = time.perf_counter()
@@ -474,6 +481,10 @@ async def search(
             quota_remaining=gate_result.remaining_after,
             checks_today=checks_today,
         )
+        try:
+            await demand_service.record_query(cell_id)
+        except Exception:
+            logger.warning("demand_record_query_failed", cell_id=cell_id, target=data.target.value, exc_info=True)
         related_query_id = await query_history_repo.log_event(
             QueryHistoryEvent(
                 parsed=parsed_input,

@@ -1,10 +1,10 @@
 import time
 import secrets
 import json
-import logging
 import hashlib
 import random
 import httpx
+import structlog
 from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Request, Response, Depends
@@ -23,7 +23,7 @@ from app.utils.security import get_client_ip, verify_turnstile
 from app.utils.url import resolve_checkout_base
 from email_service import EmailService
 
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 router = APIRouter()
 
 # ==========================================
@@ -110,43 +110,110 @@ async def _fetch_dodo_checkout_status(checkout_id: str) -> dict | None:
                 return None
             return res.json()
     except Exception:
+        logger.warning("dodo_checkout_status_fetch_failed", checkout_id=checkout_id, error="unexpected_exception")
         return None
 
 
-@router.post("/magic-link", response_model=AuthResponse, status_code=200)
-async def resend_magic_link(payload: MagicLinkRequest, request: Request):
+async def _send_magic_link_email(*, email: str, db_engine, redis_cli) -> bool:
+    service = MagicAuthService(
+        db=db_engine,
+        redis=redis_cli,
+        payment_factory=PaymentGatewayFactory(),
+    )
+    token = await service.create_magic_link(email=email)
+    app_origin = settings.APP_ORIGIN or "http://localhost:8000"
+    magic_link = f"{app_origin}/api/auth/magic?token={token}"
+    email_service = EmailService()
+    return bool(
+        await email_service.send_magic_link(
+            email=email,
+            magic_link=magic_link,
+            expire_minutes=settings.MAGICLINK_EXPIRY_MINUTES,
+        )
+    )
+
+
+async def _find_latest_simulated_intent(conn, *, email: str, intent_id: str | None = None):
+    sql = """
+        SELECT spi.id AS intent_id, spi.user_id AS user_id, spi.status AS status
+        FROM simulated_payment_intents spi
+        JOIN users u ON u.id = spi.user_id
+        WHERE LOWER(u.email) = :email
+          AND spi.status IN ('initiated', 'magic_sent')
+    """
+    params = {"email": email}
+    if intent_id:
+        sql += " AND spi.id = :intent_id"
+        params["intent_id"] = intent_id
+    sql += " ORDER BY spi.created_at DESC LIMIT 1"
+    result = await conn.execute(text(sql), params)
+    return result.mappings().first()
+
+
+async def _resend_magic_link_impl(payload: MagicLinkRequest, request: Request, *, enforce_turnstile: bool) -> AuthResponse:
     # Intentionally generic response to avoid account enumeration.
-    generic_response = AuthResponse(message="If the email exists, a magic link has been sent.")
+    generic_response = AuthResponse(message="If this email is eligible, we sent a new access link.")
     redis_cli = getattr(request.app.state, "redis", None)
     db_engine = getattr(request.app.state, "db_engine", None)
     if not redis_cli or not db_engine:
+        logger.warning("magic_link_unavailable_services", has_redis=bool(redis_cli), has_db=bool(db_engine))
         return generic_response
 
     email = payload.email.lower()
-    if not payload.turnstile_token:
-        return generic_response
     ip = get_client_ip(request)
-    turnstile_ok = await verify_turnstile(payload.turnstile_token, client_ip=ip)
-    if not turnstile_ok:
-        return generic_response
+    if enforce_turnstile:
+        if not payload.turnstile_token:
+            logger.info("magic_link_turnstile_missing", email=email)
+            return generic_response
+        turnstile_ok = await verify_turnstile(payload.turnstile_token, client_ip=ip)
+        if not turnstile_ok:
+            logger.info("magic_link_turnstile_invalid", email=email, client_ip=ip)
+            return generic_response
 
     cooldown_key = f"magic_resend:cooldown:{email}"
     count_key = f"magic_resend:count:{email}:{ip}"
 
     try:
         if await redis_cli.get(cooldown_key):
+            logger.info("magic_link_cooldown_active", email=email)
             return generic_response
         count = await redis_cli.incr(count_key)
         if count == 1:
             await redis_cli.expire(count_key, 180)
         if int(count) > 2:
             await redis_cli.set(cooldown_key, "1", ex=180)
+            logger.warning("magic_link_rate_limited", email=email, client_ip=ip, count=int(count))
             return generic_response
-    except Exception:
+    except Exception as exc:
+        logger.error("magic_link_rate_limit_check_failed", email=email, client_ip=ip, error=str(exc))
         return generic_response
 
     active_pass = None
+    simulated_intent = None
     async with db_engine.connect() as conn:
+        simulated_intent = await _find_latest_simulated_intent(
+            conn,
+            email=email,
+            intent_id=payload.intent_id,
+        )
+        if payload.intent_id and simulated_intent is None:
+            ownership_result = await conn.execute(
+                text(
+                    """
+                    SELECT u.email
+                    FROM simulated_payment_intents spi
+                    JOIN users u ON u.id = spi.user_id
+                    WHERE spi.id = :intent_id
+                    LIMIT 1
+                    """
+                ),
+                {"intent_id": payload.intent_id},
+            )
+            ownership_row = ownership_result.mappings().first()
+            if ownership_row and str(ownership_row["email"]).lower() != email:
+                logger.warning("magic_link_simulated_intent_ownership_mismatch", email=email, intent_id=payload.intent_id)
+                return generic_response
+
         active_pass_result = await conn.execute(
             text(
                 """
@@ -198,6 +265,45 @@ async def resend_magic_link(payload: MagicLinkRequest, request: Request):
                     f"requested_email={email} intent_id={payload.intent_id}"
                 )
                 return generic_response
+
+    if simulated_intent:
+        try:
+            sent = await _send_magic_link_email(email=email, db_engine=db_engine, redis_cli=redis_cli)
+            if not sent:
+                logger.warning("magic_link_send_failed_simulated", email=email, intent_id=str(simulated_intent["intent_id"]))
+                return generic_response
+            async with db_engine.begin() as conn:
+                update_result = await conn.execute(
+                    update(SimulatedPaymentIntent)
+                    .where(
+                        SimulatedPaymentIntent.id == simulated_intent["intent_id"],
+                        SimulatedPaymentIntent.status == "initiated",
+                    )
+                    .values(status="magic_sent", updated_at=func.now())
+                )
+                if (update_result.rowcount or 0) > 0:
+                    await conn.execute(
+                        insert(FunnelEvent).values(
+                            event_name="simulated_magic_sent",
+                            event_source="api",
+                            event_version=1,
+                            anon_id=getattr(request.state, "anon_id", None),
+                            session_id=request.cookies.get(settings.SESSION_COOKIE_NAME),
+                            user_id=simulated_intent["user_id"],
+                            effective_tier=_tier_to_funnel(getattr(request.state, "tier", TierStatus.FREE)),
+                            selected_language=request.cookies.get("dd_lang") or "en",
+                            cohort=getattr(request.state, "ab_cohort", None),
+                            target_tier="simulated_paid",
+                            transition_name="free_to_simulated_paid",
+                            related_simulated_intent_id=simulated_intent["intent_id"],
+                            ui_surface="user_access_modal",
+                            metadata_json={"email": email},
+                        )
+                    )
+            return generic_response
+        except Exception as exc:
+            logger.error("magic_link_simulated_flow_failed", email=email, error=str(exc))
+            return generic_response
 
     if not active_pass:
         if pending_intent and pending_intent.get("provider_intent_id"):
@@ -320,7 +426,8 @@ async def resend_magic_link(payload: MagicLinkRequest, request: Request):
                     expires_at=expires_at,
                 )
             )
-    except Exception:
+    except Exception as exc:
+        logger.error("magic_link_token_insert_failed", email=email, error=str(exc))
         return generic_response
 
     app_origin = settings.APP_ORIGIN or "http://localhost:8000"
@@ -332,9 +439,15 @@ async def resend_magic_link(payload: MagicLinkRequest, request: Request):
             magic_link=magic_link,
             expire_minutes=10,
         )
-    except Exception:
+    except Exception as exc:
+        logger.error("magic_link_send_failed_real", email=email, error=str(exc))
         return generic_response
     return generic_response
+
+
+@router.post("/magic-link", response_model=AuthResponse, status_code=200)
+async def resend_magic_link(payload: MagicLinkRequest, request: Request):
+    return await _resend_magic_link_impl(payload, request, enforce_turnstile=True)
 
 
 # ==========================================
@@ -370,86 +483,12 @@ async def login(
     Initiates magic link flow: creates a token (optionally tied to a MoR purchase) and "sends" it.
     """
     try:
-        # Pass the purchase_id & provider to bind the payment strictly to this auth token
-        token = await service.create_magic_link(
-            email=payload.email,
-            purchase_id=payload.purchase_id,
-            provider=payload.provider
+        logger.warning("AUTH_LOGIN_DEPRECATED: /api/auth/login is deprecated; use /api/auth/magic-link")
+        return await _resend_magic_link_impl(
+            MagicLinkRequest(email=payload.email),
+            request,
+            enforce_turnstile=False,
         )
-        
-        # Build the callback URL
-        app_origin = settings.APP_ORIGIN or "http://localhost:8000"
-        magic_link = f"{app_origin}/api/auth/magic?token={token}"
-        
-        # Send via Resend
-        email_service = EmailService()
-        sent = await email_service.send_magic_link(
-            email=payload.email, 
-            magic_link=magic_link,
-            expire_minutes=settings.MAGICLINK_EXPIRY_MINUTES
-        )
-        
-        if not sent:
-            # Fallback for dev environment if Resend is not configured
-            if settings.ENV == "development":
-                logger.info(f"🔐 [DEV FALLBACK] MAGIC LINK for {payload.email}: {magic_link}")
-                return AuthResponse(message="Magic link logged to console (Dev Mode).")
-            raise HTTPException(status_code=500, detail="Failed to send magic link email")
-
-        try:
-            async with service.db.begin() as conn:
-                user_result = await conn.execute(
-                    select(User.id).where(User.email == payload.email.lower()).limit(1)
-                )
-                user_id = user_result.scalar_one_or_none()
-                if user_id is not None:
-                    latest_intent_result = await conn.execute(
-                        select(SimulatedPaymentIntent.id)
-                        .where(
-                            SimulatedPaymentIntent.user_id == user_id,
-                            SimulatedPaymentIntent.status == "initiated",
-                        )
-                        .order_by(SimulatedPaymentIntent.created_at.desc())
-                        .limit(1)
-                    )
-                    latest_intent_id = latest_intent_result.scalar_one_or_none()
-                    if latest_intent_id is not None:
-                        update_result = await conn.execute(
-                            update(SimulatedPaymentIntent)
-                            .where(
-                                SimulatedPaymentIntent.id == latest_intent_id,
-                                SimulatedPaymentIntent.status == "initiated",
-                            )
-                            .values(status="magic_sent", updated_at=func.now())
-                        )
-                        if (update_result.rowcount or 0) > 0:
-                            await conn.execute(
-                                insert(FunnelEvent).values(
-                                    event_name="simulated_magic_sent",
-                                    event_source="api",
-                                    event_version=1,
-                                    anon_id=getattr(request.state, "anon_id", None),
-                                    session_id=request.cookies.get(settings.SESSION_COOKIE_NAME),
-                                    user_id=user_id,
-                                    effective_tier=_tier_to_funnel(getattr(request.state, "tier", TierStatus.FREE)),
-                                    selected_language=request.cookies.get("dd_lang") or "en",
-                                    cohort=getattr(request.state, "ab_cohort", None),
-                                    target_tier="simulated_paid",
-                                    transition_name="free_to_simulated_paid",
-                                    related_simulated_intent_id=latest_intent_id,
-                                    ui_surface="user_access_modal",
-                                    metadata_json={"email": payload.email.lower()},
-                                )
-                            )
-        except Exception as emit_err:
-            _report_funnel_failure(
-                route="/api/auth/login",
-                event_name="simulated_magic_sent",
-                request=request,
-                exc=emit_err,
-            )
-        
-        return AuthResponse(message="Magic link sent. Check your inbox.")
         
     except HTTPException:
         raise

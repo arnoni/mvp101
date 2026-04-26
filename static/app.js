@@ -1794,6 +1794,11 @@ const ModalSystem = (function() {
             turnstile_token: turnstileToken
           });
 
+          if (!data || data.ok !== true) {
+            const message = data?.message || 'Research access is currently unavailable. Please try again later.';
+            throw new Error(message);
+          }
+
           console.log("DEBUG: Intent created successfully:", data);
           if (data.intent_id) {
             sessionStorage.setItem('last_payment_intent_id', data.intent_id);
@@ -1801,9 +1806,13 @@ const ModalSystem = (function() {
           sessionStorage.setItem('pending_checkout_email', email);
           sessionStorage.setItem('pending_checkout_started_at', String(Date.now()));
           state.unlock.lastTurnstileToken = turnstileToken;
-          
-          console.log("DEBUG: Redirecting to checkout_url:", data.checkout_url);
-          window.location.href = data.checkout_url;
+
+          if (data.checkout_url) {
+            console.log("DEBUG: Redirecting to checkout_url:", data.checkout_url);
+            window.location.href = data.checkout_url;
+            return;
+          }
+          throw new Error(data?.message || 'Research access is currently unavailable. Please try again later.');
         } catch (err) {
           console.error("DEBUG: proceedToPayment() error:", err);
           state.unlock.checkoutSubmitting = false;
@@ -1813,7 +1822,7 @@ const ModalSystem = (function() {
             if (btnText) btnText.textContent = 'Join Research ➔';
           }
           this.showStep(1);
-          errorEl.textContent = this.formatSupportError(err);
+          errorEl.textContent = err?.message || this.formatSupportError(err);
           // Reset Turnstile on failure 
           if (window.turnstile) turnstile.reset();
           this.syncResendButtonState();
