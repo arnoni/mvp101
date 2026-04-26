@@ -8,7 +8,7 @@ import structlog
 from app.core.config import settings
 
 logger = structlog.get_logger(__name__)
-RESEND_SEND_TIMEOUT_SECONDS = 12
+RESEND_SEND_TIMEOUT_SECONDS = 10
 
 
 class EmailService:
