@@ -128,8 +128,8 @@ def test_unlock_intent_happy_path_returns_checkout_url(monkeypatch):
 
     assert response.status_code == 200
     body = response.json()
-    assert "checkout_url" in body
-    assert body["checkout_url"].endswith("/?simulated_unlock=initiated")
+    assert body["ok"] is True
+    assert body["status"] in {"magic_link_sent", "intent_created"}
     assert body["intent_id"]
     joined_statements = "\n".join(fake_engine.conn.executed_statements)
     assert "simulated_billing_plans" in joined_statements

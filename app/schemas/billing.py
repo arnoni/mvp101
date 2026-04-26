@@ -21,6 +21,8 @@ class UnlockIntentRequest(BaseModel):
 
 
 class UnlockIntentResponse(BaseModel):
-    checkout_url: str
+    ok: bool = True
+    status: str = "magic_link_sent"
     intent_id: str
-    message: str = "Checkout initialized"
+    message: str = "If this email is eligible, we sent a new access link."
+    checkout_url: str | None = None

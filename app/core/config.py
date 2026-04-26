@@ -3,7 +3,7 @@
 # Implements TSD Section 10: Constraints & Limitations (Da Nang BBox)
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field, field_validator
+from pydantic import AliasChoices, Field, field_validator
 from typing import Any, Dict, List, Optional
 import json
 
@@ -16,8 +16,16 @@ class Settings(BaseSettings):
     # --- Required Environment Variables (TSD Section 9) ---
     # MAPBOX_TOKEN: str = Field(..., description="Mapbox Geocoding API Token") # Disabled
     MAPBOX_TOKEN: Optional[str] = Field(None, description="Mapbox Geocoding API Token (Disabled)")
-    CLOUDFLARE_TURNSTILE_SECRET: Optional[str] = Field(None, description="Cloudflare Turnstile Secret Key")
-    CLOUDFLARE_TURNSTILE_SITE_KEY: Optional[str] = Field(None, description="Cloudflare Turnstile Site Key (Public)")
+    CLOUDFLARE_TURNSTILE_SECRET: Optional[str] = Field(
+        None,
+        description="Cloudflare Turnstile Secret Key",
+        validation_alias=AliasChoices("CLOUDFLARE_TURNSTILE_SECRET", "TURNSTILE_SECRET_KEY"),
+    )
+    CLOUDFLARE_TURNSTILE_SITE_KEY: Optional[str] = Field(
+        None,
+        description="Cloudflare Turnstile Site Key (Public)",
+        validation_alias=AliasChoices("CLOUDFLARE_TURNSTILE_SITE_KEY", "TURNSTILE_SITE_KEY"),
+    )
     REDIS_URL: Optional[str] = Field(None, description="Redis URL for quota/session enforcement")
     UPSTASH_REDIS_REST_URL: Optional[str] = Field(None, description="Upstash Redis REST URL")
     UPSTASH_REDIS_REST_TOKEN: Optional[str] = Field(None, description="Upstash Redis REST Token")
