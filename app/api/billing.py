@@ -1,5 +1,6 @@
 import uuid
 import random
+import asyncio
 import structlog
 
 from fastapi import APIRouter, HTTPException, Request
@@ -22,6 +23,7 @@ SIMULATED_PAID_USERS_ALLOWED_FLAG = "simulated_paid_users_allowed_flag"
 SIMULATED_PLAN_ALIAS_TO_HOURS = {
     "sim_1_day": 24,
 }
+UNLOCK_INTENT_MAGIC_LINK_TIMEOUT_SECONDS = 12
 
 
 def _tier_to_funnel(tier: TierStatus | str | None) -> str:
@@ -184,15 +186,29 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
             redis=redis_cli,
             payment_factory=PaymentGatewayFactory(),
         )
-        token = await auth_service.create_magic_link(email=email)
-        magic_link = f"{app_origin}/api/auth/magic?token={token}"
-        email_service = EmailService()
-        email_sent = bool(
-            await email_service.send_magic_link(
-                email=email,
-                magic_link=magic_link,
-                expire_minutes=settings.MAGICLINK_EXPIRY_MINUTES,
+
+        async def _create_and_send_magic_link() -> bool:
+            token = await auth_service.create_magic_link(email=email)
+            magic_link = f"{app_origin}/api/auth/magic?token={token}"
+            email_service = EmailService()
+            return bool(
+                await email_service.send_magic_link(
+                    email=email,
+                    magic_link=magic_link,
+                    expire_minutes=settings.MAGICLINK_EXPIRY_MINUTES,
+                )
             )
+
+        email_sent = await asyncio.wait_for(
+            _create_and_send_magic_link(),
+            timeout=UNLOCK_INTENT_MAGIC_LINK_TIMEOUT_SECONDS,
+        )
+    except asyncio.TimeoutError:
+        logger.error(
+            "unlock_intent_magic_email_timed_out",
+            email=email,
+            anon_id=anon_id,
+            timeout_seconds=UNLOCK_INTENT_MAGIC_LINK_TIMEOUT_SECONDS,
         )
     except Exception as exc:
         logger.error("unlock_intent_magic_email_failed", email=email, anon_id=anon_id, error_class=exc.__class__.__name__, error_detail=str(exc))

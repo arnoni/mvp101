@@ -20,3 +20,10 @@ def test_frontend_keeps_sim_1_day_submission_and_disabled_click_analytics_payloa
     assert "join_research_access_modal" in app_js
     assert "72_hour_preview" in app_js
     assert "disabled_not_available_in_simulated_flow" in app_js
+
+
+def test_frontend_modal_state_and_support_close_reset_are_wired():
+    app_js = Path("static/app.js").read_text(encoding="utf-8")
+    assert 'modals: { active: null, history: [] }' in app_js
+    assert "supportModal?.addEventListener('modal:close'" in app_js
+    assert "state.unlock.checkoutSubmitting = false;" in app_js
