@@ -115,22 +115,34 @@ async def _fetch_dodo_checkout_status(checkout_id: str) -> dict | None:
 
 
 async def _send_magic_link_email(*, email: str, db_engine, redis_cli) -> bool:
-    service = MagicAuthService(
-        db=db_engine,
-        redis=redis_cli,
-        payment_factory=PaymentGatewayFactory(),
-    )
-    token = await service.create_magic_link(email=email)
-    app_origin = settings.APP_ORIGIN or "http://localhost:8000"
-    magic_link = f"{app_origin}/api/auth/magic?token={token}"
-    email_service = EmailService()
-    return bool(
-        await email_service.send_magic_link(
-            email=email,
-            magic_link=magic_link,
-            expire_minutes=settings.MAGICLINK_EXPIRY_MINUTES,
+    try:
+        service = MagicAuthService(
+            db=db_engine,
+            redis=redis_cli,
+            payment_factory=PaymentGatewayFactory(),
         )
-    )
+        token = await service.create_magic_link(email=email)
+        app_origin = settings.APP_ORIGIN or "http://localhost:8000"
+        magic_link = f"{app_origin}/api/auth/magic?token={token}"
+        email_service = EmailService()
+        sent = bool(
+            await email_service.send_magic_link(
+                email=email,
+                magic_link=magic_link,
+                expire_minutes=settings.MAGICLINK_EXPIRY_MINUTES,
+            )
+        )
+        if not sent:
+            logger.warning("magic_link_email_send_returned_false", email=email)
+        return sent
+    except Exception as exc:
+        logger.error(
+            "magic_link_email_send_exception",
+            email=email,
+            error_class=exc.__class__.__name__,
+            error_detail=str(exc),
+        )
+        return False
 
 
 async def _find_latest_simulated_intent(conn, *, email: str, intent_id: str | None = None):
@@ -434,13 +446,22 @@ async def _resend_magic_link_impl(payload: MagicLinkRequest, request: Request, *
     magic_link = f"{app_origin}/api/auth/magic?token={raw_token}"
     try:
         email_service = EmailService()
-        await email_service.send_magic_link(
+        sent = await email_service.send_magic_link(
             email=email,
             magic_link=magic_link,
             expire_minutes=10,
         )
+        if not sent:
+            logger.warning("magic_link_send_failed_real", email=email, reason="provider_returned_false")
+            return generic_response
     except Exception as exc:
-        logger.error("magic_link_send_failed_real", email=email, error=str(exc))
+        logger.error(
+            "magic_link_send_failed_real",
+            email=email,
+            reason="exception",
+            error_class=exc.__class__.__name__,
+            error_detail=str(exc),
+        )
         return generic_response
     return generic_response
 

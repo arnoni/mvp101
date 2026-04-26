@@ -1,3 +1,4 @@
+import asyncio
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -161,3 +162,45 @@ def test_unlock_intent_rejects_unsupported_sim_3_day(monkeypatch):
     body = response.json()
     detail = body["detail"]
     assert detail["detail"] == "Unsupported simulated access duration"
+
+
+def test_unlock_intent_magic_link_timeout_returns_response(monkeypatch):
+    class _FakeAuthService:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def create_magic_link(self, **_kwargs):
+            return "token"
+
+    class _SlowEmailService:
+        async def send_magic_link(self, **_kwargs):
+            await asyncio.sleep(0.05)
+            return True
+
+    async def _noop_protect_mutation(_request):
+        return None
+
+    async def _valid_turnstile(*_args, **_kwargs):
+        return True
+
+    monkeypatch.setattr("app.api.billing.protect_mutation", _noop_protect_mutation)
+    monkeypatch.setattr("app.api.billing.verify_turnstile", _valid_turnstile)
+    monkeypatch.setattr("app.api.billing.MagicAuthService", _FakeAuthService)
+    monkeypatch.setattr("app.api.billing.EmailService", _SlowEmailService)
+    monkeypatch.setattr("app.api.billing.UNLOCK_INTENT_MAGIC_LINK_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(app.state, "db_engine", _FakeEngine(), raising=False)
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/billing/unlock-intent",
+            json={
+                "email": "test@example.com",
+                "plan": "sim_1_day",
+                "turnstile_token": "dummy-token",
+            },
+        )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["status"] == "intent_created"

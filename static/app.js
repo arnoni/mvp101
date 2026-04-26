@@ -60,7 +60,7 @@ document.addEventListener("DOMContentLoaded", () => {
     construction: { status: "idle", coordKey: null, score: null },
     demand: { status: "idle", coordKey: null, score: null },
     verification: { required: false, passed: false, token: null, widgetId: null, renderAttempts: 0 },
-    modal: { active: null, step: "intent", email: "", plan: "sim_1_day" },
+    modals: { active: null, history: [] },
     unlock: { email: "", plan: "sim_1_day", resendCooldownUntil: 0, lastTurnstileToken: null, checkoutSubmitting: false },
     requests: { construction: null, demand: null, parsePreview: null },
     debounce: null
@@ -957,22 +957,36 @@ const ModalSystem = (function() {
     /**
      * API POST helper with error handling
      */
-    async apiPost(url, body) {
+    async apiPost(url, body, options = {}) {
       let response;
       const clientErrorId = utils.newErrorId('CLIENT');
+      const timeoutMs = Number(options?.timeoutMs) > 0 ? Number(options.timeoutMs) : 20000;
+      const controller = new AbortController();
+      const timeoutHandle = window.setTimeout(() => controller.abort(), timeoutMs);
+
       try {
         response = await fetch(url, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           credentials: 'same-origin',
-          body: JSON.stringify(body)
+          body: JSON.stringify(body),
+          signal: controller.signal
         });
       } catch (networkErr) {
+        if (networkErr?.name === 'AbortError') {
+          const err = new Error(`Request timed out after ${timeoutMs / 1000}s. Error ID: ${clientErrorId}`);
+          err.code = 'REQUEST_TIMEOUT';
+          err.errorId = clientErrorId;
+          err.cause = networkErr;
+          throw err;
+        }
         const err = new Error(`Network request failed. Error ID: ${clientErrorId}`);
         err.code = 'NETWORK_REQUEST_FAILED';
         err.errorId = clientErrorId;
         err.cause = networkErr;
         throw err;
+      } finally {
+        window.clearTimeout(timeoutHandle);
       }
 
       const data = await response.json().catch(() => ({}));
@@ -1642,6 +1656,11 @@ const ModalSystem = (function() {
         btn?.addEventListener('click', () => {
           this.reset();
           core.open('supportModalLayer');
+        });
+
+        const supportModal = document.getElementById('supportModalLayer');
+        supportModal?.addEventListener('modal:close', () => {
+          this.reset();
         });
 
         // Plan selection
