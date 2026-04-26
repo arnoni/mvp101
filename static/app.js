@@ -1869,6 +1869,24 @@ const ModalSystem = (function() {
             throw new Error(message);
           }
 
+          if (data.ok === true && data.status === 'intent_created') {
+            // The DB intent was created, but the email timed out/failed.
+            state.unlock.checkoutSubmitting = false;
+
+            if (proceedBtn) {
+              utils.setButtonLoading(proceedBtn, false);
+              const btnText = proceedBtn.querySelector('.btn-text');
+              if (btnText) btnText.textContent = 'Join Research ➔';
+            }
+
+            if (errorEl) {
+              errorEl.textContent = 'We are experiencing email delays. Your request is saved. Please click "Resend Email" in a few moments.';
+            }
+
+            this.syncResendButtonState();
+            return; // Stop execution so we DO NOT redirect
+          }
+
           console.log("DEBUG: Intent created successfully:", data);
           if (data.intent_id) {
             sessionStorage.setItem('last_payment_intent_id', data.intent_id);
