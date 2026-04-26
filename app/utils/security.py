@@ -79,6 +79,11 @@ async def verify_turnstile(token: str, anon_id: str | None = None, client_ip: st
             result = response.json()
             
             if result.get("success"):
+                allowed_preview_suffix = "-arnonis-projects.vercel.app"
+                if settings.ENV == "preview":
+                    hostname = (result.get("hostname") or "").strip()
+                    if not hostname.endswith(allowed_preview_suffix):
+                        raise HTTPException(status_code=403, detail="Invalid Turnstile hostname")
                 logger.info(f"Turnstile EXACT verification SUCCESS for: {cache_key}")
                 if cache_key and redis_client:
                     try:
