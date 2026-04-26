@@ -101,6 +101,31 @@ document.addEventListener("DOMContentLoaded", () => {
     demandLocked: els.demMsg?.dataset.labelLocked || document.body.dataset.labelPaidRequired || (els.demMsg?.textContent || "").trim(),
     parsedAs: document.body.dataset.labelParsedAs || "Parsed as:",
     parsingLink: document.body.dataset.labelParsingLink || "Parsing link...",
+    passActivatedToast: document.body.dataset.labelPassActivatedToast || "🎉 Pass Activated! You now have full access.",
+    coordinatesChanged: document.body.dataset.labelCoordinatesChanged || "Coordinates changed",
+    completeVerification: document.body.dataset.labelCompleteVerification || "Complete Verification",
+    verify: document.body.dataset.labelVerify || "Verify",
+    checkConstruction: document.body.dataset.labelCheckConstruction || "Check Construction",
+    analyzingSignals: document.body.dataset.labelAnalyzingSignals || "Analyzing signals...",
+    constructionComingSoon: document.body.dataset.labelConstructionComingSoon || "Coming soon...",
+    checkingDemand: document.body.dataset.labelCheckingDemand || "Checking demand...",
+    verificationRequired: document.body.dataset.labelVerificationRequired || "Verification required",
+    verificationLoadingChallenge: document.body.dataset.labelVerificationLoadingChallenge || "Loading verification challenge…",
+    verificationUnavailableSitekeyMissing: document.body.dataset.labelVerificationUnavailableSitekeyMissing || "Verification unavailable: site key missing.",
+    verificationUnableToLoad: document.body.dataset.labelVerificationUnableToLoad || "Unable to load verification challenge. Please refresh and try again.",
+    verificationFailedRefresh: document.body.dataset.labelVerificationFailedRefresh || "Verification failed. Please refresh.",
+    verificationUnableToRender: document.body.dataset.labelVerificationUnableToRender || "Unable to render verification challenge. Please refresh.",
+    verificationCompleteReady: document.body.dataset.labelVerificationCompleteReady || "Security check complete. Ready to check construction.",
+    coordinatesNotSet: document.body.dataset.labelCoordinatesNotSet || "Coordinates not set",
+    reportMinChars: document.body.dataset.labelReportMinChars || "Report must be at least 10 characters.",
+    shareOpenFailed: document.body.dataset.labelShareOpenFailed || "Could not open sharing options.",
+    copyFailedManual: document.body.dataset.labelCopyFailedManual || "Could not copy. Please copy manually.",
+    emailInvalid: document.body.dataset.labelEmailInvalid || "Please enter a valid email address.",
+    securityCheckRequired: document.body.dataset.labelSecurityCheckRequired || "Please complete the security check.",
+    redirectingResearchAccess: document.body.dataset.labelRedirectingResearchAccess || "Redirecting to research access...",
+    joinResearchCta: document.body.dataset.labelJoinResearchCta || "Join Research ➔",
+    resendEnterEmail: document.body.dataset.labelResendEnterEmail || "Enter your email above, then click Resend.",
+    resendFreshSecurity: document.body.dataset.labelResendFreshSecurity || "Please complete a fresh security check before resend.",
     errorShortUrlBlocked: document.body.dataset.labelErrorShortUrlBlocked || "We could not open this short Google Maps link due to access restrictions. Please open it in Google Maps, copy the full URL, and try again.",
     errorLocationNotSupported: document.body.dataset.labelErrorLocationNotSupported || "This location is outside supported regions. Please use a location inside supported coverage areas."
   };
@@ -245,7 +270,7 @@ document.addEventListener("DOMContentLoaded", () => {
       window.ModalSystem.notify("🎉 Pass Activated! You now have full access.", "success");
     } else {
       const toast = document.createElement("div");
-      toast.textContent = "🎉 Pass Activated! You now have full access.";
+      toast.textContent = labels.passActivatedToast;
       toast.setAttribute("role", "status");
       toast.setAttribute("aria-live", "polite");
       Object.assign(toast.style, {
@@ -495,7 +520,7 @@ document.addEventListener("DOMContentLoaded", () => {
         
         animateGauge(els.conBand, els.conNeedle, null);
         animateGauge(els.demBand, els.demNeedle, null);
-        els.conMsg.textContent = "Coordinates changed";
+        els.conMsg.textContent = labels.coordinatesChanged;
         const access = AccessState.get();
         els.demMsg.textContent = access.demandAllowed ? labels.demandReady : labels.demandLocked;
         els.turnstileSlot.classList.add("hidden");
@@ -526,10 +551,10 @@ document.addEventListener("DOMContentLoaded", () => {
     els.demBtn.disabled = !valid || demLoading;
 
     if (state.verification.required && !state.verification.passed) {
-      els.mainBtn.textContent = "Complete Verification";
-      els.conBtn.textContent = "Verify";
+      els.mainBtn.textContent = labels.completeVerification;
+      els.conBtn.textContent = labels.verify;
     } else {
-      els.mainBtn.textContent = "Check Construction";
+      els.mainBtn.textContent = labels.checkConstruction;
       els.conBtn.textContent = labels.constructionGo;
     }
 
@@ -607,7 +632,7 @@ document.addEventListener("DOMContentLoaded", () => {
     state.requests.construction = new AbortController();
     
     state.construction.status = "loading";
-    els.conMsg.textContent = "Analyzing signals...";
+    els.conMsg.textContent = labels.analyzingSignals;
     updateButtons();
 
     try {
@@ -632,7 +657,7 @@ document.addEventListener("DOMContentLoaded", () => {
           state.verification.passed = false;
           state.verification.token = null;
           state.construction.status = "blocked";
-          els.conMsg.textContent = "Verification required";
+          els.conMsg.textContent = labels.verificationRequired;
           renderTurnstile();
           updateButtons();
           return;
@@ -650,7 +675,7 @@ document.addEventListener("DOMContentLoaded", () => {
       if (data.verification_required) {
         state.verification.required = true;
         state.construction.status = "blocked";
-        els.conMsg.textContent = "Verification required";
+        els.conMsg.textContent = labels.verificationRequired;
         renderTurnstile();
         updateButtons();
         return;
@@ -661,7 +686,7 @@ document.addEventListener("DOMContentLoaded", () => {
       state.construction = { status: "ready", score: score, coordKey: construction.coord_key || state.coords.key };
       console.log("Triggering animateGauge with score:", score);
       animateGauge(els.conBand, els.conNeedle, score);
-      els.conMsg.textContent = "Coming soon...";
+      els.conMsg.textContent = labels.constructionComingSoon;
 
     } catch (e) {
       if (e.name !== "AbortError") {
@@ -689,7 +714,7 @@ document.addEventListener("DOMContentLoaded", () => {
     state.requests.demand = new AbortController();
     
     state.demand.status = "loading";
-    els.demMsg.textContent = "Checking demand...";
+    els.demMsg.textContent = labels.checkingDemand;
     updateButtons();
 
     try {
@@ -709,7 +734,7 @@ document.addEventListener("DOMContentLoaded", () => {
           state.verification.passed = false;
           state.verification.token = null;
           state.demand.status = "blocked";
-          els.demMsg.textContent = "Verification required";
+          els.demMsg.textContent = labels.verificationRequired;
           renderTurnstile();
           updateButtons();
           return;
@@ -751,7 +776,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const sitekey = (document.body.dataset.turnstileSitekey || "").trim();
     if (!sitekey || ["none", "null", "undefined"].includes(sitekey.toLowerCase())) {
       console.error("Turnstile site key is missing or invalid.");
-      els.conMsg.textContent = "Verification unavailable: site key missing.";
+      els.conMsg.textContent = labels.verificationUnavailableSitekeyMissing;
       return;
     }
     
@@ -760,10 +785,10 @@ document.addEventListener("DOMContentLoaded", () => {
       state.verification.renderAttempts = (state.verification.renderAttempts || 0) + 1;
       if (state.verification.renderAttempts > 50) {
         console.error("Turnstile script failed to load after multiple attempts.");
-        els.conMsg.textContent = "Unable to load verification challenge. Please refresh and try again.";
+        els.conMsg.textContent = labels.verificationUnableToLoad;
         return;
       }
-      els.conMsg.textContent = "Loading verification challenge…";
+      els.conMsg.textContent = labels.verificationLoadingChallenge;
       setTimeout(renderTurnstile, 100);
       return;
     }
@@ -784,6 +809,7 @@ document.addEventListener("DOMContentLoaded", () => {
           state.verification.passed = true;
           state.verification.token = token;
           state.verification.required = false;
+          els.conMsg.textContent = labels.verificationCompleteReady;
           els.turnstileSlot.classList.add("hidden");
           updateButtons();
           fetchConstruction(); // Auto-retry
@@ -791,7 +817,7 @@ document.addEventListener("DOMContentLoaded", () => {
         'error-callback': (err) => {
           console.error("Turnstile Error:", err);
           state.verification.widgetId = null;
-          els.conMsg.textContent = "Verification failed. Please refresh.";
+          els.conMsg.textContent = labels.verificationFailedRefresh;
         },
         'expired-callback': () => {
           state.verification.passed = false;
@@ -803,7 +829,7 @@ document.addEventListener("DOMContentLoaded", () => {
     } catch (err) {
       console.error("Turnstile render failed:", err);
       state.verification.widgetId = null;
-      els.conMsg.textContent = "Unable to render verification challenge. Please refresh.";
+      els.conMsg.textContent = labels.verificationUnableToRender;
     }
   }
 
@@ -1365,7 +1391,7 @@ const ModalSystem = (function() {
         if (state.coords.valid) {
           display.textContent = utils.formatCoords(state.coords.lat, state.coords.lng);
         } else {
-          display.textContent = 'Coordinates not set';
+          display.textContent = labels.coordinatesNotSet;
         }
       },
 
@@ -1431,7 +1457,7 @@ const ModalSystem = (function() {
 
         } catch (err) {
           if (err?.status === 422 && err?.code === 'REPORT_DESCRIPTION_TOO_SHORT') {
-            errorEl.textContent = 'Report must be at least 10 characters.';
+            errorEl.textContent = labels.reportMinChars;
             return;
           }
           console.error('Report submit failed', {
@@ -1536,7 +1562,7 @@ const ModalSystem = (function() {
           } catch (err) {
             if (err.name !== 'AbortError') {
               console.error('Share failed:', err);
-              if (errorEl) errorEl.textContent = 'Could not open sharing options.';
+              if (errorEl) errorEl.textContent = labels.shareOpenFailed;
             }
           }
         } else {
@@ -1565,7 +1591,7 @@ const ModalSystem = (function() {
           core.close('shareModalLayer');
           this.showFeedback(successMsg);
         } catch (err) {
-          if (errorEl) errorEl.textContent = 'Could not copy. Please copy manually.';
+          if (errorEl) errorEl.textContent = labels.copyFailedManual;
         }
       },
 
@@ -1767,12 +1793,12 @@ const ModalSystem = (function() {
 
         if (!utils.isValidEmail(email)) {
           console.warn("DEBUG: Invalid email entered:", email);
-          errorEl.textContent = 'Please enter a valid email address.';
+          errorEl.textContent = labels.emailInvalid;
           return;
         }
         if (!turnstileToken) {
           console.warn("DEBUG: Turnstile token missing");
-          errorEl.textContent = 'Please complete the security check.';
+          errorEl.textContent = labels.securityCheckRequired;
           return;
         }
 
@@ -1783,7 +1809,7 @@ const ModalSystem = (function() {
         if (proceedBtn) {
           utils.setButtonLoading(proceedBtn, true);
           const btnText = proceedBtn.querySelector('.btn-text');
-          if (btnText) btnText.textContent = 'Redirecting to research access...';
+          if (btnText) btnText.textContent = labels.redirectingResearchAccess;
         }
         this.showStep(2); // Show processing spinner 
 
@@ -1819,7 +1845,7 @@ const ModalSystem = (function() {
           if (proceedBtn) {
             utils.setButtonLoading(proceedBtn, false);
             const btnText = proceedBtn.querySelector('.btn-text');
-            if (btnText) btnText.textContent = 'Join Research ➔';
+            if (btnText) btnText.textContent = labels.joinResearchCta;
           }
           this.showStep(1);
           errorEl.textContent = err?.message || this.formatSupportError(err);
@@ -1836,12 +1862,12 @@ const ModalSystem = (function() {
         const turnstileToken = document.querySelector('[name="cf-turnstile-response"]')?.value;
 
         if (!utils.isValidEmail(email)) {
-          errorEl.textContent = 'Enter your email above, then click Resend.';
+          errorEl.textContent = labels.resendEnterEmail;
           emailInput.focus();
           return;
         }
         if (!turnstileToken || turnstileToken === state.unlock.lastTurnstileToken) {
-          errorEl.textContent = 'Please complete a fresh security check before resend.';
+          errorEl.textContent = labels.resendFreshSecurity;
           if (window.turnstile) turnstile.reset();
           this.syncResendButtonState();
           return;
@@ -1889,7 +1915,7 @@ const ModalSystem = (function() {
         if (proceedBtn) {
           utils.setButtonLoading(proceedBtn, false);
           const btnText = proceedBtn.querySelector('.btn-text');
-          if (btnText) btnText.textContent = 'Join Research ➔';
+          if (btnText) btnText.textContent = labels.joinResearchCta;
         }
       }
     },
