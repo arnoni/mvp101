@@ -27,3 +27,17 @@ def test_frontend_modal_state_and_support_close_reset_are_wired():
     assert 'modals: { active: null, history: [] }' in app_js
     assert "supportModal?.addEventListener('modal:close'" in app_js
     assert "state.unlock.checkoutSubmitting = false;" in app_js
+
+
+def test_frontend_persists_intent_id_before_intent_created_early_return():
+    app_js = Path("static/app.js").read_text(encoding="utf-8")
+    persist_marker = "if (data.intent_id) {\n            sessionStorage.setItem('last_payment_intent_id', data.intent_id);\n          }"
+    early_return_marker = "if (data.ok === true && data.status === 'intent_created') {"
+    assert persist_marker in app_js
+    assert app_js.index(persist_marker) < app_js.index(early_return_marker)
+
+
+def test_auth_magic_landing_accepts_request_object_for_cookie_and_state_reads():
+    auth_py = Path("app/api/auth.py").read_text(encoding="utf-8")
+    assert "async def magic_landing(" in auth_py
+    assert "request: Request," in auth_py

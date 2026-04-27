@@ -521,6 +521,7 @@ async def login(
 @router.get("/magic", include_in_schema=False)
 async def magic_landing(
     token: str,
+    request: Request,
     response: Response,
     service: MagicAuthService = Depends(get_auth_service)
 ):
