@@ -664,7 +664,11 @@ document.addEventListener("DOMContentLoaded", () => {
     if (!state.coords.valid) return;
 
     if (!AccessState.get().demandAllowed) {
-      if (window.ModalSystem) { ModalSystem.open("supportModalLayer"); }
+      if (window.ModalSystem?.openJoinResearchModal) {
+        ModalSystem.openJoinResearchModal('demand_level_page');
+      } else if (window.ModalSystem) {
+        ModalSystem.open("supportModalLayer");
+      }
       return;
     }
 
@@ -1305,7 +1309,7 @@ const ModalSystem = (function() {
 
         upgradeBtn?.addEventListener('click', () => {
           core.close('userModalLayer');
-          core.open('supportModalLayer');
+          modals.support.openJoinResearchModal('user_access_modal');
         });
       },
 
@@ -1636,6 +1640,19 @@ const ModalSystem = (function() {
       _turnstilePrewarmTriggered: false,
       _lastDisabledPlanEventAt: 0,
 
+      openJoinResearchModal(surface = 'hero_unlock_button') {
+        try {
+          state.unlock.uiSurface = surface;
+          this.reset();
+          core.open('supportModalLayer');
+          return true;
+        } catch (err) {
+          console.error('join_research_modal_open_failed', err);
+          utils.notify('Could not open Join Research right now. Please try again.', 'error');
+          return false;
+        }
+      },
+
       emitAnalyticsEvent(eventName, payload) {
         window.dispatchEvent(new CustomEvent('analytics:event', {
           detail: { event_name: eventName, ...payload }
@@ -1660,8 +1677,8 @@ const ModalSystem = (function() {
         const planGrid = document.getElementById('planGrid');
 
         btn?.addEventListener('click', () => {
-          this.reset();
-          core.open('supportModalLayer');
+          const surface = AccessState.get().demandAllowed ? 'hero_unlock_button' : 'demand_level_page';
+          this.openJoinResearchModal(surface);
         });
 
         const supportModal = document.getElementById('supportModalLayer');
@@ -1873,7 +1890,8 @@ const ModalSystem = (function() {
           const data = await utils.apiPost('/api/billing/unlock-intent', {
             email,
             plan,
-            turnstile_token: turnstileToken
+            turnstile_token: turnstileToken,
+            ui_surface: state.unlock.uiSurface || 'hero_unlock_button'
           });
 
           if (!data || data.ok !== true) {
@@ -1895,11 +1913,14 @@ const ModalSystem = (function() {
               if (btnText) btnText.textContent = 'Join Research ➔';
             }
 
-            if (errorEl) {
-              errorEl.textContent = 'We are experiencing email delays. Your request is saved. Please click "Resend Email" in a few moments.';
+            this.showStep(3);
+            const resendMsg = document.getElementById('resendMessage');
+            if (resendMsg) {
+              resendMsg.textContent = `Request saved for ${email}. Check your inbox shortly, then use Resend Access Link if needed.`;
             }
-
+            if (errorEl) errorEl.textContent = '';
             this.syncResendButtonState();
+            if (window.turnstile) turnstile.reset();
             return; // Stop execution so we DO NOT redirect
           }
 
@@ -1911,6 +1932,22 @@ const ModalSystem = (function() {
           if (data.checkout_url) {
             console.log("DEBUG: Redirecting to checkout_url:", data.checkout_url);
             window.location.href = data.checkout_url;
+            return;
+          }
+          if (data.ok === true && data.status === 'magic_link_sent') {
+            state.unlock.checkoutSubmitting = false;
+            if (proceedBtn) {
+              utils.setButtonLoading(proceedBtn, false);
+              const btnText = proceedBtn.querySelector('.btn-text');
+              if (btnText) btnText.textContent = labels.joinResearchCta;
+            }
+            this.showStep(3);
+            const resendMsg = document.getElementById('resendMessage');
+            if (resendMsg) {
+              resendMsg.textContent = `Check ${email} for your access link.`;
+            }
+            this.syncResendButtonState();
+            if (window.turnstile) turnstile.reset();
             return;
           }
           throw new Error(data?.message || 'Research access is currently unavailable. Please try again later.');
@@ -1982,6 +2019,7 @@ const ModalSystem = (function() {
         this.showStep(1);
         state.unlock.checkoutSubmitting = false;
         state.unlock.plan = 'sim_1_day';
+        state.unlock.uiSurface = 'hero_unlock_button';
         const planGrid = document.getElementById('planGrid');
         planGrid?.querySelectorAll('[data-plan]').forEach(card => {
           const isDefault = card.dataset.plan === 'sim_1_day';
@@ -2157,6 +2195,10 @@ const ModalSystem = (function() {
 
     notify(message, type = 'info') {
       utils.notify(message, type);
+    },
+
+    openJoinResearchModal(surface = 'hero_unlock_button') {
+      return modals.support.openJoinResearchModal(surface);
     }
   };
 })();
