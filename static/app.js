@@ -1640,15 +1640,75 @@ const ModalSystem = (function() {
       _turnstilePrewarmTriggered: false,
       _lastDisabledPlanEventAt: 0,
 
+      formatJoinModalErrorMessage(reason, errorId) {
+        const base = 'Join Research is temporarily unavailable.';
+        const reasonMap = {
+          reset_failed: 'We could not reset the modal state.',
+          native_open_failed: 'We could not open the native dialog.',
+          fallback_open_failed: 'We could not open the fallback modal.',
+          missing_modal: 'The Join Research modal is missing from this page.'
+        };
+        const reasonDetail = reasonMap[reason] || 'An unexpected modal error occurred.';
+        return `${base} ${reasonDetail} Please refresh and try again. Error ID: ${errorId}`;
+      },
+
       openJoinResearchModal(surface = 'hero_unlock_button') {
+        state.unlock.uiSurface = surface;
+
         try {
-          state.unlock.uiSurface = surface;
           this.reset();
-          core.open('supportModalLayer');
+        } catch (err) {
+          const errorId = utils.newErrorId('JOIN_MODAL_RESET');
+          console.error('join_research_modal_reset_failed', {
+            errorId,
+            surface,
+            message: err?.message || null,
+            stack: err?.stack || null
+          });
+        }
+
+        let openedModal = null;
+        try {
+          openedModal = core.open('supportModalLayer');
+          if (openedModal) return true;
+        } catch (err) {
+          const errorId = utils.newErrorId('JOIN_MODAL_NATIVE_OPEN');
+          console.error('join_research_modal_native_open_threw', {
+            errorId,
+            surface,
+            message: err?.message || null,
+            stack: err?.stack || null
+          });
+        }
+
+        const fallbackModal = document.getElementById('supportModalLayer');
+        if (!fallbackModal) {
+          const errorId = utils.newErrorId('JOIN_MODAL_MISSING');
+          const detailedMessage = this.formatJoinModalErrorMessage('missing_modal', errorId);
+          console.error('join_research_modal_open_failed_missing_modal', {
+            errorId,
+            surface
+          });
+          utils.notify(detailedMessage, 'error');
+          return false;
+        }
+
+        try {
+          fallbackModal.classList.add('open');
+          fallbackModal.setAttribute('aria-hidden', 'false');
+          document.body.style.overflow = 'hidden';
+          state.modals.active = 'supportModalLayer';
           return true;
         } catch (err) {
-          console.error('join_research_modal_open_failed', err);
-          utils.notify('Could not open Join Research right now. Please try again.', 'error');
+          const errorId = utils.newErrorId('JOIN_MODAL_FALLBACK_OPEN');
+          const detailedMessage = this.formatJoinModalErrorMessage('fallback_open_failed', errorId);
+          console.error('join_research_modal_fallback_open_failed', {
+            errorId,
+            surface,
+            message: err?.message || null,
+            stack: err?.stack || null
+          });
+          utils.notify(detailedMessage, 'error');
           return false;
         }
       },
