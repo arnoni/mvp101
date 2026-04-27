@@ -258,49 +258,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Success redirect handling: force a server round-trip so template tier data is refreshed.
   const urlParams = new URLSearchParams(window.location.search);
-  if (urlParams.get("magic_success") === "1") {
-    window.location.replace(`${window.location.pathname}?activated=1`);
-    return;
-  }
-
-  if (urlParams.get("activated") === "1") {
-    updateAccessState(true, document.body.dataset.tier || "paid");
-    window.history.replaceState({}, document.title, window.location.pathname);
-    if (window.ModalSystem?.notify) {
-      window.ModalSystem.notify("🎉 Pass Activated! You now have full access.", "success");
-    } else {
-      const toast = document.createElement("div");
-      toast.textContent = labels.passActivatedToast;
-      toast.setAttribute("role", "status");
-      toast.setAttribute("aria-live", "polite");
-      Object.assign(toast.style, {
-        position: "fixed",
-        top: "16px",
-        left: "50%",
-        transform: "translateX(-50%)",
-        zIndex: "9999",
-        maxWidth: "min(92vw, 560px)",
-        background: "rgba(10, 25, 47, 0.96)",
-        color: "#ecf2ff",
-        border: "1px solid rgba(112, 169, 255, 0.35)",
-        borderRadius: "12px",
-        padding: "12px 16px",
-        boxShadow: "0 10px 30px rgba(0, 0, 0, 0.35)",
-        fontSize: "15px",
-        fontWeight: "600",
-        opacity: "0",
-        transition: "opacity 220ms ease"
-      });
-      document.body.appendChild(toast);
-      requestAnimationFrame(() => {
-        toast.style.opacity = "1";
-      });
-      window.setTimeout(() => {
-        toast.style.opacity = "0";
-        window.setTimeout(() => toast.remove(), 240);
-      }, 3000);
-    }
-  }
+  const magicSuccessJustLanded = urlParams.get("magic_success") === "1";
 
   function normalizeInput(raw) {
     return (raw || "")
@@ -833,6 +791,57 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  async function restoreAfterMagicSuccessIfNeeded() {
+    if (!magicSuccessJustLanded) return;
+
+    updateAccessState(true, document.body.dataset.tier || "paid");
+    window.history.replaceState({}, document.title, window.location.pathname);
+
+    const inputCard = document.querySelector(".input-card");
+    const coordForm = document.getElementById("coordForm");
+    if (inputCard && coordForm && !document.getElementById("magicSuccessBanner")) {
+      const banner = document.createElement("div");
+      banner.id = "magicSuccessBanner";
+      banner.className = "parsed-preview";
+      banner.setAttribute("role", "status");
+      banner.setAttribute("aria-live", "polite");
+      banner.textContent = "✅ Research Access active. Your report is ready.";
+      inputCard.insertBefore(banner, coordForm);
+    }
+
+    const rawResumeState = localStorage.getItem("dd_resume_state");
+    if (rawResumeState) {
+      try {
+        const parsedResume = JSON.parse(rawResumeState);
+        const lat = Number(parsedResume?.lat);
+        const lng = Number(parsedResume?.lng);
+        const text = typeof parsedResume?.text === "string" ? parsedResume.text : "";
+        if (Number.isFinite(lat) && Number.isFinite(lng)) {
+          if (els.location) els.location.value = text;
+          state.coords = { lat, lng, valid: true, key: `${lat.toFixed(4)},${lng.toFixed(4)}` };
+          state.input = {
+            kind: classifyLocationInput(text) || "decimal_pair",
+            original: text,
+            preview: text ? `${labels.parsedAs} ${text}` : "",
+            parsed: { lat, lng, normalizedText: text || `${lat.toFixed(6)}, ${lng.toFixed(6)}` },
+            error: "",
+            touched: true
+          };
+          if (window.ModalSystem) window.ModalSystem.setCoords(lat, lng);
+          els.preview.textContent = state.input.preview;
+          els.preview.classList.toggle("hidden", !state.input.preview);
+          els.err.textContent = "";
+          updateButtons();
+          localStorage.removeItem("dd_resume_state");
+          await fetchConstruction();
+        }
+      } catch (err) {
+        console.warn("Failed to restore dd_resume_state", err);
+      }
+    }
+
+  }
+
 
   // Event Listeners Binding
   els.location.addEventListener("input", updateLocationInputState);
@@ -855,6 +864,7 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   syncAccessUI();
   updateButtons();
+  void restoreAfterMagicSuccessIfNeeded();
 });
 
 
@@ -1641,10 +1651,6 @@ const ModalSystem = (function() {
       init() {
         // Check for success redirect parameter on page load 
         const urlParams = new URLSearchParams(window.location.search);
-        if (urlParams.get('magic_success') === '1') {
-          this.handleSuccessfulLogin();
-          return;
-        }
         const paymentState = urlParams.get('payment');
 
         const btn = document.getElementById('supportBtn');
@@ -1858,6 +1864,12 @@ const ModalSystem = (function() {
         try {
           const plan = 'sim_1_day';
           state.unlock.plan = plan;
+          const currentLocationText = document.getElementById('locationInput')?.value?.trim() || '';
+          localStorage.setItem('dd_resume_state', JSON.stringify({
+            lat: state.coords.lat,
+            lng: state.coords.lng,
+            text: currentLocationText
+          }));
           const data = await utils.apiPost('/api/billing/unlock-intent', {
             email,
             plan,
@@ -1867,6 +1879,10 @@ const ModalSystem = (function() {
           if (!data || data.ok !== true) {
             const message = data?.message || 'Research access is currently unavailable. Please try again later.';
             throw new Error(message);
+          }
+
+          if (data.intent_id) {
+            sessionStorage.setItem('last_payment_intent_id', data.intent_id);
           }
 
           if (data.ok === true && data.status === 'intent_created') {
@@ -1888,9 +1904,6 @@ const ModalSystem = (function() {
           }
 
           console.log("DEBUG: Intent created successfully:", data);
-          if (data.intent_id) {
-            sessionStorage.setItem('last_payment_intent_id', data.intent_id);
-          }
           sessionStorage.setItem('pending_checkout_email', email);
           sessionStorage.setItem('pending_checkout_started_at', String(Date.now()));
           state.unlock.lastTurnstileToken = turnstileToken;
