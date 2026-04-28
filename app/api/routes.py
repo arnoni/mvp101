@@ -418,13 +418,21 @@ async def search(
                 resolution_method="search_lat_lon",
             )
         if not is_inside_app_bbox(data.lat, data.lon):
-            raise HTTPException(
-                status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=ErrorResponse(
-                    error="OUT_OF_BOUNDS",
-                    detail="Location is outside supported bounding box.",
-                ).model_dump(),
-            )
+            if settings.ENV == "preview":
+                logger.info(
+                    "search_out_of_bounds_allowed_in_preview",
+                    lat=data.lat,
+                    lon=data.lon,
+                    target=target_mode,
+                )
+            else:
+                raise HTTPException(
+                    status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=ErrorResponse(
+                        error="OUT_OF_BOUNDS",
+                        detail="Location is outside supported bounding box.",
+                    ).model_dump(),
+                )
         area_code = AreaBucketer.get_area_code(data.lat, data.lon)
         check_types = ["construction", "demand"] if data.target == SearchTarget.BOTH else [data.target.value]
 
