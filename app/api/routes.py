@@ -491,7 +491,19 @@ async def search(
         )
         demand_cell_id = BucketEngine.get_cell_id(data.lat, data.lon)
         try:
-            await demand_service.record_query(demand_cell_id)
+            demand_actor_key = str(user_id or request.cookies.get(settings.SESSION_COOKIE_NAME) or anon_id or "unknown")
+            demand_incremented = await demand_service.record_query(
+                demand_cell_id,
+                actor_key=demand_actor_key,
+                dedupe_window_seconds=3600,
+            )
+            if not demand_incremented:
+                logger.info(
+                    "demand_record_query_deduped",
+                    cell_id=demand_cell_id,
+                    actor_key=demand_actor_key,
+                    dedupe_window_seconds=3600,
+                )
         except Exception:
             logger.warning("demand_record_query_failed", cell_id=demand_cell_id, target=data.target.value, exc_info=True)
         related_query_id = await query_history_repo.log_event(
