@@ -46,11 +46,11 @@ class Settings(BaseSettings):
     # --- Constraints & Limitations (TSD Section 10) ---
     # Backward-compatible legacy key (prefer APP_BOUNDING_BOX).
     DA_NANG_BBOX: List[float] = Field(
-        [108.10, 16.00, 108.30, 16.12], # [min_lon, min_lat, max_lon, max_lat]
+        [108.05, 15.85, 108.35, 16.20], # [min_lon, min_lat, max_lon, max_lat]
         description="Bounding box for Da Nang area [lon_min, lat_min, lon_max, lat_max]"
     )
     APP_BOUNDING_BOX: List[float] = Field(
-        [108.10, 16.00, 108.30, 16.12],  # [min_lon, min_lat, max_lon, max_lat]
+        [108.05, 15.85, 108.35, 16.20],  # [min_lon, min_lat, max_lon, max_lat]
         description="Application bounding box [lon_min, lat_min, lon_max, lat_max]"
     )
 
@@ -64,13 +64,13 @@ class Settings(BaseSettings):
         - Python list/tuple
         """
         if value is None:
-            return [108.10, 16.00, 108.30, 16.12]
+            return [108.05, 15.85, 108.35, 16.20]
 
         parsed: Any = value
         if isinstance(value, str):
             raw = value.strip()
             if not raw:
-                return [108.10, 16.00, 108.30, 16.12]
+                return [108.05, 15.85, 108.35, 16.20]
             if raw.startswith("[") and raw.endswith("]"):
                 parsed = json.loads(raw)
             else:
