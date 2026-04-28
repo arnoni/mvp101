@@ -31,3 +31,4 @@ def test_client_flow_telemetry_endpoint_logs_structured_events():
     assert 'class ClientFlowEventRequest(BaseModel):' in routes_py
     assert '@router.post("/telemetry/client-event")' in routes_py
     assert '"client_flow_event"' in routes_py
+    assert "client_event_name=payload.event" in routes_py

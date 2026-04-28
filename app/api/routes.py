@@ -695,7 +695,7 @@ async def telemetry_client_event(request: Request, payload: ClientFlowEventReque
         anon_id=getattr(request.state, "anon_id", None),
         session_id=request.cookies.get(settings.SESSION_COOKIE_NAME),
         endpoint="/api/telemetry/client-event",
-        event=payload.event,
+        client_event_name=payload.event,
         flow_type=payload.flow_type,
         status=payload.status,
         ui_surface=payload.ui_surface,
