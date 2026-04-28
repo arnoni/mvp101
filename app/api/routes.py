@@ -209,6 +209,16 @@ class ParseLocationResponse(BaseModel):
     error_code: str | None = None
     message: str | None = None
 
+
+class ClientFlowEventRequest(BaseModel):
+    event: str = Field(..., min_length=3, max_length=128)
+    flow_type: str = Field(default="research_access", min_length=2, max_length=64)
+    status: str | None = Field(default=None, max_length=64)
+    ui_surface: str | None = Field(default=None, max_length=64)
+    step: str | None = Field(default=None, max_length=64)
+    error_code: str | None = Field(default=None, max_length=128)
+    error_message: str | None = Field(default=None, max_length=400)
+
 # --- Routes ---
 
 @router.get("/test-email")
@@ -674,6 +684,26 @@ async def set_language(request: Request, response: Response):
     except Exception as e:
         logger.error("set_language_failed", error=str(e))
         raise HTTPException(status_code=400, detail="Invalid request")
+
+
+@router.post("/telemetry/client-event")
+async def telemetry_client_event(request: Request, payload: ClientFlowEventRequest):
+    await protect_mutation(request)
+    logger.info(
+        "client_flow_event",
+        request_id=getattr(request.state, "request_id", None),
+        anon_id=getattr(request.state, "anon_id", None),
+        session_id=request.cookies.get(settings.SESSION_COOKIE_NAME),
+        endpoint="/api/telemetry/client-event",
+        event=payload.event,
+        flow_type=payload.flow_type,
+        status=payload.status,
+        ui_surface=payload.ui_surface,
+        step=payload.step,
+        error_code=payload.error_code,
+        error_message=payload.error_message,
+    )
+    return {"ok": True}
 
 @router.post("/ugc/report-submit")
 async def ugc_report_submit(

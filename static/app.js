@@ -1678,7 +1678,13 @@ const ModalSystem = (function() {
         let openedModal = null;
         try {
           openedModal = core.open('supportModalLayer');
-          if (openedModal) return true;
+          if (openedModal) {
+            this.logFlowEvent('join_research_modal_opened', {
+              ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
+              status: 'opened'
+            });
+            return true;
+          }
         } catch (err) {
           const errorId = utils.newErrorId('JOIN_MODAL_NATIVE_OPEN');
           console.error('join_research_modal_native_open_threw', {
@@ -1706,6 +1712,10 @@ const ModalSystem = (function() {
           fallbackModal.setAttribute('aria-hidden', 'false');
           document.body.style.overflow = 'hidden';
           state.modals.active = 'supportModalLayer';
+          this.logFlowEvent('join_research_modal_opened', {
+            ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
+            status: 'opened'
+          });
           return true;
         } catch (err) {
           const errorId = utils.newErrorId('JOIN_MODAL_FALLBACK_OPEN');
@@ -1727,6 +1737,27 @@ const ModalSystem = (function() {
         }));
       },
 
+      async logFlowEvent(eventName, payload = {}) {
+        try {
+          await fetch('/api/telemetry/client-event', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            keepalive: true,
+            body: JSON.stringify({
+              event: eventName,
+              flow_type: 'research_access',
+              ...payload
+            })
+          });
+        } catch (err) {
+          console.warn('join_research_flow_log_failed', {
+            event: eventName,
+            message: err?.message || null
+          });
+        }
+      },
+
       clearPendingCheckoutContext() {
         sessionStorage.removeItem('last_payment_intent_id');
         sessionStorage.removeItem('pending_checkout_email');
@@ -1746,6 +1777,10 @@ const ModalSystem = (function() {
 
         btn?.addEventListener('click', () => {
           const surface = AccessState.get().demandAllowed ? 'hero_unlock_button' : 'demand_level_page';
+          this.logFlowEvent('join_research_button_clicked', {
+            ui_surface: surface,
+            status: 'clicked'
+          });
           this.openJoinResearchModal(surface);
         });
 
@@ -1758,6 +1793,11 @@ const ModalSystem = (function() {
           this.emitAnalyticsEvent('join_research_modal_closed', {
             ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
             active_step: document.querySelector('#supportModalLayer .purchase-step:not(.hidden)')?.id || null
+          });
+          this.logFlowEvent('join_research_modal_closed', {
+            ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
+            step: document.querySelector('#supportModalLayer .purchase-step:not(.hidden)')?.id || null,
+            status: 'closed'
           });
           this.reset();
         });
@@ -1930,6 +1970,11 @@ const ModalSystem = (function() {
         }
         const checkoutOpId = ++this._checkoutOpSeq;
         let watchdogTimer = null;
+        this.logFlowEvent('join_research_email_submit_started', {
+          ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
+          status: 'started',
+          step: 'purchaseStep1'
+        });
         
         // Turnstile token extraction
         const turnstileToken = document.querySelector('[name="cf-turnstile-response"]')?.value;
@@ -1980,6 +2025,11 @@ const ModalSystem = (function() {
             lng: state.coords.lng,
             text: currentLocationText
           }));
+          this.logFlowEvent('join_research_unlock_intent_request_started', {
+            ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
+            status: 'request_started',
+            step: 'purchaseStep2'
+          });
           const data = await utils.apiPost('/api/billing/unlock-intent', {
             email,
             plan,
@@ -1997,6 +2047,11 @@ const ModalSystem = (function() {
           }
 
           if (data.ok === true && data.status === 'intent_created') {
+            this.logFlowEvent('join_research_unlock_intent_created', {
+              ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
+              status: 'intent_created',
+              step: 'purchaseStep3'
+            });
             if (!this.isCurrentOperation('checkout', checkoutOpId)) return;
             // The DB intent was created, but the email timed out/failed.
             state.unlock.checkoutSubmitting = false;
@@ -2029,6 +2084,11 @@ const ModalSystem = (function() {
             return;
           }
           if (data.ok === true && data.status === 'magic_link_sent') {
+            this.logFlowEvent('join_research_email_send_succeeded', {
+              ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
+              status: 'magic_link_sent',
+              step: 'purchaseStep3'
+            });
             if (!this.isCurrentOperation('checkout', checkoutOpId)) return;
             state.unlock.checkoutSubmitting = false;
             if (proceedBtn) {
@@ -2047,6 +2107,12 @@ const ModalSystem = (function() {
           }
           throw new Error(data?.message || 'Research access is currently unavailable. Please try again later.');
         } catch (err) {
+          this.logFlowEvent('join_research_flow_failed', {
+            ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
+            status: 'failed',
+            error_code: err?.code || 'JOIN_RESEARCH_FLOW_FAILED',
+            error_message: err?.message || 'Unknown error',
+          });
           if (!this.isCurrentOperation('checkout', checkoutOpId)) return;
           console.error("DEBUG: proceedToPayment() error:", err);
           state.unlock.checkoutSubmitting = false;
@@ -2078,6 +2144,11 @@ const ModalSystem = (function() {
           return;
         }
         const resendOpId = ++this._resendOpSeq;
+        this.logFlowEvent('join_research_email_send_started', {
+          ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
+          status: 'resend_started',
+          step: 'purchaseStep3'
+        });
         if (!utils.isValidEmail(email)) {
           errorEl.textContent = labels.resendEnterEmail;
           emailInput.focus();
@@ -2107,10 +2178,22 @@ const ModalSystem = (function() {
           document.getElementById('resendMessage').textContent = 
             `If ${email} has an active pass, we've sent a new access link.`;
           state.unlock.lastTurnstileToken = turnstileToken;
+          this.logFlowEvent('join_research_email_send_succeeded', {
+            ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
+            status: 'resend_succeeded',
+            step: 'purchaseStep3'
+          });
           if (window.turnstile) turnstile.reset();
           this.startResendCooldown(180);
         } catch (err) {
           if (!this.isCurrentOperation('resend', resendOpId)) return;
+          this.logFlowEvent('join_research_email_send_failed', {
+            ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
+            status: 'resend_failed',
+            error_code: err?.code || 'JOIN_RESEARCH_RESEND_FAILED',
+            error_message: err?.message || 'Could not resend link.',
+            step: 'purchaseStep3'
+          });
           errorEl.textContent = err.message || 'Could not resend link.';
           if (window.turnstile) turnstile.reset();
         } finally {
