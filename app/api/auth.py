@@ -165,8 +165,16 @@ async def _find_latest_simulated_intent(conn, *, email: str, intent_id: str | No
 async def _resend_magic_link_impl(payload: MagicLinkRequest, request: Request, *, enforce_turnstile: bool) -> AuthResponse:
     # Intentionally generic response to avoid account enumeration.
     generic_response = AuthResponse(message="If this email is eligible, we sent a new access link.")
+    request_id = getattr(request.state, "request_id", None)
     redis_cli = getattr(request.app.state, "redis", None)
     db_engine = getattr(request.app.state, "db_engine", None)
+    logger.info(
+        "magic_link_resend_received",
+        request_id=request_id,
+        email=payload.email.lower(),
+        enforce_turnstile=enforce_turnstile,
+        has_intent_id=bool(payload.intent_id),
+    )
     if not redis_cli or not db_engine:
         logger.warning("magic_link_unavailable_services", has_redis=bool(redis_cli), has_db=bool(db_engine))
         return generic_response
@@ -181,6 +189,7 @@ async def _resend_magic_link_impl(payload: MagicLinkRequest, request: Request, *
         if not turnstile_ok:
             logger.info("magic_link_turnstile_invalid", email=email, client_ip=ip)
             return generic_response
+        logger.info("magic_link_turnstile_valid", request_id=request_id, email=email, client_ip=ip)
 
     cooldown_key = f"magic_resend:cooldown:{email}"
     count_key = f"magic_resend:count:{email}:{ip}"
@@ -278,8 +287,18 @@ async def _resend_magic_link_impl(payload: MagicLinkRequest, request: Request, *
                 )
                 return generic_response
 
+    logger.info(
+        "magic_link_resend_lookup_completed",
+        request_id=request_id,
+        email=email,
+        has_simulated_intent=bool(simulated_intent),
+        has_active_pass=bool(active_pass),
+        has_pending_intent=bool(pending_intent),
+    )
+
     if simulated_intent:
         try:
+            logger.info("magic_link_resend_simulated_send_started", request_id=request_id, email=email, intent_id=str(simulated_intent["intent_id"]))
             sent = await _send_magic_link_email(email=email, db_engine=db_engine, redis_cli=redis_cli)
             if not sent:
                 logger.warning("magic_link_send_failed_simulated", email=email, intent_id=str(simulated_intent["intent_id"]))
@@ -312,6 +331,7 @@ async def _resend_magic_link_impl(payload: MagicLinkRequest, request: Request, *
                             metadata_json={"email": email},
                         )
                     )
+            logger.info("magic_link_resend_simulated_send_finished", request_id=request_id, email=email, intent_id=str(simulated_intent["intent_id"]), sent=True)
             return generic_response
         except Exception as exc:
             logger.error("magic_link_simulated_flow_failed", email=email, error=str(exc))
@@ -454,6 +474,7 @@ async def _resend_magic_link_impl(payload: MagicLinkRequest, request: Request, *
         if not sent:
             logger.warning("magic_link_send_failed_real", email=email, reason="provider_returned_false")
             return generic_response
+        logger.info("magic_link_resend_real_send_finished", request_id=request_id, email=email, sent=True)
     except Exception as exc:
         logger.error(
             "magic_link_send_failed_real",
@@ -463,6 +484,7 @@ async def _resend_magic_link_impl(payload: MagicLinkRequest, request: Request, *
             error_detail=str(exc),
         )
         return generic_response
+    logger.info("magic_link_resend_response_ready", request_id=request_id, email=email)
     return generic_response
 
 

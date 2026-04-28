@@ -60,13 +60,23 @@ def _report_funnel_failure(*, route: str, event_name: str, request: Request, exc
 
 @router.post('/unlock-intent', response_model=UnlockIntentResponse)
 async def unlock_intent(payload: UnlockIntentRequest, request: Request):
+    request_id = getattr(request.state, "request_id", None)
+    logger.info(
+        "unlock_intent_received",
+        request_id=request_id,
+        email=payload.email.lower(),
+        plan=payload.plan,
+        ui_surface=payload.ui_surface.value if payload.ui_surface else UnlockUiSurface.HERO_UNLOCK_BUTTON.value,
+    )
     await protect_mutation(request)
     if not payload.turnstile_token:
         raise HTTPException(status_code=400, detail="Turnstile token required")
 
     is_valid_turnstile = await verify_turnstile(payload.turnstile_token, client_ip=get_client_ip(request))
     if not is_valid_turnstile:
+        logger.warning("unlock_intent_turnstile_failed", request_id=request_id, email=payload.email.lower())
         raise HTTPException(status_code=403, detail="Turnstile verification failed")
+    logger.info("unlock_intent_turnstile_verified", request_id=request_id, email=payload.email.lower())
 
     db_engine = getattr(request.app.state, "db_engine", None)
     if not db_engine:
@@ -108,6 +118,7 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
             )
             user_result = await conn.execute(user_stmt)
             user_id = user_result.scalar_one()
+            logger.info("unlock_intent_user_upserted", request_id=request_id, email=email, user_id=user_id)
 
             if payload.plan not in ["sim_1_day"]:
                 raise HTTPException(status_code=400, detail="Unsupported simulated access duration")
@@ -134,6 +145,7 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
             plan_code = plan_result.scalar_one_or_none()
             if not plan_code:
                 raise HTTPException(status_code=400, detail="Invalid or inactive simulated plan")
+            logger.info("unlock_intent_plan_resolved", request_id=request_id, email=email, requested_plan=payload.plan, resolved_plan=plan_code)
 
             simulated_intent_id = str(uuid.uuid4())
             await conn.execute(
@@ -146,6 +158,7 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
                     upgraded_from_anon_id=anon_id,
                 )
             )
+            logger.info("unlock_intent_record_created", request_id=request_id, email=email, intent_id=simulated_intent_id)
             try:
                 await conn.execute(
                     insert(FunnelEvent).values(
@@ -188,6 +201,7 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
         )
 
         async def _create_and_send_magic_link() -> bool:
+            logger.info("unlock_intent_magic_link_create_started", request_id=request_id, email=email, intent_id=simulated_intent_id)
             token = await auth_service.create_magic_link(email=email)
             magic_link = f"{app_origin}/api/auth/magic?token={token}"
             email_service = EmailService()
@@ -203,6 +217,7 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
             _create_and_send_magic_link(),
             timeout=UNLOCK_INTENT_MAGIC_LINK_TIMEOUT_SECONDS,
         )
+        logger.info("unlock_intent_magic_link_create_finished", request_id=request_id, email=email, intent_id=simulated_intent_id, email_sent=email_sent)
     except asyncio.TimeoutError:
         logger.error(
             "unlock_intent_magic_email_timed_out",
@@ -252,6 +267,13 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
             )
 
     logger.info("SIMULATED_UNLOCK_INTENT_CREATED user=%s anon_id=%s plan=%s", email, anon_id, payload.plan)
+    logger.info(
+        "unlock_intent_response_ready",
+        request_id=request_id,
+        email=email,
+        intent_id=simulated_intent_id,
+        status="magic_link_sent" if email_sent else "intent_created",
+    )
     return UnlockIntentResponse(
         ok=True,
         status="magic_link_sent" if email_sent else "intent_created",
