@@ -29,9 +29,18 @@ async def protect_mutation(request: Request):
     # B. Enforce Origin (if configured)
     origin = request.headers.get("origin")
     if settings.APP_ORIGIN and origin:
-        allowed_origins = [o.strip().rstrip("/") for o in settings.APP_ORIGIN.split(",")]
-        if origin.rstrip("/") not in allowed_origins:
-            log_data = {"origin": origin, "allowed": allowed_origins}
+        normalized_origin = origin.strip().rstrip("/")
+        allowed_origins = [o.strip().rstrip("/") for o in settings.APP_ORIGIN.split(",") if o.strip()]
+        preview_suffix = "-arnonis-projects.vercel.app"
+        is_preview_origin = settings.ENV == "preview" and normalized_origin.startswith("https://") and normalized_origin.endswith(preview_suffix)
+        if normalized_origin not in allowed_origins and not is_preview_origin:
+            log_data = {
+                "origin": origin,
+                "normalized_origin": normalized_origin,
+                "allowed": allowed_origins,
+                "env": settings.ENV,
+                "preview_suffix": preview_suffix,
+            }
             logger.warning(f"Origin not allowed: {log_data}")
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="origin not allowed")
 
