@@ -6,9 +6,9 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from contextlib import asynccontextmanager
-import logging
 import os
 import uuid
+import structlog
 
 # Local imports
 from app.core.config import settings
@@ -37,7 +37,7 @@ from app.services.plan_catalog_service import get_active_plan_prices
 
 # Configure logging (Structlog)
 configure_logging()
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
 _POOLER_WARNING_EMITTED = False
 
 def build_async_engine() -> AsyncEngine:
