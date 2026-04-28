@@ -61,7 +61,7 @@ document.addEventListener("DOMContentLoaded", () => {
     demand: { status: "idle", coordKey: null, score: null },
     verification: { required: false, passed: false, token: null, widgetId: null, renderAttempts: 0 },
     modals: { active: null, history: [] },
-    unlock: { email: "", plan: "sim_1_day", resendCooldownUntil: 0, lastTurnstileToken: null, checkoutSubmitting: false },
+    unlock: { email: "", plan: "sim_1_day", resendCooldownUntil: 0, lastTurnstileToken: null, checkoutSubmitting: false, resendSubmitting: false },
     requests: { construction: null, demand: null, parsePreview: null },
     debounce: null
   };
@@ -1639,6 +1639,8 @@ const ModalSystem = (function() {
       _tokenWatcher: null,
       _turnstilePrewarmTriggered: false,
       _lastDisabledPlanEventAt: 0,
+      _checkoutOpSeq: 0,
+      _resendOpSeq: 0,
 
       formatJoinModalErrorMessage(reason, errorId) {
         const base = 'Join Research is temporarily unavailable.';
@@ -1650,6 +1652,12 @@ const ModalSystem = (function() {
         };
         const reasonDetail = reasonMap[reason] || 'An unexpected modal error occurred.';
         return `${base} ${reasonDetail} Please refresh and try again. Error ID: ${errorId}`;
+      },
+
+      isCurrentOperation(opType, opId) {
+        if (opType === 'checkout') return this._checkoutOpSeq === opId;
+        if (opType === 'resend') return this._resendOpSeq === opId;
+        return false;
       },
 
       openJoinResearchModal(surface = 'hero_unlock_button') {
@@ -1912,6 +1920,8 @@ const ModalSystem = (function() {
           console.warn("DEBUG: proceedToPayment() already submitting");
           return;
         }
+        const checkoutOpId = ++this._checkoutOpSeq;
+        let watchdogTimer = null;
         
         // Turnstile token extraction
         const turnstileToken = document.querySelector('[name="cf-turnstile-response"]')?.value;
@@ -1937,6 +1947,21 @@ const ModalSystem = (function() {
           if (btnText) btnText.textContent = labels.redirectingResearchAccess;
         }
         this.showStep(2); // Show processing spinner 
+        watchdogTimer = window.setTimeout(() => {
+          if (!this.isCurrentOperation('checkout', checkoutOpId) || !state.unlock.checkoutSubmitting) return;
+          console.error('join_research_checkout_watchdog_timeout', {
+            checkoutOpId,
+            uiSurface: state.unlock.uiSurface || 'hero_unlock_button'
+          });
+          state.unlock.checkoutSubmitting = false;
+          this.showStep(1);
+          errorEl.textContent = 'Research access request timed out. Please try again.';
+          if (proceedBtn) {
+            utils.setButtonLoading(proceedBtn, false);
+            const btnText = proceedBtn.querySelector('.btn-text');
+            if (btnText) btnText.textContent = labels.joinResearchCta;
+          }
+        }, 30000);
 
         try {
           const plan = 'sim_1_day';
@@ -1964,6 +1989,7 @@ const ModalSystem = (function() {
           }
 
           if (data.ok === true && data.status === 'intent_created') {
+            if (!this.isCurrentOperation('checkout', checkoutOpId)) return;
             // The DB intent was created, but the email timed out/failed.
             state.unlock.checkoutSubmitting = false;
 
@@ -1995,6 +2021,7 @@ const ModalSystem = (function() {
             return;
           }
           if (data.ok === true && data.status === 'magic_link_sent') {
+            if (!this.isCurrentOperation('checkout', checkoutOpId)) return;
             state.unlock.checkoutSubmitting = false;
             if (proceedBtn) {
               utils.setButtonLoading(proceedBtn, false);
@@ -2012,6 +2039,7 @@ const ModalSystem = (function() {
           }
           throw new Error(data?.message || 'Research access is currently unavailable. Please try again later.');
         } catch (err) {
+          if (!this.isCurrentOperation('checkout', checkoutOpId)) return;
           console.error("DEBUG: proceedToPayment() error:", err);
           state.unlock.checkoutSubmitting = false;
           if (proceedBtn) {
@@ -2024,6 +2052,10 @@ const ModalSystem = (function() {
           // Reset Turnstile on failure 
           if (window.turnstile) turnstile.reset();
           this.syncResendButtonState();
+        } finally {
+          if (watchdogTimer) {
+            window.clearTimeout(watchdogTimer);
+          }
         }
       },
 
@@ -2033,6 +2065,11 @@ const ModalSystem = (function() {
         const email = emailInput.value.trim().toLowerCase();
         const turnstileToken = document.querySelector('[name="cf-turnstile-response"]')?.value;
 
+        if (state.unlock.resendSubmitting) {
+          console.warn("DEBUG: resendLink() already submitting");
+          return;
+        }
+        const resendOpId = ++this._resendOpSeq;
         if (!utils.isValidEmail(email)) {
           errorEl.textContent = labels.resendEnterEmail;
           emailInput.focus();
@@ -2045,7 +2082,9 @@ const ModalSystem = (function() {
           return;
         }
 
-        utils.setButtonLoading(document.getElementById('resendLinkBtn'), true);
+        state.unlock.resendSubmitting = true;
+        const resendBtnEl = document.getElementById('resendLinkBtn');
+        if (resendBtnEl) utils.setButtonLoading(resendBtnEl, true);
         errorEl.textContent = '';
 
         try {
@@ -2055,6 +2094,7 @@ const ModalSystem = (function() {
             intent_id: sessionStorage.getItem('last_payment_intent_id') || null
           });
           
+          if (!this.isCurrentOperation('resend', resendOpId)) return;
           this.showStep(3); // Show Success Check-Email screen 
           document.getElementById('resendMessage').textContent = 
             `If ${email} has an active pass, we've sent a new access link.`;
@@ -2062,10 +2102,14 @@ const ModalSystem = (function() {
           if (window.turnstile) turnstile.reset();
           this.startResendCooldown(180);
         } catch (err) {
+          if (!this.isCurrentOperation('resend', resendOpId)) return;
           errorEl.textContent = err.message || 'Could not resend link.';
           if (window.turnstile) turnstile.reset();
         } finally {
-          utils.setButtonLoading(document.getElementById('resendLinkBtn'), false);
+          if (this.isCurrentOperation('resend', resendOpId)) {
+            state.unlock.resendSubmitting = false;
+          }
+          if (resendBtnEl) utils.setButtonLoading(resendBtnEl, false);
         }
       },
 
@@ -2077,7 +2121,10 @@ const ModalSystem = (function() {
 
       reset() {
         this.showStep(1);
+        this._checkoutOpSeq += 1;
+        this._resendOpSeq += 1;
         state.unlock.checkoutSubmitting = false;
+        state.unlock.resendSubmitting = false;
         state.unlock.plan = 'sim_1_day';
         state.unlock.uiSurface = 'hero_unlock_button';
         const planGrid = document.getElementById('planGrid');
