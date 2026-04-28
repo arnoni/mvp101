@@ -490,6 +490,7 @@ async def search(
             checks_today=checks_today,
         )
         demand_cell_id = BucketEngine.get_cell_id(data.lat, data.lon)
+        logger.info("demand_cell_id_computed", lat=data.lat, lon=data.lon, demand_cell_id=demand_cell_id)
         try:
             demand_actor_key = str(user_id or request.cookies.get(settings.SESSION_COOKIE_NAME) or anon_id or "unknown")
             demand_incremented = await demand_service.record_query(
