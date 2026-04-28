@@ -1679,7 +1679,7 @@ const ModalSystem = (function() {
         try {
           openedModal = core.open('supportModalLayer');
           if (openedModal) {
-            this.logFlowEvent('join_research_modal_opened', {
+            this.logFlowEvent('join_research_access_modal_opened', {
               ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
               status: 'opened'
             });
@@ -1712,7 +1712,7 @@ const ModalSystem = (function() {
           fallbackModal.setAttribute('aria-hidden', 'false');
           document.body.style.overflow = 'hidden';
           state.modals.active = 'supportModalLayer';
-          this.logFlowEvent('join_research_modal_opened', {
+          this.logFlowEvent('join_research_access_modal_opened', {
             ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
             status: 'opened'
           });
@@ -1746,7 +1746,9 @@ const ModalSystem = (function() {
             keepalive: true,
             body: JSON.stringify({
               event: eventName,
-              flow_type: 'research_access',
+              flow_type: 'simulated_paid',
+              surface: 'join_research_access_modal',
+              modal_name: 'join_research_access_modal',
               ...payload
             })
           });
@@ -1777,7 +1779,7 @@ const ModalSystem = (function() {
 
         btn?.addEventListener('click', () => {
           const surface = AccessState.get().demandAllowed ? 'hero_unlock_button' : 'demand_level_page';
-          this.logFlowEvent('join_research_button_clicked', {
+          this.logFlowEvent('join_research_access_join_clicked', {
             ui_surface: surface,
             status: 'clicked'
           });
@@ -1786,15 +1788,15 @@ const ModalSystem = (function() {
 
         const supportModal = document.getElementById('supportModalLayer');
         supportModal?.addEventListener('modal:close', () => {
-          console.info('join_research_modal_closed', {
+          console.info('join_research_access_modal_closed', {
             ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
             active_step: document.querySelector('#supportModalLayer .purchase-step:not(.hidden)')?.id || null
           });
-          this.emitAnalyticsEvent('join_research_modal_closed', {
+          this.emitAnalyticsEvent('join_research_access_modal_closed', {
             ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
             active_step: document.querySelector('#supportModalLayer .purchase-step:not(.hidden)')?.id || null
           });
-          this.logFlowEvent('join_research_modal_closed', {
+          this.logFlowEvent('join_research_access_modal_closed', {
             ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
             step: document.querySelector('#supportModalLayer .purchase-step:not(.hidden)')?.id || null,
             status: 'closed'
@@ -1970,7 +1972,7 @@ const ModalSystem = (function() {
         }
         const checkoutOpId = ++this._checkoutOpSeq;
         let watchdogTimer = null;
-        this.logFlowEvent('join_research_email_submit_started', {
+        this.logFlowEvent('join_research_access_email_submit_started', {
           ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
           status: 'started',
           step: 'purchaseStep1'
@@ -2025,7 +2027,7 @@ const ModalSystem = (function() {
             lng: state.coords.lng,
             text: currentLocationText
           }));
-          this.logFlowEvent('join_research_unlock_intent_request_started', {
+          this.logFlowEvent('join_research_access_unlock_intent_started', {
             ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
             status: 'request_started',
             step: 'purchaseStep2'
@@ -2047,7 +2049,7 @@ const ModalSystem = (function() {
           }
 
           if (data.ok === true && data.status === 'intent_created') {
-            this.logFlowEvent('join_research_unlock_intent_created', {
+            this.logFlowEvent('join_research_access_unlock_intent_succeeded', {
               ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
               status: 'intent_created',
               step: 'purchaseStep3'
@@ -2084,7 +2086,7 @@ const ModalSystem = (function() {
             return;
           }
           if (data.ok === true && data.status === 'magic_link_sent') {
-            this.logFlowEvent('join_research_email_send_succeeded', {
+            this.logFlowEvent('join_research_access_magic_link_succeeded', {
               ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
               status: 'magic_link_sent',
               step: 'purchaseStep3'
@@ -2107,7 +2109,7 @@ const ModalSystem = (function() {
           }
           throw new Error(data?.message || 'Research access is currently unavailable. Please try again later.');
         } catch (err) {
-          this.logFlowEvent('join_research_flow_failed', {
+          this.logFlowEvent('join_research_access_flow_failed', {
             ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
             status: 'failed',
             error_code: err?.code || 'JOIN_RESEARCH_FLOW_FAILED',
@@ -2144,7 +2146,7 @@ const ModalSystem = (function() {
           return;
         }
         const resendOpId = ++this._resendOpSeq;
-        this.logFlowEvent('join_research_email_send_started', {
+        this.logFlowEvent('join_research_access_magic_link_requested', {
           ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
           status: 'resend_started',
           step: 'purchaseStep3'
@@ -2178,7 +2180,7 @@ const ModalSystem = (function() {
           document.getElementById('resendMessage').textContent = 
             `If ${email} has an active pass, we've sent a new access link.`;
           state.unlock.lastTurnstileToken = turnstileToken;
-          this.logFlowEvent('join_research_email_send_succeeded', {
+          this.logFlowEvent('join_research_access_magic_link_succeeded', {
             ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
             status: 'resend_succeeded',
             step: 'purchaseStep3'
@@ -2187,7 +2189,7 @@ const ModalSystem = (function() {
           this.startResendCooldown(180);
         } catch (err) {
           if (!this.isCurrentOperation('resend', resendOpId)) return;
-          this.logFlowEvent('join_research_email_send_failed', {
+          this.logFlowEvent('join_research_access_flow_failed', {
             ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
             status: 'resend_failed',
             error_code: err?.code || 'JOIN_RESEARCH_RESEND_FAILED',

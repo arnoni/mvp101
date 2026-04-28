@@ -69,13 +69,15 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
         ui_surface=payload.ui_surface.value if payload.ui_surface else UnlockUiSurface.HERO_UNLOCK_BUTTON.value,
     )
     logger.info(
-        "join_research_unlock_intent_request_started",
+        "join_research_access_unlock_intent_started",
         request_id=request_id,
         anon_id=getattr(request.state, "anon_id", None),
         session_id=request.cookies.get(settings.SESSION_COOKIE_NAME),
         endpoint="/api/billing/unlock-intent",
         status="started",
         flow_type="simulated_paid",
+                surface="join_research_access_modal",
+                modal_name="join_research_access_modal",
     )
     await protect_mutation(request)
     if not payload.turnstile_token:
@@ -169,13 +171,15 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
             )
             logger.info("unlock_intent_record_created", request_id=request_id, email=email, intent_id=simulated_intent_id)
             logger.info(
-                "join_research_unlock_intent_created",
+                "join_research_access_unlock_intent_succeeded",
                 request_id=request_id,
                 anon_id=anon_id,
                 session_id=session_id,
                 endpoint="/api/billing/unlock-intent",
                 status="created",
                 flow_type="simulated_paid",
+                surface="join_research_access_modal",
+                modal_name="join_research_access_modal",
             )
             try:
                 await conn.execute(
@@ -207,13 +211,15 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
         raise
     except Exception as exc:
         logger.error(
-            "join_research_flow_failed",
+            "join_research_access_flow_failed",
             request_id=request_id,
             anon_id=anon_id,
             session_id=session_id,
             endpoint="/api/billing/unlock-intent",
             status="failed",
             flow_type="simulated_paid",
+                surface="join_research_access_modal",
+                modal_name="join_research_access_modal",
             error_code=exc.__class__.__name__,
             error_message=str(exc),
         )
@@ -233,24 +239,28 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
             logger.info("unlock_intent_magic_link_create_started", request_id=request_id, email=email, intent_id=simulated_intent_id)
             token = await auth_service.create_magic_link(email=email)
             logger.info(
-                "join_research_magic_link_token_created",
+                "join_research_access_magic_link_requested",
                 request_id=request_id,
                 anon_id=anon_id,
                 session_id=session_id,
                 endpoint="/api/billing/unlock-intent",
                 status="token_created",
                 flow_type="simulated_paid",
+                surface="join_research_access_modal",
+                modal_name="join_research_access_modal",
             )
             magic_link = f"{app_origin}/api/auth/magic?token={token}"
             email_service = EmailService()
             logger.info(
-                "join_research_email_send_started",
+                "join_research_access_magic_link_requested",
                 request_id=request_id,
                 anon_id=anon_id,
                 session_id=session_id,
                 endpoint="/api/billing/unlock-intent",
                 status="email_send_started",
                 flow_type="simulated_paid",
+                surface="join_research_access_modal",
+                modal_name="join_research_access_modal",
             )
             return bool(
                 await email_service.send_magic_link(
@@ -265,24 +275,28 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
             timeout=UNLOCK_INTENT_MAGIC_LINK_TIMEOUT_SECONDS,
         )
         logger.info(
-            "join_research_email_send_succeeded",
+            "join_research_access_magic_link_succeeded",
             request_id=request_id,
             anon_id=anon_id,
             session_id=session_id,
             endpoint="/api/billing/unlock-intent",
             status="email_sent",
             flow_type="simulated_paid",
+                surface="join_research_access_modal",
+                modal_name="join_research_access_modal",
         )
         logger.info("unlock_intent_magic_link_create_finished", request_id=request_id, email=email, intent_id=simulated_intent_id, email_sent=email_sent)
     except asyncio.TimeoutError:
         logger.error(
-            "join_research_email_send_failed",
+            "join_research_access_flow_failed",
             request_id=request_id,
             anon_id=anon_id,
             session_id=session_id,
             endpoint="/api/billing/unlock-intent",
             status="timeout",
             flow_type="simulated_paid",
+                surface="join_research_access_modal",
+                modal_name="join_research_access_modal",
             error_code="EMAIL_SEND_TIMEOUT",
             error_message="Magic link email timed out.",
         )
@@ -294,13 +308,15 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
         )
     except Exception as exc:
         logger.error(
-            "join_research_flow_failed",
+            "join_research_access_flow_failed",
             request_id=request_id,
             anon_id=anon_id,
             session_id=session_id,
             endpoint="/api/billing/unlock-intent",
             status="failed",
             flow_type="simulated_paid",
+                surface="join_research_access_modal",
+                modal_name="join_research_access_modal",
             error_code=exc.__class__.__name__,
             error_message=str(exc),
         )

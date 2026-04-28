@@ -8,13 +8,11 @@ def test_unlock_intent_structlog_markers_present():
     assert "unlock_intent_record_created" in billing_py
     assert "unlock_intent_magic_link_create_started" in billing_py
     assert "unlock_intent_response_ready" in billing_py
-    assert "join_research_unlock_intent_request_started" in billing_py
-    assert "join_research_unlock_intent_created" in billing_py
-    assert "join_research_magic_link_token_created" in billing_py
-    assert "join_research_email_send_started" in billing_py
-    assert "join_research_email_send_succeeded" in billing_py
-    assert "join_research_email_send_failed" in billing_py
-    assert "join_research_flow_failed" in billing_py
+    assert "join_research_access_unlock_intent_started" in billing_py
+    assert "join_research_access_unlock_intent_succeeded" in billing_py
+    assert "join_research_access_magic_link_requested" in billing_py
+    assert "join_research_access_magic_link_succeeded" in billing_py
+    assert "join_research_access_flow_failed" in billing_py
 
 
 def test_resend_magic_link_structlog_markers_present():
@@ -30,5 +28,6 @@ def test_client_flow_telemetry_endpoint_logs_structured_events():
     routes_py = Path("app/api/routes.py").read_text(encoding="utf-8")
     assert 'class ClientFlowEventRequest(BaseModel):' in routes_py
     assert '@router.post("/telemetry/client-event")' in routes_py
-    assert '"client_flow_event"' in routes_py
-    assert "client_event_name=payload.event" in routes_py
+    assert "logger.info(" in routes_py
+    assert "payload.event," in routes_py
+    assert "surface=payload.surface" in routes_py

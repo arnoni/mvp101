@@ -213,6 +213,9 @@ class ParseLocationResponse(BaseModel):
 class ClientFlowEventRequest(BaseModel):
     event: str = Field(..., min_length=3, max_length=128)
     flow_type: str = Field(default="research_access", min_length=2, max_length=64)
+    surface: str | None = Field(default=None, max_length=64)
+    modal_name: str | None = Field(default=None, max_length=64)
+    action: str | None = Field(default=None, max_length=64)
     status: str | None = Field(default=None, max_length=64)
     ui_surface: str | None = Field(default=None, max_length=64)
     step: str | None = Field(default=None, max_length=64)
@@ -690,13 +693,15 @@ async def set_language(request: Request, response: Response):
 async def telemetry_client_event(request: Request, payload: ClientFlowEventRequest):
     await protect_mutation(request)
     logger.info(
-        "client_flow_event",
+        payload.event,
         request_id=getattr(request.state, "request_id", None),
         anon_id=getattr(request.state, "anon_id", None),
         session_id=request.cookies.get(settings.SESSION_COOKIE_NAME),
         endpoint="/api/telemetry/client-event",
-        client_event_name=payload.event,
         flow_type=payload.flow_type,
+        surface=payload.surface,
+        modal_name=payload.modal_name,
+        action=payload.action,
         status=payload.status,
         ui_surface=payload.ui_surface,
         step=payload.step,

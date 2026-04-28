@@ -38,14 +38,17 @@ from app.services.plan_catalog_service import get_active_plan_prices
 # Configure logging (Structlog)
 configure_logging()
 logger = logging.getLogger(__name__)
+_POOLER_WARNING_EMITTED = False
 
 def build_async_engine() -> AsyncEngine:
+    global _POOLER_WARNING_EMITTED
     url = settings.DATABASE_URL
     if not url:
         raise RuntimeError("DATABASE_URL is not set")
 
-    if "neon.tech" in url and "-pooler.neon.tech" not in url:
+    if "neon.tech" in url and "-pooler.neon.tech" not in url and not _POOLER_WARNING_EMITTED:
         logger.warning("database_url_not_using_pooler")
+        _POOLER_WARNING_EMITTED = True
     return create_asyncpg_engine(
         url,
         poolclass=NullPool,
