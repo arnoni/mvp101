@@ -11,6 +11,7 @@ def test_bottom_join_and_user_access_use_shared_join_modal_open():
     assert "isCurrentOperation(opType, opId)" in app_js
     assert "join_research_checkout_watchdog_timeout" in app_js
     assert "state.unlock.resendSubmitting = true;" in app_js
+    assert "join_research_modal_closed" in app_js
     assert "Join Research is temporarily unavailable." in app_js
     assert "utils.notify('Could not open Join Research right now. Please try again.', 'error');" not in app_js
 

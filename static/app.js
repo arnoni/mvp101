@@ -1751,6 +1751,14 @@ const ModalSystem = (function() {
 
         const supportModal = document.getElementById('supportModalLayer');
         supportModal?.addEventListener('modal:close', () => {
+          console.info('join_research_modal_closed', {
+            ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
+            active_step: document.querySelector('#supportModalLayer .purchase-step:not(.hidden)')?.id || null
+          });
+          this.emitAnalyticsEvent('join_research_modal_closed', {
+            ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
+            active_step: document.querySelector('#supportModalLayer .purchase-step:not(.hidden)')?.id || null
+          });
           this.reset();
         });
 
