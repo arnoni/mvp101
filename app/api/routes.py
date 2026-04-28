@@ -489,17 +489,18 @@ async def search(
             quota_remaining=gate_result.remaining_after,
             checks_today=checks_today,
         )
+        demand_cell_id = BucketEngine.get_cell_id(data.lat, data.lon)
         try:
-            await demand_service.record_query(cell_id)
+            await demand_service.record_query(demand_cell_id)
         except Exception:
-            logger.warning("demand_record_query_failed", cell_id=cell_id, target=data.target.value, exc_info=True)
+            logger.warning("demand_record_query_failed", cell_id=demand_cell_id, target=data.target.value, exc_info=True)
         related_query_id = await query_history_repo.log_event(
             QueryHistoryEvent(
                 parsed=parsed_input,
                 anon_id=anon_id,
                 session_id=request.cookies.get(settings.SESSION_COOKIE_NAME),
                 user_id=user_id,
-                demand_cell_id=BucketEngine.get_cell_id(data.lat, data.lon),
+                demand_cell_id=demand_cell_id,
                 user_agent=request.headers.get("user-agent"),
                 request_country=request.headers.get("cf-ipcountry"),
                 request_city=request.headers.get("x-vercel-ip-city"),
