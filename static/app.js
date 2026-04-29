@@ -2075,16 +2075,10 @@ const ModalSystem = (function() {
             return; // Stop execution so we DO NOT redirect
           }
 
-          console.log("DEBUG: Intent created successfully:", data);
           sessionStorage.setItem('pending_checkout_email', email);
           sessionStorage.setItem('pending_checkout_started_at', String(Date.now()));
           state.unlock.lastTurnstileToken = turnstileToken;
 
-          if (data.checkout_url) {
-            console.log("DEBUG: Redirecting to checkout_url:", data.checkout_url);
-            window.location.href = data.checkout_url;
-            return;
-          }
           if (data.ok === true && data.status === 'magic_link_sent') {
             this.logFlowEvent('join_research_access_magic_link_succeeded', {
               ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
@@ -2105,6 +2099,10 @@ const ModalSystem = (function() {
             }
             this.syncResendButtonState();
             if (window.turnstile) turnstile.reset();
+            return;
+          }
+          if (data.checkout_url) {
+            window.location.href = data.checkout_url;
             return;
           }
           throw new Error(data?.message || 'Research access is currently unavailable. Please try again later.');

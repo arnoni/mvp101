@@ -334,7 +334,12 @@ async def _resend_magic_link_impl(payload: MagicLinkRequest, request: Request, *
             logger.info("magic_link_resend_simulated_send_finished", request_id=request_id, email=email, intent_id=str(simulated_intent["intent_id"]), sent=True)
             return generic_response
         except Exception as exc:
-            logger.error("magic_link_simulated_flow_failed", email=email, error=str(exc))
+            logger.exception("magic_link_simulated_flow_failed", email=email, error=str(exc))
+            try:
+                import sentry_sdk
+                sentry_sdk.capture_exception(exc)
+            except Exception:
+                pass
             return generic_response
 
     if not active_pass:
