@@ -209,6 +209,19 @@ class ParseLocationResponse(BaseModel):
     error_code: str | None = None
     message: str | None = None
 
+
+class ClientFlowEventRequest(BaseModel):
+    event: str = Field(..., min_length=3, max_length=128)
+    flow_type: str = Field(default="research_access", min_length=2, max_length=64)
+    surface: str | None = Field(default=None, max_length=64)
+    modal_name: str | None = Field(default=None, max_length=64)
+    action: str | None = Field(default=None, max_length=64)
+    status: str | None = Field(default=None, max_length=64)
+    ui_surface: str | None = Field(default=None, max_length=64)
+    step: str | None = Field(default=None, max_length=64)
+    error_code: str | None = Field(default=None, max_length=128)
+    error_message: str | None = Field(default=None, max_length=400)
+
 # --- Routes ---
 
 @router.get("/test-email")
@@ -418,13 +431,21 @@ async def search(
                 resolution_method="search_lat_lon",
             )
         if not is_inside_app_bbox(data.lat, data.lon):
-            raise HTTPException(
-                status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
-                detail=ErrorResponse(
-                    error="OUT_OF_BOUNDS",
-                    detail="Location is outside supported bounding box.",
-                ).model_dump(),
-            )
+            if settings.ENV == "preview":
+                logger.info(
+                    "search_out_of_bounds_allowed_in_preview",
+                    lat=data.lat,
+                    lon=data.lon,
+                    target=target_mode,
+                )
+            else:
+                raise HTTPException(
+                    status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail=ErrorResponse(
+                        error="OUT_OF_BOUNDS",
+                        detail="Location is outside supported bounding box.",
+                    ).model_dump(),
+                )
         area_code = AreaBucketer.get_area_code(data.lat, data.lon)
         check_types = ["construction", "demand"] if data.target == SearchTarget.BOTH else [data.target.value]
 
@@ -481,17 +502,31 @@ async def search(
             quota_remaining=gate_result.remaining_after,
             checks_today=checks_today,
         )
+        demand_cell_id = BucketEngine.get_cell_id(data.lat, data.lon)
+        logger.info("demand_cell_id_computed", lat=data.lat, lon=data.lon, demand_cell_id=demand_cell_id)
         try:
-            await demand_service.record_query(cell_id)
+            demand_actor_key = str(user_id or request.cookies.get(settings.SESSION_COOKIE_NAME) or anon_id or "unknown")
+            demand_incremented = await demand_service.record_query(
+                demand_cell_id,
+                actor_key=demand_actor_key,
+                dedupe_window_seconds=3600,
+            )
+            if not demand_incremented:
+                logger.info(
+                    "demand_record_query_deduped",
+                    cell_id=demand_cell_id,
+                    actor_key=demand_actor_key,
+                    dedupe_window_seconds=3600,
+                )
         except Exception:
-            logger.warning("demand_record_query_failed", cell_id=cell_id, target=data.target.value, exc_info=True)
+            logger.warning("demand_record_query_failed", cell_id=demand_cell_id, target=data.target.value, exc_info=True)
         related_query_id = await query_history_repo.log_event(
             QueryHistoryEvent(
                 parsed=parsed_input,
                 anon_id=anon_id,
                 session_id=request.cookies.get(settings.SESSION_COOKIE_NAME),
                 user_id=user_id,
-                demand_cell_id=BucketEngine.get_cell_id(data.lat, data.lon),
+                demand_cell_id=demand_cell_id,
                 user_agent=request.headers.get("user-agent"),
                 request_country=request.headers.get("cf-ipcountry"),
                 request_city=request.headers.get("x-vercel-ip-city"),
@@ -652,6 +687,28 @@ async def set_language(request: Request, response: Response):
     except Exception as e:
         logger.error("set_language_failed", error=str(e))
         raise HTTPException(status_code=400, detail="Invalid request")
+
+
+@router.post("/telemetry/client-event")
+async def telemetry_client_event(request: Request, payload: ClientFlowEventRequest):
+    await protect_mutation(request)
+    logger.info(
+        payload.event,
+        request_id=getattr(request.state, "request_id", None),
+        anon_id=getattr(request.state, "anon_id", None),
+        session_id=request.cookies.get(settings.SESSION_COOKIE_NAME),
+        endpoint="/api/telemetry/client-event",
+        flow_type=payload.flow_type,
+        surface=payload.surface,
+        modal_name=payload.modal_name,
+        action=payload.action,
+        status=payload.status,
+        ui_surface=payload.ui_surface,
+        step=payload.step,
+        error_code=payload.error_code,
+        error_message=payload.error_message,
+    )
+    return {"ok": True}
 
 @router.post("/ugc/report-submit")
 async def ugc_report_submit(

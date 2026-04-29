@@ -61,7 +61,7 @@ document.addEventListener("DOMContentLoaded", () => {
     demand: { status: "idle", coordKey: null, score: null },
     verification: { required: false, passed: false, token: null, widgetId: null, renderAttempts: 0 },
     modals: { active: null, history: [] },
-    unlock: { email: "", plan: "sim_1_day", resendCooldownUntil: 0, lastTurnstileToken: null, checkoutSubmitting: false },
+    unlock: { email: "", plan: "sim_1_day", resendCooldownUntil: 0, lastTurnstileToken: null, checkoutSubmitting: false, resendSubmitting: false },
     requests: { construction: null, demand: null, parsePreview: null },
     debounce: null
   };
@@ -1639,16 +1639,94 @@ const ModalSystem = (function() {
       _tokenWatcher: null,
       _turnstilePrewarmTriggered: false,
       _lastDisabledPlanEventAt: 0,
+      _checkoutOpSeq: 0,
+      _resendOpSeq: 0,
+
+      formatJoinModalErrorMessage(reason, errorId) {
+        const base = 'Join Research is temporarily unavailable.';
+        const reasonMap = {
+          reset_failed: 'We could not reset the modal state.',
+          native_open_failed: 'We could not open the native dialog.',
+          fallback_open_failed: 'We could not open the fallback modal.',
+          missing_modal: 'The Join Research modal is missing from this page.'
+        };
+        const reasonDetail = reasonMap[reason] || 'An unexpected modal error occurred.';
+        return `${base} ${reasonDetail} Please refresh and try again. Error ID: ${errorId}`;
+      },
+
+      isCurrentOperation(opType, opId) {
+        if (opType === 'checkout') return this._checkoutOpSeq === opId;
+        if (opType === 'resend') return this._resendOpSeq === opId;
+        return false;
+      },
 
       openJoinResearchModal(surface = 'hero_unlock_button') {
+        state.unlock.uiSurface = surface;
+
         try {
-          state.unlock.uiSurface = surface;
           this.reset();
-          core.open('supportModalLayer');
+        } catch (err) {
+          const errorId = utils.newErrorId('JOIN_MODAL_RESET');
+          console.error('join_research_modal_reset_failed', {
+            errorId,
+            surface,
+            message: err?.message || null,
+            stack: err?.stack || null
+          });
+        }
+
+        let openedModal = null;
+        try {
+          openedModal = core.open('supportModalLayer');
+          if (openedModal) {
+            this.logFlowEvent('join_research_access_modal_opened', {
+              ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
+              status: 'opened'
+            });
+            return true;
+          }
+        } catch (err) {
+          const errorId = utils.newErrorId('JOIN_MODAL_NATIVE_OPEN');
+          console.error('join_research_modal_native_open_threw', {
+            errorId,
+            surface,
+            message: err?.message || null,
+            stack: err?.stack || null
+          });
+        }
+
+        const fallbackModal = document.getElementById('supportModalLayer');
+        if (!fallbackModal) {
+          const errorId = utils.newErrorId('JOIN_MODAL_MISSING');
+          const detailedMessage = this.formatJoinModalErrorMessage('missing_modal', errorId);
+          console.error('join_research_modal_open_failed_missing_modal', {
+            errorId,
+            surface
+          });
+          utils.notify(detailedMessage, 'error');
+          return false;
+        }
+
+        try {
+          fallbackModal.classList.add('open');
+          fallbackModal.setAttribute('aria-hidden', 'false');
+          document.body.style.overflow = 'hidden';
+          state.modals.active = 'supportModalLayer';
+          this.logFlowEvent('join_research_access_modal_opened', {
+            ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
+            status: 'opened'
+          });
           return true;
         } catch (err) {
-          console.error('join_research_modal_open_failed', err);
-          utils.notify('Could not open Join Research right now. Please try again.', 'error');
+          const errorId = utils.newErrorId('JOIN_MODAL_FALLBACK_OPEN');
+          const detailedMessage = this.formatJoinModalErrorMessage('fallback_open_failed', errorId);
+          console.error('join_research_modal_fallback_open_failed', {
+            errorId,
+            surface,
+            message: err?.message || null,
+            stack: err?.stack || null
+          });
+          utils.notify(detailedMessage, 'error');
           return false;
         }
       },
@@ -1657,6 +1735,29 @@ const ModalSystem = (function() {
         window.dispatchEvent(new CustomEvent('analytics:event', {
           detail: { event_name: eventName, ...payload }
         }));
+      },
+
+      async logFlowEvent(eventName, payload = {}) {
+        try {
+          await fetch('/api/telemetry/client-event', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            keepalive: true,
+            body: JSON.stringify({
+              event: eventName,
+              flow_type: 'simulated_paid',
+              surface: 'join_research_access_modal',
+              modal_name: 'join_research_access_modal',
+              ...payload
+            })
+          });
+        } catch (err) {
+          console.warn('join_research_flow_log_failed', {
+            event: eventName,
+            message: err?.message || null
+          });
+        }
       },
 
       clearPendingCheckoutContext() {
@@ -1678,11 +1779,28 @@ const ModalSystem = (function() {
 
         btn?.addEventListener('click', () => {
           const surface = AccessState.get().demandAllowed ? 'hero_unlock_button' : 'demand_level_page';
+          this.logFlowEvent('join_research_access_join_clicked', {
+            ui_surface: surface,
+            status: 'clicked'
+          });
           this.openJoinResearchModal(surface);
         });
 
         const supportModal = document.getElementById('supportModalLayer');
         supportModal?.addEventListener('modal:close', () => {
+          console.info('join_research_access_modal_closed', {
+            ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
+            active_step: document.querySelector('#supportModalLayer .purchase-step:not(.hidden)')?.id || null
+          });
+          this.emitAnalyticsEvent('join_research_access_modal_closed', {
+            ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
+            active_step: document.querySelector('#supportModalLayer .purchase-step:not(.hidden)')?.id || null
+          });
+          this.logFlowEvent('join_research_access_modal_closed', {
+            ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
+            step: document.querySelector('#supportModalLayer .purchase-step:not(.hidden)')?.id || null,
+            status: 'closed'
+          });
           this.reset();
         });
 
@@ -1852,6 +1970,13 @@ const ModalSystem = (function() {
           console.warn("DEBUG: proceedToPayment() already submitting");
           return;
         }
+        const checkoutOpId = ++this._checkoutOpSeq;
+        let watchdogTimer = null;
+        this.logFlowEvent('join_research_access_email_submit_started', {
+          ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
+          status: 'started',
+          step: 'purchaseStep1'
+        });
         
         // Turnstile token extraction
         const turnstileToken = document.querySelector('[name="cf-turnstile-response"]')?.value;
@@ -1877,6 +2002,21 @@ const ModalSystem = (function() {
           if (btnText) btnText.textContent = labels.redirectingResearchAccess;
         }
         this.showStep(2); // Show processing spinner 
+        watchdogTimer = window.setTimeout(() => {
+          if (!this.isCurrentOperation('checkout', checkoutOpId) || !state.unlock.checkoutSubmitting) return;
+          console.error('join_research_checkout_watchdog_timeout', {
+            checkoutOpId,
+            uiSurface: state.unlock.uiSurface || 'hero_unlock_button'
+          });
+          state.unlock.checkoutSubmitting = false;
+          this.showStep(1);
+          errorEl.textContent = 'Research access request timed out. Please try again.';
+          if (proceedBtn) {
+            utils.setButtonLoading(proceedBtn, false);
+            const btnText = proceedBtn.querySelector('.btn-text');
+            if (btnText) btnText.textContent = labels.joinResearchCta;
+          }
+        }, 30000);
 
         try {
           const plan = 'sim_1_day';
@@ -1887,6 +2027,11 @@ const ModalSystem = (function() {
             lng: state.coords.lng,
             text: currentLocationText
           }));
+          this.logFlowEvent('join_research_access_unlock_intent_started', {
+            ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
+            status: 'request_started',
+            step: 'purchaseStep2'
+          });
           const data = await utils.apiPost('/api/billing/unlock-intent', {
             email,
             plan,
@@ -1904,6 +2049,12 @@ const ModalSystem = (function() {
           }
 
           if (data.ok === true && data.status === 'intent_created') {
+            this.logFlowEvent('join_research_access_unlock_intent_succeeded', {
+              ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
+              status: 'intent_created',
+              step: 'purchaseStep3'
+            });
+            if (!this.isCurrentOperation('checkout', checkoutOpId)) return;
             // The DB intent was created, but the email timed out/failed.
             state.unlock.checkoutSubmitting = false;
 
@@ -1935,6 +2086,12 @@ const ModalSystem = (function() {
             return;
           }
           if (data.ok === true && data.status === 'magic_link_sent') {
+            this.logFlowEvent('join_research_access_magic_link_succeeded', {
+              ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
+              status: 'magic_link_sent',
+              step: 'purchaseStep3'
+            });
+            if (!this.isCurrentOperation('checkout', checkoutOpId)) return;
             state.unlock.checkoutSubmitting = false;
             if (proceedBtn) {
               utils.setButtonLoading(proceedBtn, false);
@@ -1952,6 +2109,13 @@ const ModalSystem = (function() {
           }
           throw new Error(data?.message || 'Research access is currently unavailable. Please try again later.');
         } catch (err) {
+          this.logFlowEvent('join_research_access_flow_failed', {
+            ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
+            status: 'failed',
+            error_code: err?.code || 'JOIN_RESEARCH_FLOW_FAILED',
+            error_message: err?.message || 'Unknown error',
+          });
+          if (!this.isCurrentOperation('checkout', checkoutOpId)) return;
           console.error("DEBUG: proceedToPayment() error:", err);
           state.unlock.checkoutSubmitting = false;
           if (proceedBtn) {
@@ -1964,6 +2128,10 @@ const ModalSystem = (function() {
           // Reset Turnstile on failure 
           if (window.turnstile) turnstile.reset();
           this.syncResendButtonState();
+        } finally {
+          if (watchdogTimer) {
+            window.clearTimeout(watchdogTimer);
+          }
         }
       },
 
@@ -1973,6 +2141,16 @@ const ModalSystem = (function() {
         const email = emailInput.value.trim().toLowerCase();
         const turnstileToken = document.querySelector('[name="cf-turnstile-response"]')?.value;
 
+        if (state.unlock.resendSubmitting) {
+          console.warn("DEBUG: resendLink() already submitting");
+          return;
+        }
+        const resendOpId = ++this._resendOpSeq;
+        this.logFlowEvent('join_research_access_magic_link_requested', {
+          ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
+          status: 'resend_started',
+          step: 'purchaseStep3'
+        });
         if (!utils.isValidEmail(email)) {
           errorEl.textContent = labels.resendEnterEmail;
           emailInput.focus();
@@ -1985,7 +2163,9 @@ const ModalSystem = (function() {
           return;
         }
 
-        utils.setButtonLoading(document.getElementById('resendLinkBtn'), true);
+        state.unlock.resendSubmitting = true;
+        const resendBtnEl = document.getElementById('resendLinkBtn');
+        if (resendBtnEl) utils.setButtonLoading(resendBtnEl, true);
         errorEl.textContent = '';
 
         try {
@@ -1995,17 +2175,34 @@ const ModalSystem = (function() {
             intent_id: sessionStorage.getItem('last_payment_intent_id') || null
           });
           
+          if (!this.isCurrentOperation('resend', resendOpId)) return;
           this.showStep(3); // Show Success Check-Email screen 
           document.getElementById('resendMessage').textContent = 
             `If ${email} has an active pass, we've sent a new access link.`;
           state.unlock.lastTurnstileToken = turnstileToken;
+          this.logFlowEvent('join_research_access_magic_link_succeeded', {
+            ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
+            status: 'resend_succeeded',
+            step: 'purchaseStep3'
+          });
           if (window.turnstile) turnstile.reset();
           this.startResendCooldown(180);
         } catch (err) {
+          if (!this.isCurrentOperation('resend', resendOpId)) return;
+          this.logFlowEvent('join_research_access_flow_failed', {
+            ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
+            status: 'resend_failed',
+            error_code: err?.code || 'JOIN_RESEARCH_RESEND_FAILED',
+            error_message: err?.message || 'Could not resend link.',
+            step: 'purchaseStep3'
+          });
           errorEl.textContent = err.message || 'Could not resend link.';
           if (window.turnstile) turnstile.reset();
         } finally {
-          utils.setButtonLoading(document.getElementById('resendLinkBtn'), false);
+          if (this.isCurrentOperation('resend', resendOpId)) {
+            state.unlock.resendSubmitting = false;
+          }
+          if (resendBtnEl) utils.setButtonLoading(resendBtnEl, false);
         }
       },
 
@@ -2017,7 +2214,10 @@ const ModalSystem = (function() {
 
       reset() {
         this.showStep(1);
+        this._checkoutOpSeq += 1;
+        this._resendOpSeq += 1;
         state.unlock.checkoutSubmitting = false;
+        state.unlock.resendSubmitting = false;
         state.unlock.plan = 'sim_1_day';
         state.unlock.uiSurface = 'hero_unlock_button';
         const planGrid = document.getElementById('planGrid');
