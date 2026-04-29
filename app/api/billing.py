@@ -210,7 +210,7 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
     except HTTPException:
         raise
     except Exception as exc:
-        logger.error(
+        logger.exception(
             "join_research_access_flow_failed",
             request_id=request_id,
             anon_id=anon_id,
@@ -223,7 +223,12 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
             error_code=exc.__class__.__name__,
             error_message=str(exc),
         )
-        logger.error("unlock_intent_failed", email=email, anon_id=anon_id, plan=payload.plan, error_class=exc.__class__.__name__, error_detail=str(exc))
+        logger.exception("unlock_intent_failed", email=email, anon_id=anon_id, plan=payload.plan, error_class=exc.__class__.__name__, error_detail=str(exc))
+        try:
+            import sentry_sdk
+            sentry_sdk.capture_exception(exc)
+        except Exception:
+            pass
         raise
 
     email_sent = False
@@ -307,7 +312,7 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
             timeout_seconds=UNLOCK_INTENT_MAGIC_LINK_TIMEOUT_SECONDS,
         )
     except Exception as exc:
-        logger.error(
+        logger.exception(
             "join_research_access_flow_failed",
             request_id=request_id,
             anon_id=anon_id,
@@ -320,7 +325,12 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
             error_code=exc.__class__.__name__,
             error_message=str(exc),
         )
-        logger.error("unlock_intent_magic_email_failed", email=email, anon_id=anon_id, error_class=exc.__class__.__name__, error_detail=str(exc))
+        logger.exception("unlock_intent_magic_email_failed", email=email, anon_id=anon_id, error_class=exc.__class__.__name__, error_detail=str(exc))
+        try:
+            import sentry_sdk
+            sentry_sdk.capture_exception(exc)
+        except Exception:
+            pass
 
     if email_sent:
         try:
@@ -373,5 +383,5 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
         status="magic_link_sent" if email_sent else "intent_created",
         intent_id=simulated_intent_id,
         message="If this email is eligible, we sent a new access link." if email_sent else "Intent created.",
-        checkout_url=f"{app_origin}/?simulated_unlock=initiated",
+        checkout_url=None,
     )

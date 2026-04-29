@@ -1961,7 +1961,6 @@ const ModalSystem = (function() {
       },
 
       async proceedToPayment() {
-        console.log("DEBUG: proceedToPayment() started");
         const emailInput = document.getElementById('purchaseEmail');
         const errorEl = document.getElementById('purchaseEmailError');
         const proceedBtn = document.getElementById('proceedToPaymentBtn');
@@ -1992,14 +1991,13 @@ const ModalSystem = (function() {
           return;
         }
 
-        console.log("DEBUG: Attempting to create unlock intent for:", email);
         errorEl.textContent = '';
         state.unlock.email = email;
         state.unlock.checkoutSubmitting = true;
         if (proceedBtn) {
           utils.setButtonLoading(proceedBtn, true);
           const btnText = proceedBtn.querySelector('.btn-text');
-          if (btnText) btnText.textContent = labels.redirectingResearchAccess;
+          if (btnText) btnText.textContent = 'Redirecting to research access...';
         }
         this.showStep(2); // Show processing spinner 
         watchdogTimer = window.setTimeout(() => {
@@ -2014,7 +2012,7 @@ const ModalSystem = (function() {
           if (proceedBtn) {
             utils.setButtonLoading(proceedBtn, false);
             const btnText = proceedBtn.querySelector('.btn-text');
-            if (btnText) btnText.textContent = labels.joinResearchCta;
+            if (btnText) btnText.textContent = 'Join Research ➔';
           }
         }, 30000);
 
@@ -2075,16 +2073,10 @@ const ModalSystem = (function() {
             return; // Stop execution so we DO NOT redirect
           }
 
-          console.log("DEBUG: Intent created successfully:", data);
           sessionStorage.setItem('pending_checkout_email', email);
           sessionStorage.setItem('pending_checkout_started_at', String(Date.now()));
           state.unlock.lastTurnstileToken = turnstileToken;
 
-          if (data.checkout_url) {
-            console.log("DEBUG: Redirecting to checkout_url:", data.checkout_url);
-            window.location.href = data.checkout_url;
-            return;
-          }
           if (data.ok === true && data.status === 'magic_link_sent') {
             this.logFlowEvent('join_research_access_magic_link_succeeded', {
               ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
@@ -2096,7 +2088,7 @@ const ModalSystem = (function() {
             if (proceedBtn) {
               utils.setButtonLoading(proceedBtn, false);
               const btnText = proceedBtn.querySelector('.btn-text');
-              if (btnText) btnText.textContent = labels.joinResearchCta;
+              if (btnText) btnText.textContent = 'Join Research ➔';
             }
             this.showStep(3);
             const resendMsg = document.getElementById('resendMessage');
@@ -2105,6 +2097,10 @@ const ModalSystem = (function() {
             }
             this.syncResendButtonState();
             if (window.turnstile) turnstile.reset();
+            return;
+          }
+          if (data.checkout_url) {
+            window.location.href = data.checkout_url;
             return;
           }
           throw new Error(data?.message || 'Research access is currently unavailable. Please try again later.');
@@ -2121,7 +2117,7 @@ const ModalSystem = (function() {
           if (proceedBtn) {
             utils.setButtonLoading(proceedBtn, false);
             const btnText = proceedBtn.querySelector('.btn-text');
-            if (btnText) btnText.textContent = labels.joinResearchCta;
+            if (btnText) btnText.textContent = 'Join Research ➔';
           }
           this.showStep(1);
           errorEl.textContent = err?.message || this.formatSupportError(err);
