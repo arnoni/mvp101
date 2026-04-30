@@ -613,7 +613,7 @@ async def magic_landing(
                         current_user_id=user_id_uuid,
                     )
                 )
-                pending_intent = pending_intent_result.scalar_one_or_none()
+                pending_intent = pending_intent_result.fetchone()
                 if pending_intent is not None:
                     plan_result = await conn.execute(
                         select(SimulatedBillingPlan.duration_hours)
