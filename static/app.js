@@ -43,6 +43,16 @@ const AccessState = (() => {
   };
 })();
 
+function getTierDisplayLabel(tier) {
+  const tierDisplayMap = {
+    simulated_paid: "Joined",
+  };
+
+  const normalizedTier = String(tier || "").toLowerCase();
+  if (tierDisplayMap[normalizedTier]) return tierDisplayMap[normalizedTier];
+  return normalizedTier ? normalizedTier.charAt(0).toUpperCase() + normalizedTier.slice(1) : "Free";
+}
+
 function updateAccessState(isPaid, tier = null, dailyLimit = null) {
   const normalizedTier = tier || (isPaid ? "paid" : "free");
   const next = { tier: normalizedTier, demandAllowed: Boolean(isPaid) };
@@ -1316,11 +1326,17 @@ const ModalSystem = (function() {
       updateStatus(tier, demandAllowed, dailyLimit = 3) {
         const access = { tier, demandAllowed, dailyLimit };
         
+        const menuBtn = document.getElementById('userMenuBtn');
+        if (menuBtn) {
+          menuBtn.textContent = getTierDisplayLabel(access.tier);
+        }
+
         const badge = document.getElementById('userTierBadge');
-        
+
         if (badge) {
           const tierSuffix = badge.dataset.labelTier || "TIER";
-          badge.textContent = `${access.tier.charAt(0).toUpperCase() + access.tier.slice(1)} ${tierSuffix}`;
+          const tierLabel = getTierDisplayLabel(access.tier);
+          badge.textContent = `${tierLabel} ${tierSuffix}`;
           badge.dataset.tier = access.tier;
         }
 
