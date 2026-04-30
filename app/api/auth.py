@@ -571,7 +571,7 @@ async def magic_landing(
                 token_result = await conn.execute(
                     select(MagicLinkToken).where(MagicLinkToken.token_hash == token_hash).limit(1)
                 )
-                token_row = token_result.scalar_one_or_none()
+                token_row = token_result.fetchone()
                 if token_row is None or token_row.redeemed_at is not None or token_row.expires_at <= datetime.now(timezone.utc):
                     logger.warning("AUTH_MAGIC_INVALID_OR_EXPIRED_LINK: hash=%s", token_hash[:8])
                     return RedirectResponse(url=f"{app_origin}/?error=invalid_link", status_code=303)
@@ -613,7 +613,7 @@ async def magic_landing(
                         current_user_id=user_id_uuid,
                     )
                 )
-                pending_intent = pending_intent_result.scalar_one_or_none()
+                pending_intent = pending_intent_result.fetchone()
                 if pending_intent is not None:
                     plan_result = await conn.execute(
                         select(SimulatedBillingPlan.duration_hours)
