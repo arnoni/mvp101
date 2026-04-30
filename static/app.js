@@ -831,13 +831,14 @@ document.addEventListener("DOMContentLoaded", () => {
         const lng = Number(parsedResume?.lng);
         const text = typeof parsedResume?.text === "string" ? parsedResume.text : "";
         if (Number.isFinite(lat) && Number.isFinite(lng)) {
+          const normalizedCoordsText = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
           if (els.location) els.location.value = text;
           state.coords = { lat, lng, valid: true, key: `${lat.toFixed(4)},${lng.toFixed(4)}` };
           state.input = {
             kind: classifyLocationInput(text) || "decimal_pair",
             original: text,
-            preview: text ? `${labels.parsedAs} ${text}` : "",
-            parsed: { lat, lng, normalizedText: text || `${lat.toFixed(6)}, ${lng.toFixed(6)}` },
+            preview: `${labels.parsedAs} ${normalizedCoordsText}`,
+            parsed: { lat, lng, normalizedText: normalizedCoordsText },
             error: "",
             touched: true
           };
