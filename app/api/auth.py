@@ -1,6 +1,7 @@
 import time
 import secrets
 import json
+import uuid
 import hashlib
 import random
 import httpx
@@ -598,7 +599,8 @@ async def magic_landing(
                     .returning(User.id, User.email)
                 )
                 user_row = user_result.first()
-                user_id = str(user_row.id)
+                user_id_uuid = uuid.UUID(str(user_row.id))
+                user_id = str(user_id_uuid)
                 email = user_row.email
 
                 pending_intent_result = await conn.execute(
@@ -608,7 +610,7 @@ async def magic_landing(
                         .order_by(SimulatedPaymentIntent.created_at.desc())
                         .limit(1),
                         model_user_id_column=SimulatedPaymentIntent.user_id,
-                        current_user_id=user_row.id,
+                        current_user_id=user_id_uuid,
                     )
                 )
                 pending_intent = pending_intent_result.scalar_one_or_none()
@@ -626,7 +628,7 @@ async def magic_landing(
                     )
                     pass_result = await conn.execute(
                         insert(SimulatedUserPass).values(
-                            user_id=user_row.id,
+                            user_id=user_id_uuid,
                             plan_code=pending_intent.plan_code,
                             simulated_intent_id=pending_intent.id,
                             status="active",
@@ -643,7 +645,7 @@ async def magic_landing(
                                 event_version=1,
                                 anon_id=getattr(request.state, "anon_id", None),
                                 session_id=request.cookies.get(settings.SESSION_COOKIE_NAME),
-                                user_id=user_row.id,
+                                user_id=user_id_uuid,
                                 effective_tier="simulated_paid",
                                 selected_language=request.cookies.get("dd_lang") or "en",
                                 cohort=getattr(request.state, "ab_cohort", None),
@@ -663,7 +665,7 @@ async def magic_landing(
                             exc=event_err,
                         )
         except Exception as e:
-            logger.error(f"AUTH_MAGIC_DB_ACTIVATION_FAILED: {e}")
+            logger.exception("AUTH_MAGIC_DB_ACTIVATION_FAILED", error_class=e.__class__.__name__, error_detail=str(e))
             return RedirectResponse(url=f"{app_origin}/?error=system_error&code=AUTH_MAGIC_DB_ERROR&msg={str(e)[:50]}", status_code=303)
 
         # 4. Create durable session identifier for the browser
