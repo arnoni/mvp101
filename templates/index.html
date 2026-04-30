@@ -54,7 +54,7 @@
     data-daily-limit="{{ initial_daily_limit|default(3) }}">
     <!-- HEADER -->
     <header class="topbar">
-      <div class="pill status-pill" id="userMenuBtn" role="button" tabindex="0">{{ initial_tier|capitalize }}</div>
+      <div class="pill status-pill" id="userMenuBtn" role="button" tabindex="0">{{ "Joined" if initial_tier|lower == "simulated_paid" else initial_tier|capitalize }}</div>
       <h1 class="brand">
         {{ t.get('title', 'DillDrill') }}<sup style="font-size: 0.5em; font-weight: 500;">™</sup>
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 145 30" width="120" height="25"
@@ -265,7 +265,7 @@
         <!-- Tier Badge -->
         <div class="tier-badge tier-{{ tier|default('free')|lower }}" id="userTierBadge"
           data-tier="{{ tier|default('free')|lower }}" data-label-tier="{{ t.get('tier', 'TIER') }}">
-          {{ initial_tier|upper }} {{ t.get('tier', 'TIER') }}
+          {{ "JOINED" if initial_tier|lower == "simulated_paid" else initial_tier|upper }} {{ t.get('tier', 'TIER') }}
         </div>
 
         <!-- Status -->
