@@ -1,6 +1,7 @@
 import time
 import secrets
 import logging
+import uuid
 import hashlib
 import httpx
 from enum import Enum
@@ -176,7 +177,7 @@ class PaymentGatewayFactory:
 
 class AuthResult(BaseModel):
     success: bool
-    user_id: Optional[int] = None
+    user_id: Optional[str] = None
     email: Optional[str] = None
     error: Optional[str] = None
     error_code: Optional[str] = None
@@ -260,7 +261,7 @@ class MagicAuthService:
                     .returning(User.id, User.email)
                 )
                 user_row = user_result.first()
-                user_id = user_row.id
+                user_id = str(uuid.UUID(str(user_row.id)))
 
             return AuthResult(success=True, user_id=user_id, email=user_row.email)
         except Exception as e:
