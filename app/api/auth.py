@@ -97,6 +97,46 @@ def _pass_duration_days(plan_code: str | None) -> int:
     return 1
 
 
+async def _carry_forward_anon_quota_usage(redis, *, anon_id: str | None, user_id: str | None) -> None:
+    if not redis or not anon_id or not user_id:
+        return
+    anon_key = KeyBuilder.quota_rolling24h("anon", anon_id)
+    paid_key = KeyBuilder.quota_rolling24h("paid", user_id)
+    try:
+        anon_raw = await redis.get(anon_key)
+        used_count = int(anon_raw or 0)
+    except Exception:
+        logger.warning("quota_usage_carry_forward_read_failed", anon_id=anon_id, user_id=user_id)
+        return
+    if used_count <= 0:
+        return
+    try:
+        paid_raw = await redis.get(paid_key)
+        paid_existing = int(paid_raw or 0)
+    except Exception:
+        paid_existing = 0
+    if paid_existing >= used_count:
+        return
+    ttl_seconds = 86400
+    try:
+        anon_ttl = await redis.ttl(anon_key)
+        if isinstance(anon_ttl, int) and anon_ttl > 0:
+            ttl_seconds = anon_ttl
+    except Exception:
+        pass
+    try:
+        await redis.set(paid_key, used_count, ex=ttl_seconds)
+        logger.info(
+            "quota_usage_carried_forward",
+            anon_id=anon_id,
+            user_id=user_id,
+            used_count=used_count,
+            ttl_seconds=ttl_seconds,
+        )
+    except Exception:
+        logger.warning("quota_usage_carry_forward_write_failed", anon_id=anon_id, user_id=user_id)
+
+
 async def _fetch_dodo_checkout_status(checkout_id: str) -> dict | None:
     if not settings.DODO_API_KEY:
         return None
@@ -637,6 +677,11 @@ async def magic_landing(
                         .returning(SimulatedUserPass.id)
                     )
                     pass_row = pass_result.first()
+                    await _carry_forward_anon_quota_usage(
+                        redis,
+                        anon_id=getattr(request.state, "anon_id", None),
+                        user_id=user_id,
+                    )
                     try:
                         await conn.execute(
                             insert(FunnelEvent).values(
