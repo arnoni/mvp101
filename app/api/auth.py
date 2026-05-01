@@ -237,8 +237,16 @@ async def _resend_magic_link_impl(payload: MagicLinkRequest, request: Request, *
 
     cooldown_key = f"magic_resend:cooldown:{email}"
     count_key = f"magic_resend:count:{email}:{ip}"
+    ip_count_key = f"magic_ip_limit:{ip}"
 
     try:
+        ip_count = await redis_cli.incr(ip_count_key)
+        if ip_count == 1:
+            await redis_cli.expire(ip_count_key, 3600)
+        if int(ip_count) > 10:
+            logger.warning("magic_link_ip_rate_limit_exceeded", ip=ip, count=int(ip_count))
+            return generic_response
+
         if await redis_cli.get(cooldown_key):
             logger.info("magic_link_cooldown_active", email=email)
             return generic_response
