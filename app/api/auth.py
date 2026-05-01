@@ -228,10 +228,28 @@ async def _resend_magic_link_impl(payload: MagicLinkRequest, request: Request, *
     if enforce_turnstile:
         if not payload.turnstile_token:
             logger.info("magic_link_turnstile_missing", email=email)
+            import sentry_sdk
+            with sentry_sdk.push_scope() as scope:
+                scope.set_tag("endpoint", "magic_link")
+                scope.set_tag("failure_reason", "turnstile_invalid")
+                scope.set_extra("ip", get_client_ip(request))
+                sentry_sdk.capture_message(
+                    "Turnstile block on magic link request",
+                    level="warning"
+                )
             return generic_response
         turnstile_ok = await verify_turnstile(payload.turnstile_token, client_ip=ip)
         if not turnstile_ok:
             logger.info("magic_link_turnstile_invalid", email=email, client_ip=ip)
+            import sentry_sdk
+            with sentry_sdk.push_scope() as scope:
+                scope.set_tag("endpoint", "magic_link")
+                scope.set_tag("failure_reason", "turnstile_invalid")
+                scope.set_extra("ip", get_client_ip(request))
+                sentry_sdk.capture_message(
+                    "Turnstile block on magic link request",
+                    level="warning"
+                )
             return generic_response
         logger.info("magic_link_turnstile_valid", request_id=request_id, email=email, client_ip=ip)
 
