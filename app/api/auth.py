@@ -693,6 +693,7 @@ async def magic_landing(
                         .returning(User.join_research_aggregated_success_count)
                     )
                     aggregated_success_count = int(success_counter_result.scalar_one() or 0)
+                    anon_id = getattr(request.state, "anon_id", None)
                     carried_forward_credits = await _carry_forward_anon_quota_usage(
                         redis,
                         anon_id=getattr(request.state, "anon_id", None),
@@ -746,10 +747,10 @@ async def magic_landing(
                                 related_simulated_intent_id=pending_intent.id,
                                 related_simulated_pass_id=(pass_row.id if pass_row else None),
                                 ui_surface="user_access_modal",
-                                metadata_json={"plan_code": pending_intent.plan_code},
+                                metadata_json={"plan_code": pending_intent.plan_code, "upgraded_from_anon_id": str(anon_id) if anon_id else None},
                             )
                         )
-                        capture(str(user_id_uuid), "simulated_pass_activated", {"plan_code": pending_intent.plan_code})
+                        capture(str(user_id_uuid), "simulated_pass_activated", {"plan_code": pending_intent.plan_code, "upgraded_from_anon_id": str(anon_id) if anon_id else None})
                     except Exception as event_err:
                         _report_funnel_failure(
                             route="/api/auth/magic",
@@ -777,9 +778,11 @@ async def magic_landing(
                                 metadata_json={
                                     "plan_code": pending_intent.plan_code,
                                     "join_research_aggregated_success_count": aggregated_success_count,
+                                    "upgraded_from_anon_id": str(anon_id) if anon_id else None,
                                 },
                             )
                         )
+                        capture(str(user_id_uuid), "join_research_aggregated_success", {"join_research_aggregated_success_count": aggregated_success_count, "upgraded_from_anon_id": str(anon_id) if anon_id else None})
                     except Exception as event_err:
                         _report_funnel_failure(
                             route="/api/auth/magic",
@@ -824,6 +827,8 @@ async def magic_landing(
             max_age=session_ttl,
             path="/"
         )
+
+        redirect_response.delete_cookie(settings.ANON_COOKIE_NAME)
 
         try:
             entitlement_key = KeyBuilder.entitlement_status(user_id)

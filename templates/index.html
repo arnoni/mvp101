@@ -18,6 +18,8 @@
     })
     {% if user_id %}
     posthog.identify('{{ user_id }}');
+    {% elif anon_id %}
+    posthog.identify('{{ anon_id }}');
     {% endif %}
     {% endif %}
   </script>

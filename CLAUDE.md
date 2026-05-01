@@ -85,7 +85,7 @@ Client → Middleware Stack → API Routes → Services → PostGIS / Redis
 
 1. **SessionMiddleware** — hydrates `user_id`, `csrf` from Redis session
 2. **EntitlementMiddleware** — computes `tier` via EntitlementService (never trusts session payload)
-3. **AnonIdMiddleware** — ensures HMAC-signed `dd_anon_id` cookie exists
+3. **IdentityMiddleware** — active anonymous identity middleware using `dd_anon` UUID cookie
 4. **LoggingMiddleware** — structlog wrapper
 
 Middleware order changes require test updates and explicit approval.
@@ -136,7 +136,7 @@ If `tier == PAID` and entitlement is fresh and `user_id` exists → user-scoped 
 * **Fail-closed quota**: Redis down in production → requests blocked (no in-memory fallback).
 * **Bounding box**: All coordinates validated against Da Nang bbox `[108.10, 16.00, 108.30, 16.12]`.
 * **All I/O is async**: SQLAlchemy async engine, redis.asyncio, httpx.AsyncClient.
-* **Cookie auth**: `dd_anon_id` (HMAC-signed UUID, 730d), `dd_session` (Redis-backed), `dd_lang` (language preference).
+* **Cookie auth**: `dd_anon` (UUID, 730d), `dd_session` (Redis-backed), `dd_lang` (language preference).
 
 ---
 
