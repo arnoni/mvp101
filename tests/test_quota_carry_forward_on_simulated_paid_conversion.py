@@ -28,8 +28,9 @@ async def test_carries_forward_anon_usage_to_paid_quota_key():
     paid_key = KeyBuilder.quota_rolling24h("paid", user_id)
     redis = _FakeRedis(data={anon_key: "2"}, ttl_by_key={anon_key: 3210})
 
-    await _carry_forward_anon_quota_usage(redis, anon_id=anon_id, user_id=user_id)
+    carried = await _carry_forward_anon_quota_usage(redis, anon_id=anon_id, user_id=user_id)
 
+    assert carried == 2
     assert redis.data[paid_key] == 2
     assert redis.ttl_by_key[paid_key] == 3210
 
@@ -42,7 +43,8 @@ async def test_does_not_reduce_existing_paid_usage():
     paid_key = KeyBuilder.quota_rolling24h("paid", user_id)
     redis = _FakeRedis(data={anon_key: "2", paid_key: "3"}, ttl_by_key={anon_key: 2000, paid_key: 1000})
 
-    await _carry_forward_anon_quota_usage(redis, anon_id=anon_id, user_id=user_id)
+    carried = await _carry_forward_anon_quota_usage(redis, anon_id=anon_id, user_id=user_id)
 
+    assert carried == 0
     assert redis.data[paid_key] == "3"
     assert redis.ttl_by_key[paid_key] == 1000

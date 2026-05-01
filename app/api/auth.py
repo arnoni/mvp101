@@ -97,9 +97,9 @@ def _pass_duration_days(plan_code: str | None) -> int:
     return 1
 
 
-async def _carry_forward_anon_quota_usage(redis, *, anon_id: str | None, user_id: str | None) -> None:
+async def _carry_forward_anon_quota_usage(redis, *, anon_id: str | None, user_id: str | None) -> int:
     if not redis or not anon_id or not user_id:
-        return
+        return 0
     anon_key = KeyBuilder.quota_rolling24h("anon", anon_id)
     paid_key = KeyBuilder.quota_rolling24h("paid", user_id)
     try:
@@ -107,16 +107,16 @@ async def _carry_forward_anon_quota_usage(redis, *, anon_id: str | None, user_id
         used_count = int(anon_raw or 0)
     except Exception:
         logger.warning("quota_usage_carry_forward_read_failed", anon_id=anon_id, user_id=user_id)
-        return
+        return 0
     if used_count <= 0:
-        return
+        return 0
     try:
         paid_raw = await redis.get(paid_key)
         paid_existing = int(paid_raw or 0)
     except Exception:
         paid_existing = 0
     if paid_existing >= used_count:
-        return
+        return 0
     ttl_seconds = 86400
     try:
         anon_ttl = await redis.ttl(anon_key)
@@ -135,6 +135,8 @@ async def _carry_forward_anon_quota_usage(redis, *, anon_id: str | None, user_id
         )
     except Exception:
         logger.warning("quota_usage_carry_forward_write_failed", anon_id=anon_id, user_id=user_id)
+        return 0
+    return used_count
 
 
 async def _fetch_dodo_checkout_status(checkout_id: str) -> dict | None:
@@ -677,11 +679,42 @@ async def magic_landing(
                         .returning(SimulatedUserPass.id)
                     )
                     pass_row = pass_result.first()
-                    await _carry_forward_anon_quota_usage(
+                    carried_forward_credits = await _carry_forward_anon_quota_usage(
                         redis,
                         anon_id=getattr(request.state, "anon_id", None),
                         user_id=user_id,
                     )
+                    if carried_forward_credits > 0:
+                        try:
+                            await conn.execute(
+                                insert(FunnelEvent).values(
+                                    event_name="anon_quota_usage_carried_forward",
+                                    event_source="api",
+                                    event_version=1,
+                                    anon_id=getattr(request.state, "anon_id", None),
+                                    session_id=request.cookies.get(settings.SESSION_COOKIE_NAME),
+                                    user_id=user_id_uuid,
+                                    effective_tier="simulated_paid",
+                                    selected_language=request.cookies.get("dd_lang") or "en",
+                                    cohort=getattr(request.state, "ab_cohort", None),
+                                    target_tier="simulated_paid",
+                                    transition_name="free_to_simulated_paid",
+                                    related_simulated_intent_id=pending_intent.id,
+                                    related_simulated_pass_id=(pass_row.id if pass_row else None),
+                                    ui_surface="user_access_modal",
+                                    metadata_json={
+                                        "carried_forward_credits": carried_forward_credits,
+                                        "plan_code": pending_intent.plan_code,
+                                    },
+                                )
+                            )
+                        except Exception as event_err:
+                            _report_funnel_failure(
+                                route="/api/auth/magic",
+                                event_name="anon_quota_usage_carried_forward",
+                                request=request,
+                                exc=event_err,
+                            )
                     try:
                         await conn.execute(
                             insert(FunnelEvent).values(
