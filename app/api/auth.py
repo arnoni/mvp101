@@ -532,6 +532,7 @@ async def _resend_magic_link_impl(payload: MagicLinkRequest, request: Request, *
                     email=email,
                     token_hash=token_hash,
                     expires_at=expires_at,
+                    request_ip=ip,
                 )
             )
     except Exception as exc:
