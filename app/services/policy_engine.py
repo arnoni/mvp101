@@ -8,6 +8,10 @@ from app.models.dto import ErrorResponse
 from app.services.quota_repository import QuotaRepository
 from pydantic import BaseModel, validate_call, ConfigDict
 from app.services.entitlement_service import TierStatus
+import structlog
+
+logger = structlog.get_logger(__name__)
+MONITORED_QUOTA_EMAIL = "dilldrillteam@gmail.com"
 
 # --- Contracts ---
 
@@ -171,6 +175,8 @@ async def run_gate(
     force_turnstile_required: bool = False,
     disallow_admin_bypass: bool = False,
 ) -> GateResult:
+    actor_email = ((getattr(request.state, "user_email", None) or "")).lower()
+    monitor_quota = actor_email == MONITORED_QUOTA_EMAIL
     admin_hdr = request.headers.get("X-Admin-Auth")
     admin_bypass = bool(settings.ADMIN_BYPASS_TOKEN and admin_hdr and admin_hdr == settings.ADMIN_BYPASS_TOKEN)
     if disallow_admin_bypass:
@@ -237,6 +243,25 @@ async def run_gate(
         allowed, remaining_after = await quota_repo.check_and_consume(quota_key, limit)
     except RuntimeError:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="enforcement unavailable")
+
+    if monitor_quota:
+        before_remaining = max(0, int(decision.quota_remaining))
+        quota_change = int(remaining_after) - int(before_remaining)
+        logger.info(
+            "monitored_user_quota_change",
+            email=actor_email,
+            user_id=user_id,
+            quota_key=quota_key,
+            daily_limit=limit,
+            quota_remaining_before=before_remaining,
+            quota_remaining_after=int(remaining_after),
+            quota_change=quota_change,
+            change_direction=("increase" if quota_change > 0 else "decrease" if quota_change < 0 else "no_change"),
+            allowed=allowed,
+        )
+        if int(remaining_after) == 0:
+            print("🚨🚨🚨 QUOTA ALERT: dilldrillteam@gmail.com QUOTA REACHED ZERO 🚨🚨🚨")
+            print(f"🚨 quota_key={quota_key} user_id={user_id} limit={limit} remaining_after=0")
 
     if not allowed:
         raise HTTPException(

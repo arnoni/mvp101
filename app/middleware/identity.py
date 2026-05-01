@@ -42,6 +42,7 @@ class IdentityMiddleware(BaseHTTPMiddleware):
                         request.state.identity_kind = "paid"
                         request.state.identity_id = user_id
                         request.state.session_id = session_cookie
+                        request.state.user_email = (data.get("email") or "").lower() or None
                         request.state.ab_cohort = cohort_cookie if cohort_cookie in {"A", "B"} else None
                         
                         # Backward Compatibility
@@ -89,6 +90,7 @@ class IdentityMiddleware(BaseHTTPMiddleware):
         # Backward Compatibility
         request.state.anon_id = anon_id
         request.state.user_id = None
+        request.state.user_email = None
         
         sentry_sdk.set_user({"id": anon_id, "ip_address": "{{auto}}"})
         sentry_sdk.set_tag("identity_kind", "anon")
