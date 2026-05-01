@@ -233,6 +233,7 @@ class MagicLinkToken(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     redeemed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     requester_ip_hash: Mapped[str | None] = mapped_column(Text)
+    request_ip: Mapped[str | None] = mapped_column(Text)
     user_agent_hash: Mapped[str | None] = mapped_column(Text)
 
     __table_args__ = (

@@ -188,7 +188,13 @@ class MagicAuthService:
         self.redis = redis
         self.payment_factory = payment_factory
         
-    async def create_magic_link(self, email: str, purchase_id: Optional[str] = None, provider: Optional[str] = None) -> str:
+    async def create_magic_link(
+        self,
+        email: str,
+        purchase_id: Optional[str] = None,
+        provider: Optional[str] = None,
+        request_ip: str | None = None,
+    ) -> str:
         """Generates a one-time token and persists it in Postgres."""
         try:
             del purchase_id, provider
@@ -217,6 +223,7 @@ class MagicAuthService:
                             email=normalized_email,
                             token_hash=token_hash,
                             expires_at=expires_at,
+                            request_ip=request_ip,
                         )
                     )
                 except Exception as e:

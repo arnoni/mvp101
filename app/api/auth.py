@@ -158,14 +158,14 @@ async def _fetch_dodo_checkout_status(checkout_id: str) -> dict | None:
         return None
 
 
-async def _send_magic_link_email(*, email: str, db_engine, redis_cli) -> bool:
+async def _send_magic_link_email(*, email: str, request_ip: str | None, db_engine, redis_cli) -> bool:
     try:
         service = MagicAuthService(
             db=db_engine,
             redis=redis_cli,
             payment_factory=PaymentGatewayFactory(),
         )
-        token = await service.create_magic_link(email=email)
+        token = await service.create_magic_link(email=email, request_ip=request_ip)
         app_origin = settings.APP_ORIGIN or "http://localhost:8000"
         magic_link = f"{app_origin}/api/auth/magic?token={token}"
         email_service = EmailService()
@@ -369,7 +369,7 @@ async def _resend_magic_link_impl(payload: MagicLinkRequest, request: Request, *
     if simulated_intent:
         try:
             logger.info("magic_link_resend_simulated_send_started", request_id=request_id, email=email, intent_id=str(simulated_intent["intent_id"]))
-            sent = await _send_magic_link_email(email=email, db_engine=db_engine, redis_cli=redis_cli)
+            sent = await _send_magic_link_email(email=email, request_ip=ip, db_engine=db_engine, redis_cli=redis_cli)
             if not sent:
                 logger.warning("magic_link_send_failed_simulated", email=email, intent_id=str(simulated_intent["intent_id"]))
                 return generic_response
