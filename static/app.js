@@ -1587,14 +1587,29 @@ const ModalSystem = (function() {
 
       getShareData() {
         return {
-          title: 'DillDrill Construction Check',
           text: document.getElementById('shareText').value.trim(),
           url: document.getElementById('shareUrlBox').textContent.trim()
         };
       },
 
+      getSenderName() {
+        const nameFromData = document.body?.dataset?.userDisplayName;
+        if (nameFromData && nameFromData.trim()) return nameFromData.trim();
+        return 'Someone';
+      },
+
+      getNativeShareData() {
+        const { url } = this.getShareData();
+        const senderName = this.getSenderName();
+        return {
+          title: "🏗️ Check what's being built near this address",
+          text: `${senderName} checked a property with DillDrill — and thinks you should too before you commit. See construction activity near any address in seconds:`,
+          url
+        };
+      },
+
       async shareNative() {
-        const data = this.getShareData();
+        const data = this.getNativeShareData();
         const errorEl = document.getElementById('shareError');
 
         if (errorEl) errorEl.textContent = '';
@@ -1622,7 +1637,7 @@ const ModalSystem = (function() {
 
       async copyAll() {
         const { text, url } = this.getShareData();
-        const content = text ? `${text}\n\n${url}` : url;
+        const content = text ? `${text} ${url}` : url;
         await this.copyToClipboard(content, 'Copied to clipboard!');
       },
 
