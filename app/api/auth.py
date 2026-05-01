@@ -18,6 +18,7 @@ from app.core.config import settings
 from app.core.keys import KeyBuilder
 from app.api.dependencies import scope_to_user
 from app.models.models import FunnelEvent, MagicLinkToken, SimulatedBillingPlan, SimulatedPaymentIntent, SimulatedUserPass, User
+from app.services.analytics import capture
 from app.services.entitlement_service import TierStatus
 from app.services.magic_auth_service import MagicAuthService, PaymentGatewayFactory
 from app.utils.security import get_client_ip, verify_turnstile
@@ -374,6 +375,7 @@ async def _resend_magic_link_impl(payload: MagicLinkRequest, request: Request, *
                             metadata_json={"email": email},
                         )
                     )
+                    capture(str(simulated_intent["user_id"]), "simulated_magic_sent", {"path": "resend"})
             logger.info("magic_link_resend_simulated_send_finished", request_id=request_id, email=email, intent_id=str(simulated_intent["intent_id"]), sent=True)
             return generic_response
         except Exception as exc:
@@ -735,6 +737,7 @@ async def magic_landing(
                                 metadata_json={"plan_code": pending_intent.plan_code},
                             )
                         )
+                        capture(str(user_id_uuid), "simulated_pass_activated", {"plan_code": pending_intent.plan_code})
                     except Exception as event_err:
                         _report_funnel_failure(
                             route="/api/auth/magic",

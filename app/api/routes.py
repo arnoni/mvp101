@@ -14,6 +14,7 @@ from app.schemas.search import SearchRequest, SearchResponse, SearchTarget
 from app.schemas.user_reports import UserReportRequest, UserReportResponse
 from app.services.search_service import SearchService, SearchDependencies
 from app.services.area_bucketer import AreaBucketer
+from app.services.analytics import capture
 from app.services.entitlement_service import EntitlementService, TierStatus
 from app.services.policy_engine import PolicyEngine, RequestContext, PolicyVerdict, PolicyDecision, run_gate
 from app.services.quota_repository import QuotaRepository
@@ -458,6 +459,8 @@ async def search(
                 check_type=check_type,
                 ui_surface=ui_surface,
             )
+            if user_id is not None:
+                capture(str(user_id), "check_attempted", {"tier": _tier_to_funnel(tier)})
 
         try:
             gate_result = await run_gate(
@@ -482,6 +485,8 @@ async def search(
                     check_type=check_type,
                     ui_surface=ui_surface,
                 )
+                if user_id is not None:
+                    capture(str(user_id), "check_blocked_tier", {"tier": _tier_to_funnel(tier)})
             raise
 
         limit = daily_limit
@@ -546,6 +551,8 @@ async def search(
                     ui_surface="construction_level_page",
                     related_query_id=related_query_id,
                 )
+                if user_id is not None:
+                    capture(str(user_id), "check_completed", {"tier": _tier_to_funnel(tier)})
             if response_payload.demand is not None and data.target in (SearchTarget.DEMAND, SearchTarget.BOTH) and _tier_to_funnel(tier) != "free":
                 await _emit_funnel_event(
                     request,
@@ -555,6 +562,8 @@ async def search(
                     ui_surface="demand_level_page",
                     related_query_id=related_query_id,
                 )
+                if user_id is not None:
+                    capture(str(user_id), "check_completed", {"tier": _tier_to_funnel(tier)})
         return response_payload
     except HTTPException:
         raise

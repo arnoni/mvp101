@@ -10,6 +10,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from app.core.config import settings
 from app.models.models import FeatureFlag, FunnelEvent, SimulatedBillingPlan, SimulatedPaymentIntent, User
 from app.schemas.billing import UnlockIntentRequest, UnlockIntentResponse, UnlockUiSurface
+from app.services.analytics import capture
 from app.services.entitlement_service import TierStatus
 from app.services.magic_auth_service import MagicAuthService, PaymentGatewayFactory
 from app.utils.security import get_client_ip, protect_mutation, verify_turnstile
@@ -362,6 +363,7 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
                             metadata_json={"email": email},
                         )
                     )
+                    capture(str(user_id), "simulated_magic_sent", {"path": "billing"})
         except Exception as event_err:
             _report_funnel_failure(
                 route="/api/billing/unlock-intent",
