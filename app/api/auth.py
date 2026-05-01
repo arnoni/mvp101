@@ -566,6 +566,8 @@ def get_auth_service(request: Request) -> MagicAuthService:
 # ENDPOINTS
 # ==========================================
 
+# DEPRECATED — retained for backwards compatibility only.
+# Turnstile enforcement is required. Do not remove enforcement.
 @router.post("/login", response_model=AuthResponse, status_code=200)
 async def login(
     payload: LoginRequest,
@@ -580,7 +582,7 @@ async def login(
         return await _resend_magic_link_impl(
             MagicLinkRequest(email=payload.email),
             request,
-            enforce_turnstile=False,
+            enforce_turnstile=True,
         )
         
     except HTTPException:

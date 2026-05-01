@@ -123,7 +123,7 @@ def test_login_deprecated_wrapper_uses_unified_magic_link_logic(monkeypatch):
     assert response.status_code == 200
     assert response.json()["message"] == "If this email is eligible, we sent a new access link."
     assert captured["email"] == "no-intent@example.com"
-    assert captured["enforce_turnstile"] is False
+    assert captured["enforce_turnstile"] is True
 
 
 def test_login_deprecated_wrapper_preserves_generic_message(monkeypatch):
