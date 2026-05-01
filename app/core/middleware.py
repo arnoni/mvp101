@@ -31,6 +31,12 @@ def unsign_value(val: str) -> Optional[str]:
         )
     return None
 
+# DEPRECATED — NOT WIRED. Do not register in main.py.
+# Active anon identity is handled by IdentityMiddleware in
+# app/middleware/identity.py using cookie name dd_anon (UUID format).
+# AnonIdMiddleware uses dd_anon_id (hex format) and is incompatible
+# with current Redis key structure and quota carry-forward logic.
+# Scheduled for removal.
 class AnonIdMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         # 1. Identity Resolution

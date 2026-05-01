@@ -808,7 +808,13 @@ document.addEventListener("DOMContentLoaded", () => {
   async function restoreAfterMagicSuccessIfNeeded() {
     if (!magicSuccessJustLanded) return;
 
-    updateAccessState(true, document.body.dataset.tier || "paid");
+    const ssrTier = document.body.dataset.tier || "";
+    const isSsrPaid = ssrTier === "simulated_paid" ||
+                      ssrTier === "pass_1_day" ||
+                      ssrTier === "pass_3_day";
+    if (isSsrPaid) {
+      updateAccessState(true, ssrTier);
+    }
     window.history.replaceState({}, document.title, window.location.pathname);
 
     const inputCard = document.querySelector(".input-card");

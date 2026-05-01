@@ -304,6 +304,7 @@ async def root(request: Request, lang: str = "en"):
     context = {
         "request": request,
         "user_id": getattr(request.state, "user_id", None),
+        "anon_id": str(request.state.anon_id) if getattr(request.state, "anon_id", None) else "",
         "turnstile_site_key": settings.CLOUDFLARE_TURNSTILE_SITE_KEY,
         "posthog_key": os.environ.get("POSTHOG_PROJECT_API_KEY", ""),
         "posthog_host": os.environ.get("POSTHOG_HOST", "https://us.i.posthog.com"),

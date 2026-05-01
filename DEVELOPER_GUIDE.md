@@ -48,7 +48,7 @@ graph TD
     *   `SECRET_KEY` (required for cookie signing)
     *   `REDIS_URL` (connection string)
 *   **`middleware.py`**:
-    *   **`AnonIdMiddleware`**: Ensures each request carries `dd_anon_id`. If missing or invalidly signed, mints a new random UUID and sets a signed cookie (HMAC-SHA256). Attributes: `HttpOnly`, `Secure` (prod), `SameSite=Lax`.
+    *   **`AnonIdMiddleware`**: Deprecated and not wired in `main.py`. Active anonymous identity is handled by `IdentityMiddleware` in `app/middleware/identity.py` using `dd_anon` UUID cookies.
     *   **`SessionMiddleware`**: Hydrates `user_id` and `csrf` from Redis `session:{sid}` based on `dd_session` cookie. Does not decide paid tier.
     *   **`EntitlementMiddleware`**: Computes `tier` via `EntitlementService` and sets `request.state.tier` and `request.state.entitlement_stale`. It does not trust any tier in the session payload.
 *   **`observability.py`**: Initializes Sentry for error reporting and performance monitoring. Starlette and FastAPI integrations are used to capture the request lifecycle and specific route handling. Transaction style is set to "endpoint" for clear grouping. Sentry is initialized *before* the FastAPI app in `main.py`.
@@ -179,7 +179,7 @@ If you are modifying the code, ensure you adhere to these strict rules from the 
     *   `GET /health` → status only
     *   `GET /health/db` → requires `DATABASE_URL`; returns {"db":"ok"} when reachable
 3.  **Testing Quotas:**
-    *   The app uses cookies. To reset your identity/quota locally, delete the `dd_anon_id` cookie in your browser dev tools.
+    *   The app uses cookies. To reset your identity/quota locally, delete the `dd_anon` cookie in your browser dev tools.
 
 ## 7. Database Schema
 
