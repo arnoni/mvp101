@@ -34,6 +34,9 @@ class User(Base):
     provider_customer_id: Mapped[str | None] = mapped_column(Text, unique=True)
     ab_cohort: Mapped[str] = mapped_column(Text, nullable=False, server_default=text("'A'"))
     last_login: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    join_research_aggregated_success_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default=text("0")
+    )
 
 
 class BillingPlan(Base):

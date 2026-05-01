@@ -681,6 +681,18 @@ async def magic_landing(
                         .returning(SimulatedUserPass.id)
                     )
                     pass_row = pass_result.first()
+                    success_counter_result = await conn.execute(
+                        update(User)
+                        .where(User.id == user_id_uuid)
+                        .values(
+                            join_research_aggregated_success_count=(
+                                func.coalesce(User.join_research_aggregated_success_count, 0) + 1
+                            ),
+                            updated_at=func.now(),
+                        )
+                        .returning(User.join_research_aggregated_success_count)
+                    )
+                    aggregated_success_count = int(success_counter_result.scalar_one() or 0)
                     carried_forward_credits = await _carry_forward_anon_quota_usage(
                         redis,
                         anon_id=getattr(request.state, "anon_id", None),
@@ -742,6 +754,36 @@ async def magic_landing(
                         _report_funnel_failure(
                             route="/api/auth/magic",
                             event_name="simulated_pass_activated",
+                            request=request,
+                            exc=event_err,
+                        )
+                    try:
+                        await conn.execute(
+                            insert(FunnelEvent).values(
+                                event_name="join_research_aggregated_success",
+                                event_source="api",
+                                event_version=1,
+                                anon_id=getattr(request.state, "anon_id", None),
+                                session_id=request.cookies.get(settings.SESSION_COOKIE_NAME),
+                                user_id=user_id_uuid,
+                                effective_tier="simulated_paid",
+                                selected_language=request.cookies.get("dd_lang") or "en",
+                                cohort=getattr(request.state, "ab_cohort", None),
+                                target_tier="simulated_paid",
+                                transition_name="free_to_simulated_paid",
+                                related_simulated_intent_id=pending_intent.id,
+                                related_simulated_pass_id=(pass_row.id if pass_row else None),
+                                ui_surface="user_access_modal",
+                                metadata_json={
+                                    "plan_code": pending_intent.plan_code,
+                                    "join_research_aggregated_success_count": aggregated_success_count,
+                                },
+                            )
+                        )
+                    except Exception as event_err:
+                        _report_funnel_failure(
+                            route="/api/auth/magic",
+                            event_name="join_research_aggregated_success",
                             request=request,
                             exc=event_err,
                         )
