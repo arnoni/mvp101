@@ -48,6 +48,7 @@
   data-label-error-location-not-supported="{{ t.get('error_location_not_supported', 'This location is outside supported regions. Please use a location inside supported coverage areas.') }}"
   data-turnstile-sitekey="{{ turnstile_site_key }}"
   data-turnstile-required="{{ 'true' if initial_turnstile_required else 'false' }}"
+  data-user-display-name="{{ user_display_name|default('') }}"
   data-current-lang="{{ current_lang }}">
   <main class="app" id="app" data-tier="{{ tier|default('free') }}"
     data-demand-allowed="{{ 'true' if demand_allowed else 'false' }}"
@@ -445,7 +446,7 @@
             <label class="share-card" for="shareText">
               <span class="share-card__label">{{ t.get('share_message', 'Share Message') }}</span>
               <textarea class="share-textarea" id="shareText" rows="3"
-                maxlength="220">{{ t.get('share_default_text', 'Check construction now, sleep better later. Try DillDrill:') }}</textarea>
+                maxlength="220">{{ t.get('share_default_text', "Before you sign — see what's being built nearby. I used DillDrill to check construction activity near the address, and it's worth 30 seconds of your time:") }}</textarea>
               <div class="share-meta">
                 <span class="share-card__hint">{{ t.get('share_message_hint', 'Edit the message before sharing if you
                   want.') }}</span>
