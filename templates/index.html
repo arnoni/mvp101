@@ -364,9 +364,15 @@
             <!-- LOCATION -->
             <div class="report-card location-card">
               <div class="report-card__label">📍 {{ t.get('location', 'Location') }}</div>
-              <div class="report-card__value" id="reportCoordsDisplay">
-                {{ t.get('coordinates_not_set', 'Coordinates not set') }}
-              </div>
+              <input
+                class="report-card__value report-location-input"
+                id="reportLocationInput"
+                type="text"
+                placeholder="Paste coordinates or Google Maps link..."
+                autocomplete="off"
+                spellcheck="false"
+              />
+              <div class="report-error report-location-error" id="reportLocationError" role="alert"></div>
             </div>
 
             <!-- REPORT TYPE -->

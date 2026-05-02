@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -17,6 +17,7 @@ class UserReportRequest(BaseModel):
     is_nearby_now: bool = False
     note: Optional[str] = Field(default="", max_length=180)
     turnstile_token: Optional[str] = None
+    location_source: Literal["hero_prefill", "manual_input"] | None = None
 
 
 class UserReportResponse(BaseModel):

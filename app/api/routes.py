@@ -620,6 +620,15 @@ async def demand_wrapper(
     payload = await search(request, data, policy_engine, quota_repo, precompute_repo, demand_service, query_history_repo)
     return payload.demand or {"message": "No demand result"}
 
+def validate_report_location(lat: float, lon: float) -> str | None:
+    if not (-90 <= lat <= 90):
+        return "latitude_out_of_range"
+    if not (-180 <= lon <= 180):
+        return "longitude_out_of_range"
+    if lat == 0.0 and lon == 0.0:
+        return "null_island"
+    return None
+
 
 @router.post("/user-reports", response_model=UserReportResponse)
 async def user_report_submit(
@@ -630,6 +639,22 @@ async def user_report_submit(
 ):
     request_id = get_req_id(request)
     try:
+        validation_reason = validate_report_location(data.lat, data.lon)
+        if validation_reason:
+            logger.warning(
+                "user_report_rejected_invalid_location",
+                user_id=getattr(request.state, "identity_id", None),
+                reason=validation_reason,
+                source="submit_report_modal",
+            )
+            return JSONResponse(
+                status_code=400,
+                content={
+                    "ok": False,
+                    "status": "invalid_location",
+                    "message": "Please enter a valid location before submitting a report.",
+                },
+            )
         note = data.note
         note_stripped = note.strip() if isinstance(note, str) else ""
         if 0 < len(note_stripped) < 10:
@@ -643,6 +668,17 @@ async def user_report_submit(
             )
         ugc_data = _map_user_report_to_ugc(data)
         result = await ugc_report_submit(request=request, data=ugc_data, quota_repo=quota_repo, policy_engine=policy_engine)
+        logger.info(
+            "user_report_submitted",
+            user_id=getattr(request.state, "identity_id", None),
+            report_type=data.report_kind.value,
+            lat=round(data.lat, 5),
+            lon=round(data.lon, 5),
+            is_nearby_now=data.is_nearby_now,
+            has_notes=bool(note_stripped),
+            location_source=data.location_source,
+            source="submit_report_modal",
+        )
         return UserReportResponse(ok=result["ok"], report_id=result["report_id"], duplicate=result.get("duplicate", False))
     except ValidationError as exc:
         error_id = request_id or str(uuid.uuid4())

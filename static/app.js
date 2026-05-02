@@ -53,6 +53,63 @@ function getTierDisplayLabel(tier) {
   return normalizedTier ? normalizedTier.charAt(0).toUpperCase() + normalizedTier.slice(1) : "Free";
 }
 
+function getParserErrorMessage(payload, status) {
+  // The middleware wraps HTTPException as: { detail: { error: "HTTP_ERROR", detail: { error_code, message }, status_code } }
+  // Support both wrapped and unwrapped forms.
+  const inner = payload?.detail?.detail || payload?.detail || payload || {};
+  const errorCode = inner?.error_code;
+  const msg = inner?.message;
+
+  if (errorCode === "SHORT_URL_RESOLUTION_BLOCKED") {
+    return msg || "We could not open this short Google Maps link due to access restrictions. Please open it in Google Maps, copy the full URL, and try again.";
+  }
+  if (errorCode === "LOCATION_NOT_SUPPORTED") {
+    return msg || "This location is outside supported regions. Please use a location inside supported coverage areas.";
+  }
+  if (errorCode === "UNSUPPORTED_LOCATION_INPUT") {
+    return "Please use a Google Maps link or latitude/longitude coordinates.";
+  }
+  if (errorCode === "INVALID_COORDINATE_RANGE") {
+    return "Coordinates are out of range. Latitude must be between -90 and 90, and longitude between -180 and 180.";
+  }
+  if (errorCode === "SHORT_URL_RESOLUTION_FAILED") {
+    return "Could not expand this Google Maps short link. Please try again.";
+  }
+  if (errorCode === "MALFORMED_LOCATION_INPUT" || errorCode === "INVALID_LOCATION_INPUT") {
+    return "Could not read coordinates from that location input. Please check the link and try again.";
+  }
+  return `Parser service returned HTTP ${status}.`;
+}
+
+async function tryParseLocationInput(raw, signal) {
+  let response;
+  try {
+    response = await fetch("/api/parse-location", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ location_input: raw }),
+      signal
+    });
+  } catch (networkErr) {
+    if (networkErr?.name === "AbortError") throw networkErr;
+    throw new Error("Could not reach the parser service. Please check your connection and try again.");
+  }
+  let payload;
+  try {
+    payload = await response.json();
+  } catch {
+    throw new Error(response.ok ? "Parser service returned an unreadable response." : `Parser service returned HTTP ${response.status}.`);
+  }
+  if (!response.ok || !payload?.ok) {
+    const msg = getParserErrorMessage(payload, response.status);
+    throw new Error(msg);
+  }
+  const lat = Number(payload.normalized?.latitude);
+  const lon = Number(payload.normalized?.longitude);
+  if (!Number.isFinite(lat) || !Number.isFinite(lon)) throw new Error("The parser could not return coordinates for this location input.");
+  return { lat, lon, normalizedText: payload.normalized?.display || raw };
+}
+
 function updateAccessState(isPaid, tier = null, dailyLimit = null) {
   const normalizedTier = tier || (isPaid ? "paid" : "free");
   const next = { tier: normalizedTier, demandAllowed: Boolean(isPaid) };
@@ -140,104 +197,20 @@ document.addEventListener("DOMContentLoaded", () => {
     errorLocationNotSupported: document.body.dataset.labelErrorLocationNotSupported || "This location is outside supported regions. Please use a location inside supported coverage areas."
   };
 
-  function getParserErrorMessage(payload, status) {
-    // The middleware wraps HTTPException as: { detail: { error: "HTTP_ERROR", detail: { error_code, message }, status_code } }
-    // Support both wrapped and unwrapped forms.
-    const inner = payload?.detail?.detail || payload?.detail || payload || {};
-    const errorCode = inner?.error_code;
-    const msg = inner?.message;
-
-    if (errorCode === "SHORT_URL_RESOLUTION_BLOCKED") {
-      return labels.errorShortUrlBlocked || msg || "We could not open this short Google Maps link due to access restrictions. Please open it in Google Maps, copy the full URL, and try again.";
-    }
-    if (errorCode === "LOCATION_NOT_SUPPORTED") {
-      return labels.errorLocationNotSupported || msg || "This location is outside supported regions. Please use a location inside supported coverage areas.";
-    }
-    if (errorCode === "UNSUPPORTED_LOCATION_INPUT") {
-      return "Please use a Google Maps link or latitude/longitude coordinates.";
-    }
-    if (errorCode === "INVALID_COORDINATE_RANGE") {
-      return "Coordinates are out of range. Latitude must be between -90 and 90, and longitude between -180 and 180.";
-    }
-    if (errorCode === "SHORT_URL_RESOLUTION_FAILED") {
-      return "Could not expand this Google Maps short link. Please try again.";
-    }
-    if (errorCode === "MALFORMED_LOCATION_INPUT" || errorCode === "INVALID_LOCATION_INPUT") {
-      return "Could not read coordinates from that location input. Please check the link and try again.";
-    }
-    return `Parser service returned HTTP ${status}.`;
-  }
-
   async function parseLocationPreview(raw, signal) {
-    let response;
     try {
-      response = await fetch("/api/parse-location", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ location_input: raw }),
-        signal
-      });
-    } catch (networkErr) {
-      if (networkErr?.name === "AbortError") throw networkErr;
-      console.warn(JSON.stringify({
-        event: "parser_network_error",
-        error: networkErr?.message,
-        input_length: raw?.length
-      }));
-      throw new Error("Could not reach the parser service. Please check your connection and try again.");
-    }
-
-    let payload = null;
-    try {
-      payload = await response.json();
-    } catch (jsonErr) {
-      console.warn(JSON.stringify({
-        event: "parser_response_not_json",
-        http_status: response.status,
-        error: jsonErr?.message
-      }));
-      if (!response.ok) {
-        throw new Error(`Parser service returned HTTP ${response.status}.`);
-      }
-      throw new Error("Parser service returned an unreadable response.");
-    }
-
-    if (!response.ok) {
-      const msg = getParserErrorMessage(payload, response.status);
+      const parsed = await tryParseLocationInput(raw, signal);
+      return { lat: parsed.lat, lng: parsed.lon, normalizedText: parsed.normalizedText };
+    } catch (err) {
+      if (err?.name === "AbortError") throw err;
       console.warn(JSON.stringify({
         event: "parser_error_response",
-        http_status: response.status,
-        error_code: payload?.detail?.detail?.error_code || payload?.detail?.error_code || null,
-        message: msg
+        message: err?.message || "Parser error",
       }));
-      throw new Error(msg);
+      throw err;
     }
-
-    if (!payload?.ok) {
-      console.warn(JSON.stringify({
-        event: "parser_payload_not_ok",
-        http_status: response.status,
-        payload_keys: payload ? Object.keys(payload) : null
-      }));
-      throw new Error("The parser returned an unexpected response. Please try again.");
-    }
-
-    const lat = Number(payload.normalized?.latitude);
-    const lng = Number(payload.normalized?.longitude);
-    const normalizedText = payload.normalized?.display;
-
-    if (!payload.normalized || isNaN(lat) || isNaN(lng)) {
-      console.warn(JSON.stringify({
-        event: "parser_missing_coordinates",
-        has_normalized: !!payload.normalized,
-        lat_raw: payload.normalized?.latitude,
-        lng_raw: payload.normalized?.longitude
-      }));
-      throw new Error("The parser could not return coordinates for this location input.");
-    }
-
-    return { lat, lng, normalizedText };
   }
+
 
   AccessState.readDomAccess();
   AccessState.subscribe(() => {
@@ -919,7 +892,12 @@ const ModalSystem = (function() {
     },
     report: {
       type: 'active_construction',
-      note: ''
+      note: '',
+      locationRaw: '',
+      locationParsed: null,
+      locationError: null,
+      locationSource: 'manual_input',
+      locationSourceLocked: false
     },
     unlock: {
       plan: 'sim_1_day',
@@ -1405,17 +1383,22 @@ const ModalSystem = (function() {
         const submitBtn = document.getElementById('reportSubmitBtn');
         const typeGrid = document.getElementById('reportTypeGrid');
         const noteField = document.getElementById('reportNote');
+        const locationInput = document.getElementById('reportLocationInput');
         const charCount = document.getElementById('reportCharCount');
 
         // Open handler
         btn?.addEventListener('click', () => {
           this.reset();
-          this.syncCoords();
-          this.updateSubmitState();
+          this.initializeLocation();
           const opened = core.open('reportModalLayer');
           if (!opened) {
             this.showError(this.formatTrackedError(new Error('Could not open report modal. Please refresh and try again.'), 'REPORT_MODAL_OPEN_FAILED'));
+            return;
           }
+          this.captureEvent('submit_report_modal_opened', {
+            hero_input_prefilled: state.report.locationSource === 'hero_prefill',
+            has_prefilled_location: state.report.locationParsed !== null
+          });
         });
 
         // Report type selection
@@ -1437,6 +1420,19 @@ const ModalSystem = (function() {
           charCount.textContent = `${len}/180`;
           state.report.note = e.target.value;
         });
+        locationInput?.addEventListener('input', (e) => {
+          state.report.locationRaw = e.target.value;
+          state.report.locationParsed = null;
+          state.report.locationError = null;
+          if (!state.report.locationSourceLocked) {
+            state.report.locationSource = 'manual_input';
+            state.report.locationSourceLocked = true;
+          }
+          this.renderLocationError();
+        });
+        locationInput?.addEventListener('blur', async () => {
+          await this.validateLocationOnBlur();
+        });
 
         // Submit handler
         submitBtn?.addEventListener('click', async () => {
@@ -1444,22 +1440,41 @@ const ModalSystem = (function() {
         });
       },
 
-      syncCoords() {
-        const display = document.getElementById('reportCoordsDisplay');
-        if (!display) return;
-        if (state.coords.valid) {
-          display.textContent = utils.formatCoords(state.coords.lat, state.coords.lng);
-        } else {
-          display.textContent = labels.coordinatesNotSet;
-        }
+      captureEvent(name, props) {
+        if (window.posthog?.capture) window.posthog.capture(name, props);
       },
-
-      updateSubmitState() {
-        const btn = document.getElementById('reportSubmitBtn');
-        if (!btn) return;
-        const disabled = !state.coords.valid;
-        btn.disabled = disabled;
-        btn.setAttribute('aria-disabled', disabled ? 'true' : 'false');
+      renderLocationError() {
+        const el = document.getElementById('reportLocationError');
+        if (el) el.textContent = state.report.locationError || '';
+      },
+      initializeLocation() {
+        const heroRaw = (document.getElementById('locationInput')?.value || '').trim();
+        state.report.locationRaw = heroRaw;
+        state.report.locationParsed = state.coords.valid ? { lat: state.coords.lat, lon: state.coords.lng } : null;
+        state.report.locationError = null;
+        state.report.locationSource = heroRaw ? 'hero_prefill' : 'manual_input';
+        state.report.locationSourceLocked = false;
+        const input = document.getElementById('reportLocationInput');
+        if (input) input.value = heroRaw;
+        this.renderLocationError();
+      },
+      async validateLocationOnBlur() {
+        const raw = (state.report.locationRaw || '').trim();
+        if (!raw) {
+          state.report.locationParsed = null;
+          state.report.locationError = null;
+          this.renderLocationError();
+          return;
+        }
+        try {
+          const parsed = await tryParseLocationInput(raw);
+          state.report.locationParsed = { lat: parsed.lat, lon: parsed.lon };
+          state.report.locationError = null;
+        } catch {
+          state.report.locationParsed = null;
+          state.report.locationError = 'Invalid location. Paste coordinates or a full Google Maps link.';
+        }
+        this.renderLocationError();
       },
 
       async submit() {
@@ -1476,11 +1491,18 @@ const ModalSystem = (function() {
           return;
         }
 
-        if (!state.coords.valid) {
-          const err = new Error('Coordinates are missing. Please search for a location and try again.');
-          err.code = 'REPORT_COORDS_INVALID';
-          err.errorId = utils.newErrorId('REPORT');
-          this.showError(this.formatTrackedError(err, 'REPORT_COORDS_INVALID'));
+        if (!(state.report.locationRaw || '').trim()) {
+          state.report.locationError = 'Please enter coordinates or a Google Maps link.';
+          this.renderLocationError();
+          this.captureEvent('submit_report_location_validation_failed', { reason: 'empty', source: 'submit_report_modal' });
+          document.getElementById('reportLocationInput')?.focus();
+          return;
+        }
+        if (!state.report.locationParsed) {
+          state.report.locationError = 'Invalid location. Paste coordinates or a full Google Maps link.';
+          this.renderLocationError();
+          this.captureEvent('submit_report_location_validation_failed', { reason: 'invalid', source: 'submit_report_modal' });
+          document.getElementById('reportLocationInput')?.focus();
           return;
         }
 
@@ -1498,12 +1520,14 @@ const ModalSystem = (function() {
 
         try {
           await utils.apiPost('/api/user-reports', {
-            lat: state.coords.lat,
-            lon: state.coords.lng,
+            lat: state.report.locationParsed.lat,
+            lon: state.report.locationParsed.lon,
             report_kind: state.report.type,
             is_nearby_now: Boolean(document.getElementById('reportNearbyNow')?.checked),
-            note
+            note,
+            location_source: state.report.locationSource
           });
+          this.captureEvent('submit_report_submitted', { report_type: state.report.type, is_nearby_now: Boolean(document.getElementById('reportNearbyNow')?.checked), has_notes: Boolean(note), location_source: state.report.locationSource, source: 'submit_report_modal' });
 
           // Show success state
           formState.classList.add('hidden');
@@ -1515,6 +1539,8 @@ const ModalSystem = (function() {
           }, 3000);
 
         } catch (err) {
+          const status = err?.payload?.status || (err?.status ? 'server_error' : 'network_error');
+          this.captureEvent('submit_report_api_failed', { status, source: 'submit_report_modal', ...(status === 'invalid_location' && { location_input_raw_debug: state.report.locationRaw }) });
           if (err?.status === 422 && err?.code === 'REPORT_DESCRIPTION_TOO_SHORT') {
             errorEl.textContent = labels.reportMinChars;
             return;
@@ -1543,7 +1569,7 @@ const ModalSystem = (function() {
         const errorEl = document.getElementById('reportError');
         if (errorEl) errorEl.textContent = '';
         state.report.note = '';
-        this.updateSubmitState();
+        state.report.locationSourceLocked = false;
         
         // Reset to first option
         const firstType = document.querySelector('[data-report-type="active_construction"]');
@@ -2418,8 +2444,9 @@ const ModalSystem = (function() {
       state.coords.lng = lng;
       state.coords.valid = true;
       state.coords.key = `${lat.toFixed(4)},${lng.toFixed(4)}`;
-      modals.report.syncCoords();
-      modals.report.updateSubmitState();
+      if (state.modals.active === 'reportModalLayer') {
+        modals.report.initializeLocation();
+      }
     },
     
     clearCoords() {
@@ -2427,8 +2454,9 @@ const ModalSystem = (function() {
       state.coords.lng = null;
       state.coords.valid = false;
       state.coords.key = null;
-      modals.report.syncCoords();
-      modals.report.updateSubmitState();
+      if (state.modals.active === 'reportModalLayer') {
+        modals.report.initializeLocation();
+      }
     },
     
     updateAccess(tier, demandAllowed, dailyLimit = null) {
