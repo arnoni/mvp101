@@ -241,7 +241,7 @@ async def status(
     quota_repo: QuotaRepository = Depends(get_quota_repo),
 ):
     try:
-        anon_id = getattr(request.state, "anon_id", "unknown_anon")
+        anon_id = getattr(request.state, "anon_id", None) or "unknown_anon"
         user_id = getattr(request.state, "user_id", None)
         client_ip = get_client_ip(request)
         tier = getattr(request.state, "tier", TierStatus.FREE)
@@ -365,7 +365,7 @@ async def search(
                     "message": "Enter coordinates or a Google Maps URL to generate a report.",
                 },
             )
-        anon_id = getattr(request.state, "anon_id", "unknown_anon")
+        anon_id = getattr(request.state, "anon_id", None) or "unknown_anon"
         user_id = getattr(request.state, "user_id", None)
         tier = getattr(request.state, "tier", TierStatus.FREE)
         entitlement_stale = getattr(request.state, "entitlement_stale", False)
@@ -770,7 +770,7 @@ async def ugc_report_submit(
     quota_repo: QuotaRepository = Depends(get_quota_repo),
     policy_engine: PolicyEngine = Depends(get_policy_engine),
 ):
-    anon_id = getattr(request.state, "anon_id", "unknown_anon")
+    anon_id = getattr(request.state, "anon_id", None) or "unknown_anon"
     user_id = getattr(request.state, "user_id", None)
     tier = getattr(request.state, "tier", TierStatus.FREE)
     entitlement_stale = getattr(request.state, "entitlement_stale", False)
@@ -798,7 +798,7 @@ async def ugc_report_submit(
                     status_code=http_status.HTTP_400_BAD_REQUEST,
                     detail=ErrorResponse(error="EVIDENCE_URL_TOO_LONG", detail="Evidence URL exceeds maximum length.").model_dump()
                 )
-    anon_id = getattr(request.state, "anon_id", "unknown_anon")
+    anon_id = getattr(request.state, "anon_id", None) or "unknown_anon"
     user_id = getattr(request.state, "user_id", None)
     tier = getattr(request.state, "tier", TierStatus.FREE)
     entitlement_stale = getattr(request.state, "entitlement_stale", False)
