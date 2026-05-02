@@ -187,6 +187,25 @@ class MagicAuthService:
         self.db = db
         self.redis = redis
         self.payment_factory = payment_factory
+        self._magic_link_request_ip_supported: bool | None = None
+
+    async def _supports_magic_link_request_ip(self, conn) -> bool:
+        if self._magic_link_request_ip_supported is not None:
+            return self._magic_link_request_ip_supported
+
+        result = await conn.execute(
+            text(
+                """
+                SELECT 1
+                FROM information_schema.columns
+                WHERE table_name = 'magic_link_tokens'
+                  AND column_name = 'request_ip'
+                LIMIT 1
+                """
+            )
+        )
+        self._magic_link_request_ip_supported = result.scalar_one_or_none() is not None
+        return self._magic_link_request_ip_supported
         
     async def create_magic_link(
         self,
@@ -217,15 +236,16 @@ class MagicAuthService:
                     user_result = await conn.execute(upsert_user_stmt)
                     user_id = user_result.scalar_one()
 
-                    await conn.execute(
-                        insert(MagicLinkToken).values(
-                            user_id=user_id,
-                            email=normalized_email,
-                            token_hash=token_hash,
-                            expires_at=expires_at,
-                            request_ip=request_ip,
-                        )
-                    )
+                    insert_values = {
+                        "user_id": user_id,
+                        "email": normalized_email,
+                        "token_hash": token_hash,
+                        "expires_at": expires_at,
+                    }
+                    if await self._supports_magic_link_request_ip(conn):
+                        insert_values["request_ip"] = request_ip
+
+                    await conn.execute(insert(MagicLinkToken).values(**insert_values))
                 except Exception as e:
                     logger.error(f"MAGIC_AUTH_DB_INSERT_FAILED: {e}")
                     raise
