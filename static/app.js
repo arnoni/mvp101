@@ -197,6 +197,23 @@ document.addEventListener("DOMContentLoaded", () => {
     errorLocationNotSupported: document.body.dataset.labelErrorLocationNotSupported || "This location is outside supported regions. Please use a location inside supported coverage areas."
   };
 
+
+
+  function logClientException(eventName, err, context = {}) {
+    const payload = {
+      event: eventName,
+      error_name: err?.name || 'Error',
+      error_message: err?.message || 'Unknown client error',
+      ...context
+    };
+    console.error(eventName, payload);
+    if (window.Sentry?.captureException) {
+      window.Sentry.captureException(err || new Error(eventName), {
+        tags: { event: eventName, area: context?.area || 'app_js' },
+        extra: payload
+      });
+    }
+  }
   async function parseLocationPreview(raw, signal) {
     try {
       const parsed = await tryParseLocationInput(raw, signal);
@@ -1128,7 +1145,7 @@ const ModalSystem = (function() {
           modal.classList.add('open');
         }
       } catch (err) {
-        console.error(`Failed to open modal #${modalId}:`, err);
+        logClientException('modal_open_failed', err, { area: 'modal_core', modal_id: modalId });
         return null;
       }
       
@@ -1168,7 +1185,7 @@ const ModalSystem = (function() {
           modal.classList.remove('open');
         }
       } catch (err) {
-        console.error(`Failed to close modal #${modal.id}:`, err);
+        logClientException('modal_close_failed', err, { area: 'modal_core', modal_id: modal.id });
         return null;
       }
       
@@ -1436,12 +1453,22 @@ const ModalSystem = (function() {
 
         // Submit handler
         submitBtn?.addEventListener('click', async () => {
+          this.captureEvent('submit_report_submit_clicked', { source: 'submit_report_modal' });
           await this.submit();
         });
       },
 
-      captureEvent(name, props) {
-        if (window.posthog?.capture) window.posthog.capture(name, props);
+      captureEvent(name, props = {}) {
+        if (!window.posthog?.capture) return;
+        const distinctId = typeof window.posthog.get_distinct_id === 'function'
+          ? window.posthog.get_distinct_id()
+          : undefined;
+        const email = (state.unlock?.email || '').trim().toLowerCase() || undefined;
+        window.posthog.capture(name, {
+          ...props,
+          ...(distinctId ? { posthog_distinct_id: distinctId } : {}),
+          ...(email ? { email } : {})
+        });
       },
       renderLocationError() {
         const el = document.getElementById('reportLocationError');
@@ -1545,10 +1572,11 @@ const ModalSystem = (function() {
             errorEl.textContent = labels.reportMinChars;
             return;
           }
-          console.error('Report submit failed', {
+          logClientException('report_submit_failed', err, {
+            area: 'submit_report_modal',
+            source: 'submit_report_modal',
             code: err?.code,
             errorId: err?.errorId,
-            message: err?.message,
             payload: err?.payload
           });
           errorEl.textContent = this.formatTrackedError(err, 'REPORT_SUBMIT_FAILED');
@@ -1608,9 +1636,15 @@ const ModalSystem = (function() {
           core.open('shareModalLayer');
         });
 
-        nativeBtn?.addEventListener('click', () => this.shareNative());
+        nativeBtn?.addEventListener('click', () => {
+          this.captureEvent('share_modal_share_now_clicked', { source: 'share_modal' });
+          this.shareNative();
+        });
         copyLinkBtn?.addEventListener('click', () => this.copyLink());
-        copyAllBtn?.addEventListener('click', () => this.copyAll());
+        copyAllBtn?.addEventListener('click', () => {
+          this.captureEvent('share_modal_copy_text_link_clicked', { source: 'share_modal' });
+          this.copyAll();
+        });
 
         if (textarea && counter) {
           textarea.addEventListener('input', () => this.updateCharCount());
@@ -1618,6 +1652,19 @@ const ModalSystem = (function() {
         }
       },
 
+
+      captureEvent(name, props = {}) {
+        if (!window.posthog?.capture) return;
+        const distinctId = typeof window.posthog.get_distinct_id === 'function'
+          ? window.posthog.get_distinct_id()
+          : undefined;
+        const email = (state.unlock?.email || '').trim().toLowerCase() || undefined;
+        window.posthog.capture(name, {
+          ...props,
+          ...(distinctId ? { posthog_distinct_id: distinctId } : {}),
+          ...(email ? { email } : {})
+        });
+      },
       updateCharCount() {
         const textarea = document.getElementById('shareText');
         const counter = document.getElementById('shareCharCount');
@@ -1661,7 +1708,7 @@ const ModalSystem = (function() {
             this.showFeedback('Thanks for sharing!');
           } catch (err) {
             if (err.name !== 'AbortError') {
-              console.error('Share failed:', err);
+              logClientException('share_native_failed', err, { area: 'share_modal', source: 'share_modal' });
               if (errorEl) errorEl.textContent = labels.shareOpenFailed;
             }
           }
