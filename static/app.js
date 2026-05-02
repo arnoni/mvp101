@@ -650,11 +650,22 @@ document.addEventListener("DOMContentLoaded", () => {
       const resolvedScore = Number(
         construction.score ?? construction.construction_score ?? data.construction_score
       );
-      const score = Number.isFinite(resolvedScore) ? resolvedScore : 0;
-      state.construction = { status: "ready", score: score, coordKey: construction.coord_key || state.coords.key };
-      console.log("Triggering animateGauge with score:", score);
-      animateGauge(els.conBand, els.conNeedle, score);
-      els.conMsg.textContent = labels.constructionComingSoon;
+      if (Number.isFinite(resolvedScore)) {
+        const score = resolvedScore;
+        state.construction = { status: "ready", score: score, coordKey: construction.coord_key || state.coords.key };
+        console.log("Triggering animateGauge with score:", score);
+        animateGauge(els.conBand, els.conNeedle, score);
+        els.conMsg.textContent = construction.message || data.message || "Construction activity estimate";
+      } else {
+        state.construction.status = "idle";
+        els.conMsg.textContent = labels.constructionComingSoon;
+        logClientException("construction_score_missing", new Error("Missing numeric construction score"), {
+          feature: "construction_report",
+          ui_state: "coming_soon_after_valid_check",
+          has_valid_coordinates: true,
+          score_source: construction.score_source || data.score_source || "missing_or_not_used"
+        });
+      }
 
     } catch (e) {
       if (e.name !== "AbortError") {
