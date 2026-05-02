@@ -22,6 +22,7 @@ class SearchDependencies:
 class SearchService:
     CACHE_TTL_SECONDS = 120
     LOCK_TTL_SECONDS = 15
+    SIMULATED_FIXED_CONSTRUCTION_SCORE = 42
 
     def __init__(self, deps: SearchDependencies):
         self._deps = deps
@@ -99,18 +100,32 @@ class SearchService:
             construction = None
             demand = None
             if request.target in (SearchTarget.CONSTRUCTION, SearchTarget.BOTH):
-                construction_score = min(100, len(candidates) * 10)
-                if self._deps.poi_service is not None:
-                    bins = await self._deps.poi_service.get_construction_distance_bins(request.lat, request.lon)
-                    weighted = (
-                        int(bins.get("0_10", 0)) * 4
-                        + int(bins.get("10_20", 0)) * 3
-                        + int(bins.get("20_30", 0)) * 2
-                        + int(bins.get("30_40", 0)) * 1
+                construction_score = self.SIMULATED_FIXED_CONSTRUCTION_SCORE
+                score_source = "simulated_fixed_fallback"
+                try:
+                    if self._deps.poi_service is not None:
+                        bins = await self._deps.poi_service.get_construction_distance_bins(request.lat, request.lon)
+                        weighted = (
+                            int(bins.get("0_10", 0)) * 4
+                            + int(bins.get("10_20", 0)) * 3
+                            + int(bins.get("20_30", 0)) * 2
+                            + int(bins.get("30_40", 0)) * 1
+                        )
+                        construction_score = min(100, weighted * 10)
+                        score_source = "real"
+                    else:
+                        logger.info("construction_score_simulated_fallback_used", reason="poi_service_unavailable")
+                except Exception as exc:
+                    logger.warning(
+                        "construction_score_real_compute_failed",
+                        error=str(exc),
+                        lat=round(request.lat, 5),
+                        lon=round(request.lon, 5),
                     )
-                    construction_score = min(100, weighted * 10)
+                    logger.info("construction_score_simulated_fallback_used", reason="real_compute_error")
                 construction = GaugeResult(
                     score=construction_score,
+                    score_source=score_source,
                     coord_key=coord_key,
                     message_code="CONSTRUCTION_READY",
                     message="Construction analysis complete",

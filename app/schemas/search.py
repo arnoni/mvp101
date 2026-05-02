@@ -28,6 +28,7 @@ class SearchRequest(BaseModel):
 
 class GaugeResult(BaseModel):
     score: Optional[int] = None
+    score_source: Optional[str] = None
     coord_key: Optional[str] = None
     message_code: Optional[str] = None
     message: Optional[str] = None

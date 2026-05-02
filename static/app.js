@@ -647,7 +647,9 @@ document.addEventListener("DOMContentLoaded", () => {
         return;
       }
 
-      const resolvedScore = Number(construction.score);
+      const resolvedScore = Number(
+        construction.score ?? construction.construction_score ?? data.construction_score
+      );
       const score = Number.isFinite(resolvedScore) ? resolvedScore : 0;
       state.construction = { status: "ready", score: score, coordKey: construction.coord_key || state.coords.key };
       console.log("Triggering animateGauge with score:", score);
