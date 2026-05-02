@@ -679,7 +679,19 @@ async def user_report_submit(
             location_source=data.location_source,
             source="submit_report_modal",
         )
-        return UserReportResponse(ok=result["ok"], report_id=result["report_id"], duplicate=result.get("duplicate", False))
+        status = "duplicate_report" if result.get("duplicate", False) else "report_created"
+        message = (
+            "This location was recently reported. Thanks for the heads up anyway."
+            if result.get("duplicate", False)
+            else "Report submitted. Thanks for helping others avoid noisy surprises."
+        )
+        return UserReportResponse(
+            ok=result["ok"],
+            status=status,
+            report_id=result["report_id"],
+            duplicate=result.get("duplicate", False),
+            message=message,
+        )
     except ValidationError as exc:
         error_id = request_id or str(uuid.uuid4())
         logger.warning(

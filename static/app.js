@@ -927,7 +927,10 @@ const ModalSystem = (function() {
       locationParsed: null,
       locationError: null,
       locationSource: 'manual_input',
-      locationSourceLocked: false
+      locationSourceLocked: false,
+      uiState: 'idle',
+      submitAttemptId: 0,
+      autoCloseTimer: null
     },
     unlock: {
       plan: 'sim_1_day',
@@ -1466,8 +1469,15 @@ const ModalSystem = (function() {
 
         // Submit handler
         submitBtn?.addEventListener('click', async () => {
-          this.captureEvent('submit_report_submit_clicked', { source: 'submit_report_modal' });
+          this.captureEvent('report_submit_clicked', { source: 'submit_report_modal' });
           await this.submit();
+        });
+      },
+      setUiState(nextState, meta = {}) {
+        state.report.uiState = nextState;
+        this.captureEvent(`report_submit_state_${nextState}`, {
+          source: 'submit_report_modal',
+          ...meta
         });
       },
 
@@ -1531,35 +1541,63 @@ const ModalSystem = (function() {
           return;
         }
 
+        if (state.report.uiState === 'submitting' || state.report.uiState === 'validating') {
+          this.captureEvent('report_submit_duplicate_blocked', { source: 'submit_report_modal' });
+          return;
+        }
+        this.setUiState('validating');
+
         if (!(state.report.locationRaw || '').trim()) {
+          this.setUiState('error', { reason: 'empty_location' });
           state.report.locationError = 'Please enter coordinates or a Google Maps link.';
           this.renderLocationError();
-          this.captureEvent('submit_report_location_validation_failed', { reason: 'empty', source: 'submit_report_modal' });
+          this.captureEvent('report_validation_failed', { reason: 'empty_location', source: 'submit_report_modal' });
+          document.getElementById('reportLocationInput')?.focus();
+          return;
+        }
+        const rawLocation = (state.report.locationRaw || '').trim();
+        if (/^(https?:\/\/)?(maps\.app\.goo\.gl|goo\.gl\/maps)\//i.test(rawLocation)) {
+          this.setUiState('error', { reason: 'short_maps_link' });
+          state.report.locationError = "Short share links aren't supported. Please paste the full Google Maps URL or enter coordinates directly.";
+          this.renderLocationError();
+          this.captureEvent('report_validation_failed', { reason: 'short_maps_link', source: 'submit_report_modal' });
           document.getElementById('reportLocationInput')?.focus();
           return;
         }
         if (!state.report.locationParsed) {
+          await this.validateLocationOnBlur();
+        }
+        if (!state.report.locationParsed) {
+          this.setUiState('error', { reason: 'invalid_location' });
           state.report.locationError = 'Invalid location. Paste coordinates or a full Google Maps link.';
           this.renderLocationError();
-          this.captureEvent('submit_report_location_validation_failed', { reason: 'invalid', source: 'submit_report_modal' });
+          this.captureEvent('report_validation_failed', { reason: 'invalid_location', source: 'submit_report_modal' });
           document.getElementById('reportLocationInput')?.focus();
+          return;
+        }
+        if (!state.report.type) {
+          this.setUiState('error', { reason: 'missing_report_type' });
+          errorEl.textContent = 'Please select a report type.';
+          this.captureEvent('report_validation_failed', { reason: 'missing_report_type', source: 'submit_report_modal' });
           return;
         }
 
         const note = (state.report.note || '').trim();
-        if (note.length > 0 && note.length < 10) {
-          const err = new Error('Report must be at least 10 characters.');
-          err.code = 'REPORT_DESCRIPTION_TOO_SHORT';
-          err.errorId = utils.newErrorId('REPORT');
-          this.showError(this.formatTrackedError(err, 'REPORT_DESCRIPTION_TOO_SHORT'));
+        if (note.length > 180) {
+          this.setUiState('error', { reason: 'notes_too_long' });
+          errorEl.textContent = 'Notes are too long. Please shorten them and try again.';
+          this.captureEvent('report_validation_failed', { reason: 'notes_too_long', source: 'submit_report_modal' });
           return;
         }
-        
+
+        this.setUiState('submitting');
         errorEl.textContent = '';
         utils.setButtonLoading(btn, true);
+        const currentAttemptId = ++state.report.submitAttemptId;
 
         try {
-          await utils.apiPost('/api/user-reports', {
+          this.captureEvent('report_submit_sent', { source: 'submit_report_modal' });
+          const payload = await utils.apiPost('/api/user-reports', {
             lat: state.report.locationParsed.lat,
             lon: state.report.locationParsed.lon,
             report_kind: state.report.type,
@@ -1567,24 +1605,33 @@ const ModalSystem = (function() {
             note,
             location_source: state.report.locationSource
           });
-          this.captureEvent('submit_report_submitted', { report_type: state.report.type, is_nearby_now: Boolean(document.getElementById('reportNearbyNow')?.checked), has_notes: Boolean(note), location_source: state.report.locationSource, source: 'submit_report_modal' });
+          if (currentAttemptId !== state.report.submitAttemptId || state.modals.active !== 'reportModalLayer') {
+            return;
+          }
+          if (!payload?.ok || payload?.status !== 'report_created') {
+            const status = payload?.status || 'server_error';
+            throw Object.assign(new Error('Report submit failed'), { payload: { status }, status: payload?.http_status });
+          }
+          this.captureEvent('report_submit_api_success', { status: payload.status, source: 'submit_report_modal' });
+          this.setUiState('success');
 
           // Show success state
           formState.classList.add('hidden');
           successState.classList.remove('hidden');
-          
+          const successText = successState.querySelector('[data-report-success-message]');
+          if (successText) successText.textContent = payload.message || 'Report submitted. Thanks for helping others avoid noisy surprises.';
+
           // Reset after delay
-          setTimeout(() => {
+          state.report.autoCloseTimer = setTimeout(() => {
             core.close('reportModalLayer');
-          }, 3000);
+            this.captureEvent('report_modal_closed_after_success', { source: 'submit_report_modal' });
+            this.reset();
+          }, 2000);
 
         } catch (err) {
           const status = err?.payload?.status || (err?.status ? 'server_error' : 'network_error');
-          this.captureEvent('submit_report_api_failed', { status, source: 'submit_report_modal', ...(status === 'invalid_location' && { location_input_raw_debug: state.report.locationRaw }) });
-          if (err?.status === 422 && err?.code === 'REPORT_DESCRIPTION_TOO_SHORT') {
-            errorEl.textContent = labels.reportMinChars;
-            return;
-          }
+          this.setUiState('error', { status });
+          this.captureEvent('report_submit_api_failed', { error_code: status, source: 'submit_report_modal' });
           logClientException('report_submit_failed', err, {
             area: 'submit_report_modal',
             source: 'submit_report_modal',
@@ -1592,13 +1639,24 @@ const ModalSystem = (function() {
             errorId: err?.errorId,
             payload: err?.payload
           });
-          errorEl.textContent = this.formatTrackedError(err, 'REPORT_SUBMIT_FAILED');
+          const statusToMsg = {
+            invalid_location: 'Please enter valid coordinates or a full Google Maps link.',
+            notes_too_long: 'Notes are too long. Please shorten them and try again.',
+            duplicate_report: 'This location was recently reported. Thanks for the heads up anyway.',
+            quota_exceeded: "You've reached your report limit for now. Try again later.",
+            unauthorized: 'Your session may have expired. Please refresh and try again.',
+          };
+          errorEl.textContent = statusToMsg[status] || 'Something went wrong while submitting the report. Your text is still here. Please try again.';
         } finally {
           utils.setButtonLoading(btn, false);
         }
       },
 
       reset() {
+        if (state.report.autoCloseTimer) {
+          clearTimeout(state.report.autoCloseTimer);
+          state.report.autoCloseTimer = null;
+        }
         document.getElementById('reportFormState')?.classList.remove('hidden');
         document.getElementById('reportSuccessState')?.classList.add('hidden');
         const note = document.getElementById('reportNote');
@@ -1611,6 +1669,7 @@ const ModalSystem = (function() {
         if (errorEl) errorEl.textContent = '';
         state.report.note = '';
         state.report.locationSourceLocked = false;
+        state.report.uiState = 'idle';
         
         // Reset to first option
         const firstType = document.querySelector('[data-report-type="active_construction"]');

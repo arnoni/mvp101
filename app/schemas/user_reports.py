@@ -22,5 +22,7 @@ class UserReportRequest(BaseModel):
 
 class UserReportResponse(BaseModel):
     ok: bool
+    status: str = "report_created"
     report_id: str
     duplicate: bool = False
+    message: str = "Report submitted. Thanks for helping others avoid noisy surprises."
