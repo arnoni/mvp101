@@ -1694,6 +1694,24 @@ button:disabled {
 }
 
 .report-card__value { font-size: 15px; font-weight: 500; }
+.report-location-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 12px 14px;
+  border-radius: 12px;
+  background: rgba(6, 12, 30, 0.7);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: rgba(255,255,255,0.92);
+}
+.report-location-input:focus {
+  outline: none;
+  border-color: #ff5e00;
+}
+.report-location-error {
+  text-align: left;
+  margin-top: 8px;
+  font-size: 12px;
+}
 .optional { opacity: 0.5; font-weight: 400; text-transform: none; }
 
 /* --- PILLS (Report Type) --- */
