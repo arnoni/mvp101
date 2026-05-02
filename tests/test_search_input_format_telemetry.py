@@ -198,3 +198,22 @@ def test_no_raw_input_sent_to_aggregate_increment(client, monkeypatch):
     assert len(calls) == 1
     assert "raw_input" not in calls[0]
     assert raw_value not in str(calls[0])
+
+
+def test_missing_location_returns_400_with_contract_payload(client, monkeypatch):
+    calls = []
+
+    async def _increment(*_args, **kwargs):
+        calls.append(kwargs)
+
+    monkeypatch.setattr("app.api.routes.increment_input_format_stats", _increment)
+
+    response = client.post("/api/search", json={"target": "construction"})
+    assert response.status_code == 400
+    assert response.json() == {
+        "detail": {
+            "status": "missing_location",
+            "message": "Enter coordinates or a Google Maps URL to generate a report.",
+        }
+    }
+    assert len(calls) == 0

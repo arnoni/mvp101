@@ -27,3 +27,12 @@ def test_intent_created_path_transitions_to_check_email_step():
     snippet = app_js[app_js.index(marker): app_js.index(marker) + 1500]
     assert "this.showStep(3);" in snippet
     assert "Request saved for ${email}." in snippet
+
+
+def test_empty_location_is_not_sent_as_zero_or_simulated_report():
+    app_js = Path("static/app.js").read_text(encoding="utf-8")
+    assert "location_input: hasVisibleInput ? raw : null" in app_js
+    assert "client_parsed_lat: hasVisibleInput && parsed ? parsed.lat : null" in app_js
+    assert "client_parsed_lng: hasVisibleInput && parsed ? parsed.lng : null" in app_js
+    assert "Demand analyzed (Fallback)" not in app_js
+    assert "Simulated Analysis (Network Fallback)" not in app_js
