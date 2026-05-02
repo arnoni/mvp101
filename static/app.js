@@ -399,12 +399,14 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function buildSubmitPayload() {
+    const raw = state.input.original || "";
+    const hasVisibleInput = raw.trim().length > 0;
     const parsed = state.input.parsed;
     return {
-      location_input: state.input.original,
+      location_input: hasVisibleInput ? raw : null,
       input_kind_hint: state.input.kind,
-      client_parsed_lat: parsed ? parsed.lat : null,
-      client_parsed_lng: parsed ? parsed.lng : null,
+      client_parsed_lat: hasVisibleInput && parsed ? parsed.lat : null,
+      client_parsed_lng: hasVisibleInput && parsed ? parsed.lng : null,
       turnstile_token: state.verification.token
     };
   }
@@ -588,7 +590,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // 4. API CALLS WITH ABORT CONTROLLER
   async function fetchConstruction() {
-    if (!(state.coords.valid || state.input.kind === "google_maps_short_url")) return;
+    if (!(state.coords.valid || state.input.kind === "google_maps_short_url")) {
+      state.input.touched = true;
+      els.err.textContent = "Enter coordinates or a Google Maps URL to generate a report.";
+      return;
+    }
     
     // Auto-scroll to turnstile if needed
     if (state.verification.required && !state.verification.passed) {
@@ -630,8 +636,10 @@ document.addEventListener("DOMContentLoaded", () => {
           updateButtons();
           return;
         }
-        console.warn(`Construction API failed with status ${res.status}. Using fallback simulation.`);
-        data = { score: 87, coord_key: state.coords.key, message: 'Coming soon...' };
+        const backendMessage = data?.message || data?.detail?.message || data?.detail?.detail?.message;
+        state.construction.status = "idle";
+        els.conMsg.textContent = backendMessage || "Failed to check construction.";
+        return;
       } else {
         data = await res.json();
       }
@@ -650,7 +658,7 @@ document.addEventListener("DOMContentLoaded", () => {
       }
 
       const resolvedScore = Number(construction.score);
-      const score = Number.isFinite(resolvedScore) && resolvedScore > 0 ? resolvedScore : 87;
+      const score = Number.isFinite(resolvedScore) ? resolvedScore : 0;
       state.construction = { status: "ready", score: score, coordKey: construction.coord_key || state.coords.key };
       console.log("Triggering animateGauge with score:", score);
       animateGauge(els.conBand, els.conNeedle, score);
@@ -659,11 +667,8 @@ document.addEventListener("DOMContentLoaded", () => {
     } catch (e) {
       if (e.name !== "AbortError") {
         console.error("Construction fetch error:", e);
-        // Resilient Fallback Simulation
-        const fallbackData = { score: 87, coord_key: state.coords.key, message: 'Simulated Analysis (Network Fallback)' };
-        state.construction = { status: "ready", score: fallbackData.score, coordKey: fallbackData.coord_key };
-        animateGauge(els.conBand, els.conNeedle, fallbackData.score);
-        els.conMsg.textContent = fallbackData.message;
+        state.construction.status = "idle";
+        els.conMsg.textContent = "Failed to check construction.";
       }
     } finally {
       updateButtons();
@@ -671,7 +676,11 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   async function fetchDemand() {
-    if (!state.coords.valid) return;
+    if (!state.coords.valid) {
+      state.input.touched = true;
+      els.err.textContent = "Enter coordinates or a Google Maps URL to generate a report.";
+      return;
+    }
 
     if (!AccessState.get().demandAllowed) {
       if (window.ModalSystem?.openJoinResearchModal) {
@@ -711,8 +720,10 @@ document.addEventListener("DOMContentLoaded", () => {
           updateButtons();
           return;
         }
-        console.warn(`Demand API failed with status ${res.status}. Using fallback simulation.`);
-        data = { score: 65, coord_key: state.coords.key, message: 'Demand analyzed (Fallback)' };
+        const backendMessage = data?.message || data?.detail?.message || data?.detail?.detail?.message;
+        state.demand.status = "idle";
+        els.demMsg.textContent = backendMessage || "Failed to check demand.";
+        return;
       } else {
         data = await res.json();
       }
@@ -730,11 +741,8 @@ document.addEventListener("DOMContentLoaded", () => {
     } catch (e) {
       if (e.name !== "AbortError") {
         console.error("Demand fetch error:", e);
-        // Resilient Fallback Simulation
-        const fallbackData = { score: 65, coord_key: state.coords.key, message: 'Demand analyzed (Network Fallback)' };
-        state.demand = { status: "ready", score: fallbackData.score, coordKey: fallbackData.coord_key };
-        animateGauge(els.demBand, els.demNeedle, fallbackData.score);
-        els.demMsg.textContent = fallbackData.message;
+        state.demand.status = "idle";
+        els.demMsg.textContent = "Failed to check demand.";
       }
     } finally {
       updateButtons();

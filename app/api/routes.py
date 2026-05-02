@@ -357,6 +357,14 @@ async def search(
     query_history_repo: QueryHistoryRepository = Depends(get_query_history_repo),
 ):
     try:
+        if not data.location_input and (data.lat is None or data.lon is None):
+            raise HTTPException(
+                status_code=http_status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "status": "missing_location",
+                    "message": "Enter coordinates or a Google Maps URL to generate a report.",
+                },
+            )
         anon_id = getattr(request.state, "anon_id", "unknown_anon")
         user_id = getattr(request.state, "user_id", None)
         tier = getattr(request.state, "tier", TierStatus.FREE)
