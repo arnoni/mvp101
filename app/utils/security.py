@@ -46,41 +46,24 @@ async def protect_mutation(request: Request):
 
     return True
 @validate_call
-async def verify_turnstile(token: str, anon_id: str | None = None, client_ip: str | None = None) -> bool:
+async def verify_turnstile(token: str, client_ip: str | None = None) -> bool:
     """
     Verifies the Cloudflare Turnstile token against the Cloudflare API.
     Implements TSD Section 6: Turnstile verification.
     """
     # 0. SMOKE TEST BYPASS: If token matches secret smoke token, skip verification
     if settings.SMOKE_TURNSTILE_TOKEN and token == settings.SMOKE_TURNSTILE_TOKEN:
-        logger.info("SMOKE TEST BYPASS: Valid smoke token detected. Skipping Turnstile verification.")
+        logger.warning("turnstile_smoke_bypass", client_ip=client_ip)
         return True
-
-    cache_key = None
-    if anon_id:
-        cache_key = f"turnstile_ok:{anon_id}"
-    elif client_ip:
-        cache_key = f"turnstile_ok_ip:{client_ip}"
-    
-    if cache_key and redis_client:
-        try:
-            cached = await redis_client.get(cache_key)
-            if cached:
-                return True
-        except Exception:
-            logger.warning(
-                "E_TURNSTILE_CACHE_READ_FAILED failed reading turnstile cache; continuing with live verification",
-                extra={"event_code": "E_TURNSTILE_CACHE_READ_FAILED", "cache_key": cache_key},
-                exc_info=True,
-            )
 
     url = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
     data = {
         "secret": settings.CLOUDFLARE_TURNSTILE_SECRET,
-        "response": token
+        "response": token,
+        "remoteip": client_ip
     }
     
-    logger.info(f"Initiating Turnstile verification check for: {cache_key}")
+    logger.info("Initiating Turnstile verification check")
     try:
         async with httpx.AsyncClient(timeout=5) as client:
             response = await client.post(url, data=data)
@@ -88,22 +71,15 @@ async def verify_turnstile(token: str, anon_id: str | None = None, client_ip: st
             result = response.json()
             
             if result.get("success"):
-                allowed_preview_suffix = "-arnonis-projects.vercel.app"
                 if settings.ENV == "preview":
                     hostname = (result.get("hostname") or "").strip()
-                    if not hostname.endswith(allowed_preview_suffix):
+                    if not hostname.endswith(settings.TURNSTILE_PREVIEW_HOSTNAME_SUFFIX):
                         raise HTTPException(status_code=403, detail="Invalid Turnstile hostname")
-                logger.info(f"Turnstile EXACT verification SUCCESS for: {cache_key}")
-                if cache_key and redis_client:
-                    try:
-                        _ = await redis_client.setex(cache_key, 300, "1")
-                        logger.info(f"Turnstile success cached (5m) for: {cache_key}")
-                    except Exception as e:
-                        logger.error(f"Failed to cache Turnstile success for {cache_key}: {e}")
+                logger.info("Turnstile EXACT verification SUCCESS")
                 return True
             else:
                 error_codes = result.get('error-codes', [])
-                logger.warning(f"Turnstile verification FAILED for {cache_key}. Cloudflare Errors: {error_codes}")
+                logger.warning(f"Turnstile verification FAILED. Cloudflare Errors: {error_codes}")
                 return False
     except httpx.TimeoutException:
         # ... (error handling)

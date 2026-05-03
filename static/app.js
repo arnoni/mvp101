@@ -930,7 +930,8 @@ const ModalSystem = (function() {
       locationSourceLocked: false,
       uiState: 'idle',
       submitAttemptId: 0,
-      autoCloseTimer: null
+      autoCloseTimer: null,
+      turnstileToken: null
     },
     unlock: {
       plan: 'sim_1_day',
@@ -1209,6 +1210,15 @@ const ModalSystem = (function() {
       document.body.style.overflow = '';
 
       // Update state
+      if (modal.id === 'reportModalLayer') {
+        if (window.turnstile) {
+          try {
+            turnstile.reset("#report-turnstile-widget");
+          } catch(e) {}
+        }
+        state.report.turnstileToken = null;
+      }
+
       if (state.modals.active === modal.id) {
         state.modals.active = null;
       }
@@ -1419,6 +1429,8 @@ const ModalSystem = (function() {
         const locationInput = document.getElementById('reportLocationInput');
         const charCount = document.getElementById('reportCharCount');
 
+        this.updateSubmitButton();
+
         // Open handler
         btn?.addEventListener('click', () => {
           this.reset();
@@ -1475,10 +1487,18 @@ const ModalSystem = (function() {
       },
       setUiState(nextState, meta = {}) {
         state.report.uiState = nextState;
+        this.updateSubmitButton();
         this.captureEvent(`report_submit_state_${nextState}`, {
           source: 'submit_report_modal',
           ...meta
         });
+      },
+
+      updateSubmitButton() {
+        const submitBtn = document.getElementById('reportSubmitBtn');
+        if (submitBtn) {
+          submitBtn.disabled = !state.report.turnstileToken || state.report.uiState === 'submitting';
+        }
       },
 
       captureEvent(name, props = {}) {
@@ -1529,6 +1549,13 @@ const ModalSystem = (function() {
       },
 
       async submit() {
+        if (window.posthog) {
+          posthog.capture("user_report_submit_clicked", {
+            report_type: state.report.type,
+            nearby_now: Boolean(document.getElementById('reportNearbyNow')?.checked),
+            ui_surface: "submit_report_modal",
+          });
+        }
         const btn = document.getElementById('reportSubmitBtn');
         const errorEl = document.getElementById('reportError');
         const formState = document.getElementById('reportFormState');
@@ -1604,7 +1631,8 @@ const ModalSystem = (function() {
             report_kind: state.report.type,
             is_nearby_now: Boolean(document.getElementById('reportNearbyNow')?.checked),
             note,
-            location_source: state.report.locationSource
+            location_source: state.report.locationSource,
+            cf_turnstile_token: state.report.turnstileToken
           });
           if (currentAttemptId !== state.report.submitAttemptId || state.modals.active !== 'reportModalLayer') {
             return;
@@ -1646,10 +1674,15 @@ const ModalSystem = (function() {
             duplicate_report: 'This location was recently reported. Thanks for the heads up anyway.',
             quota_exceeded: "You've reached your report limit for now. Try again later.",
             unauthorized: 'Your session may have expired. Please refresh and try again.',
+            turnstile_required: 'Please complete the verification challenge and try again.',
+            turnstile_failed: 'Verification failed. Please try again.',
           };
-          errorEl.textContent = statusToMsg[status] || 'Something went wrong while submitting the report. Your text is still here. Please try again.';
+          errorEl.textContent = err?.payload?.message || statusToMsg[status] || 'Something went wrong while submitting the report. Your text is still here. Please try again.';
         } finally {
           utils.setButtonLoading(btn, false);
+          state.report.uiState = 'idle';
+          state.report.turnstileToken = null;
+          this.updateSubmitButton();
         }
       },
 
@@ -1677,6 +1710,14 @@ const ModalSystem = (function() {
         if (firstType) {
           firstType.click();
         }
+
+        if (window.turnstile) {
+          try {
+            turnstile.reset("#report-turnstile-widget");
+          } catch(e) {}
+        }
+        state.report.turnstileToken = null;
+        this.updateSubmitButton();
       },
 
       showError(msg) {
@@ -2536,6 +2577,32 @@ const ModalSystem = (function() {
           }
         });
       }
+    }
+  };
+
+  // ==========================================
+  // GLOBAL TURNSTILE CALLBACKS FOR REPORT MODAL
+  // ==========================================
+  window.onReportTurnstileSuccess = function(token) {
+    state.report.turnstileToken = token;
+    modals.report.updateSubmitButton();
+    if (window.posthog) {
+      posthog.capture("turnstile_widget_solved", { ui_surface: "submit_report_modal" });
+    }
+  };
+  window.onReportTurnstileError = function() {
+    state.report.turnstileToken = null;
+    modals.report.updateSubmitButton();
+    modals.report.showError("Verification failed. Please refresh and try again.");
+    if (window.posthog) {
+      posthog.capture("turnstile_widget_error", { ui_surface: "submit_report_modal" });
+    }
+  };
+  window.onReportTurnstileExpired = function() {
+    state.report.turnstileToken = null;
+    modals.report.updateSubmitButton();
+    if (window.posthog) {
+      posthog.capture("turnstile_widget_expired", { ui_surface: "submit_report_modal" });
     }
   };
 

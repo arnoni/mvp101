@@ -34,6 +34,7 @@ class Settings(BaseSettings):
     SENTRY_DSN: Optional[str] = Field(None, description="Sentry DSN for error reporting")
     RELEASE: Optional[str] = Field(None, description="Application release version for Sentry")
     MAX_MAPBOX_MONTHLY: int = Field(90000, description="Hard cap for Mapbox requests per month (TSD 10)")
+    TURNSTILE_PREVIEW_HOSTNAME_SUFFIX: str = Field("-arnonis-projects.vercel.app", description="Suffix for allowed preview Turnstile hostnames")
 
     # --- Feature Flags (Impl Plan 2.1) ---
     ENABLE_REDIS: bool = Field(False, description="Feature flag for Redis")

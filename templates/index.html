@@ -417,6 +417,16 @@
             <!-- ERROR -->
             <div class="report-error" id="reportError" role="alert"></div>
 
+            <div
+              class="cf-turnstile"
+              data-sitekey="{{ turnstile_site_key }}"
+              data-theme="dark"
+              data-callback="onReportTurnstileSuccess"
+              data-error-callback="onReportTurnstileError"
+              data-expired-callback="onReportTurnstileExpired"
+              id="report-turnstile-widget"
+            ></div>
+
             <!-- ACTIONS -->
             <div class="report-actions">
               <button class="report-submit" type="button" id="reportSubmitBtn">
@@ -844,6 +854,7 @@
   </main>
 
   <script src="/static/app.js?v=1.2.1"></script>
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 </body>
 
 </html>

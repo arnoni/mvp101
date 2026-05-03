@@ -223,7 +223,7 @@ async def run_gate(
                     error_id=getattr(request.state, "request_id", None),
                 ).model_dump(),
             )
-        ok = await verify_turnstile(token=data_turnstile_token, anon_id=anon_id, client_ip=client_ip)
+        ok = await verify_turnstile(token=data_turnstile_token, client_ip=client_ip)
         if not ok:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

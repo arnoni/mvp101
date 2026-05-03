@@ -14,7 +14,7 @@ from app.schemas.search import SearchRequest, SearchResponse, SearchTarget
 from app.schemas.user_reports import UserReportRequest, UserReportResponse
 from app.services.search_service import SearchService, SearchDependencies
 from app.services.area_bucketer import AreaBucketer
-from app.services.analytics import capture
+from app.services.analytics import capture, posthog
 from app.services.entitlement_service import EntitlementService, TierStatus
 from app.services.policy_engine import PolicyEngine, RequestContext, PolicyVerdict, PolicyDecision, run_gate
 from app.services.quota_repository import QuotaRepository
@@ -639,12 +639,29 @@ async def user_report_submit(
 ):
     request_id = get_req_id(request)
     try:
+        if not data.cf_turnstile_token:
+            logger.warning("user_report_rejected", reason_code="turnstile_required", source="submit_report_modal")
+            raise HTTPException(
+                status_code=http_status.HTTP_403_FORBIDDEN,
+                detail={"ok": False, "reason_code": "turnstile_required", "message": "Please complete the security check to submit a report."}
+            )
+            
+        client_ip = get_client_ip(request)
+        is_valid = await verify_turnstile(token=data.cf_turnstile_token, client_ip=client_ip)
+        
+        if not is_valid:
+            logger.warning("user_report_rejected", reason_code="turnstile_failed", source="submit_report_modal")
+            raise HTTPException(
+                status_code=http_status.HTTP_403_FORBIDDEN,
+                detail={"ok": False, "reason_code": "turnstile_failed", "message": "Security check failed. Please refresh and try again."}
+            )
+
         validation_reason = validate_report_location(data.lat, data.lon)
         if validation_reason:
             logger.warning(
-                "user_report_rejected_invalid_location",
+                "user_report_rejected",
                 user_id=getattr(request.state, "identity_id", None),
-                reason=validation_reason,
+                reason_code=validation_reason,
                 source="submit_report_modal",
             )
             return JSONResponse(
@@ -679,6 +696,23 @@ async def user_report_submit(
             location_source=data.location_source,
             source="submit_report_modal",
         )
+        
+        user_id = getattr(request.state, "identity_id", "anonymous")
+        capture(
+            user_id,
+            "user_report_submitted",
+            {
+                "report_type": data.report_kind.value,
+                "is_nearby_now": data.is_nearby_now,
+                "has_notes": bool(note_stripped),
+                "location_source": data.location_source,
+                "source": "submit_report_modal",
+                "duplicate": result.get("duplicate", False)
+            }
+        )
+        if posthog:
+            posthog.flush()
+            
         status = "duplicate_report" if result.get("duplicate", False) else "report_created"
         message = (
             "This location was recently reported. Thanks for the heads up anyway."

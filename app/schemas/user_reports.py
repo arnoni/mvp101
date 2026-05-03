@@ -16,7 +16,7 @@ class UserReportRequest(BaseModel):
     report_kind: ReportKind
     is_nearby_now: bool = False
     note: Optional[str] = Field(default="", max_length=180)
-    turnstile_token: Optional[str] = None
+    cf_turnstile_token: Optional[str] = None
     location_source: Literal["hero_prefill", "manual_input"] | None = None
 
 
