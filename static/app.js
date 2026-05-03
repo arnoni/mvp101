@@ -1647,7 +1647,7 @@ const ModalSystem = (function() {
           }
           if (!payload?.ok || payload?.status !== 'report_created') {
             const status = payload?.status || 'server_error';
-            throw Object.assign(new Error('Report submit failed'), { payload: { status }, status: payload?.http_status });
+            throw Object.assign(new Error(payload?.message || 'Report submit failed'), { payload, status: payload?.http_status });
           }
           this.captureEvent('report_submit_api_success', { status: payload.status, source: 'submit_report_modal' });
           this.setUiState('success');
@@ -1668,11 +1668,17 @@ const ModalSystem = (function() {
 
         } catch (err) {
           const reasonCode = err?.payload?.detail?.reason_code || err?.payload?.reason_code;
+          const apiCode = (err?.payload?.code || err?.payload?.detail?.code || '').toString().toUpperCase();
           const status = reasonCode || err?.payload?.status || (err?.status ? 'server_error' : 'network_error');
           this.setUiState('error', { status });
           if (window._resetReportTurnstile) window._resetReportTurnstile();
           if (window.posthog?.capture) {
-            window.posthog.capture('report_submit_api_failed', { error_code: status, source: 'submit_report_modal' });
+            window.posthog.capture('report_submit_failed', {
+              error_code: status,
+              reason_code: reasonCode || (apiCode === 'TURNSTILE_FAILED' ? 'turnstile_failed' : undefined),
+              source: 'submit_report_modal',
+              request_id: err?.payload?.request_id || err?.errorId || null,
+            });
           }
           // Safe exception logging — does not depend on outer-scope logClientException
           try {
@@ -1691,9 +1697,12 @@ const ModalSystem = (function() {
             quota_exceeded: "You've reached your report limit for now. Try again later.",
             unauthorized: 'Your session may have expired. Please refresh and try again.',
             turnstile_required: 'Please complete the verification challenge and try again.',
-            turnstile_failed: 'Verification expired. Please complete the check again.',
+            turnstile_failed: 'Verification failed. Please complete the human check again and resubmit.',
           };
-          errorEl.textContent = statusToMsg[status] || err?.message || 'Something went wrong while submitting the report. Your text is still here. Please try again.';
+          const fallbackMessage = 'We couldn't submit your report. Please try again in a moment.';
+          const apiMessage = typeof err?.payload?.message === 'string' ? err.payload.message : '';
+          const errMessage = typeof err?.message === 'string' ? err.message : '';
+          errorEl.textContent = statusToMsg[status] || (apiCode === 'TURNSTILE_FAILED' ? statusToMsg.turnstile_failed : '') || apiMessage || errMessage || fallbackMessage;
         } finally {
           utils.setButtonLoading(btn, false);
           // Only clear uiState — token and button state are managed by Turnstile callbacks
