@@ -1162,7 +1162,8 @@ const ModalSystem = (function() {
           modal.classList.add('open');
         }
       } catch (err) {
-        logClientException('modal_open_failed', err, { area: 'modal_core', modal_id: modalId });
+        console.error('modal_open_failed', { modal_id: modalId, error: err?.message });
+        if (window.Sentry?.captureException) { try { window.Sentry.captureException(err); } catch(e) {} }
         return null;
       }
       
@@ -1181,6 +1182,11 @@ const ModalSystem = (function() {
       // Trigger open callback if exists
       const event = new CustomEvent('modal:open', { detail: { modalId, options } });
       modal.dispatchEvent(event);
+
+      // Initialize Turnstile widget when report modal opens
+      if (modalId === 'reportModalLayer' && window._initReportTurnstile) {
+        window._initReportTurnstile();
+      }
 
       return modal;
     },
@@ -1202,7 +1208,8 @@ const ModalSystem = (function() {
           modal.classList.remove('open');
         }
       } catch (err) {
-        logClientException('modal_close_failed', err, { area: 'modal_core', modal_id: modal.id });
+        console.error('modal_close_failed', { modal_id: modal.id, error: err?.message });
+        if (window.Sentry?.captureException) { try { window.Sentry.captureException(err); } catch(e) {} }
         return null;
       }
       
@@ -1210,13 +1217,8 @@ const ModalSystem = (function() {
       document.body.style.overflow = '';
 
       // Update state
-      if (modal.id === 'reportModalLayer') {
-        if (window.turnstile) {
-          try {
-            turnstile.reset("#report-turnstile-widget");
-          } catch(e) {}
-        }
-        state.report.turnstileToken = null;
+      if (modal.id === 'reportModalLayer' && window._resetReportTurnstile) {
+        window._resetReportTurnstile();
       }
 
       if (state.modals.active === modal.id) {
@@ -1658,16 +1660,22 @@ const ModalSystem = (function() {
           }, 2000);
 
         } catch (err) {
-          const status = err?.payload?.status || (err?.status ? 'server_error' : 'network_error');
+          const reasonCode = err?.payload?.detail?.reason_code || err?.payload?.reason_code;
+          const status = reasonCode || err?.payload?.status || (err?.status ? 'server_error' : 'network_error');
           this.setUiState('error', { status });
-          this.captureEvent('report_submit_api_failed', { error_code: status, source: 'submit_report_modal' });
-          logClientException('report_submit_failed', err, {
-            area: 'submit_report_modal',
-            source: 'submit_report_modal',
-            code: err?.code,
-            errorId: err?.errorId,
-            payload: err?.payload
-          });
+          if (window.posthog?.capture) {
+            window.posthog.capture('report_submit_api_failed', { error_code: status, source: 'submit_report_modal' });
+          }
+          // Safe exception logging — does not depend on outer-scope logClientException
+          try {
+            if (window.Sentry?.captureException) {
+              window.Sentry.captureException(err, {
+                tags: { event: 'report_submit_failed', area: 'submit_report_modal' },
+                extra: { code: err?.code, errorId: err?.errorId, payload: err?.payload, status }
+              });
+            }
+          } catch(sentryErr) { /* never let Sentry crash the handler */ }
+          console.error('report_submit_failed', { status, code: err?.code, errorId: err?.errorId });
           const statusToMsg = {
             invalid_location: 'Please enter valid coordinates or a full Google Maps link.',
             notes_too_long: 'Notes are too long. Please shorten them and try again.',
@@ -1675,14 +1683,17 @@ const ModalSystem = (function() {
             quota_exceeded: "You've reached your report limit for now. Try again later.",
             unauthorized: 'Your session may have expired. Please refresh and try again.',
             turnstile_required: 'Please complete the verification challenge and try again.',
-            turnstile_failed: 'Verification failed. Please try again.',
+            turnstile_failed: 'Verification expired. Please complete the check again.',
           };
-          errorEl.textContent = err?.payload?.message || statusToMsg[status] || 'Something went wrong while submitting the report. Your text is still here. Please try again.';
+          errorEl.textContent = statusToMsg[status] || err?.message || 'Something went wrong while submitting the report. Your text is still here. Please try again.';
+          // Reset widget so user can get a fresh token
+          if (window._resetReportTurnstile) window._resetReportTurnstile();
         } finally {
           utils.setButtonLoading(btn, false);
-          state.report.uiState = 'idle';
-          state.report.turnstileToken = null;
-          this.updateSubmitButton();
+          // Only clear uiState — token and button state are managed by Turnstile callbacks
+          if (state.report.uiState !== 'success') {
+            state.report.uiState = 'idle';
+          }
         }
       },
 
@@ -1711,13 +1722,12 @@ const ModalSystem = (function() {
           firstType.click();
         }
 
-        if (window.turnstile) {
-          try {
-            turnstile.reset("#report-turnstile-widget");
-          } catch(e) {}
+        if (window._resetReportTurnstile) {
+          window._resetReportTurnstile();
+        } else {
+          state.report.turnstileToken = null;
+          this.updateSubmitButton();
         }
-        state.report.turnstileToken = null;
-        this.updateSubmitButton();
       },
 
       showError(msg) {
@@ -2581,30 +2591,81 @@ const ModalSystem = (function() {
   };
 
   // ==========================================
-  // GLOBAL TURNSTILE CALLBACKS FOR REPORT MODAL
+  // REPORT MODAL TURNSTILE — EXPLICIT RENDER
+  // Renders the widget once Turnstile is ready,
+  // using programmatic callbacks (no data-callback
+  // attributes on the div — avoids CSP inline issues
+  // and works with a single non-explicit script tag).
   // ==========================================
-  window.onReportTurnstileSuccess = function(token) {
-    state.report.turnstileToken = token;
-    modals.report.updateSubmitButton();
-    if (window.posthog) {
-      posthog.capture("turnstile_widget_solved", { ui_surface: "submit_report_modal" });
+  let _reportWidgetId = null;
+
+  function _renderReportTurnstile() {
+    const container = document.getElementById('report-turnstile-widget');
+    if (!container) return;
+    const sitekey = (container.dataset.sitekey || '').trim();
+    if (!sitekey) {
+      console.warn('[Turnstile] report widget: sitekey missing');
+      return;
     }
-  };
-  window.onReportTurnstileError = function() {
+    // Already rendered — don't double-render
+    if (_reportWidgetId !== null) return;
+    _reportWidgetId = window.turnstile.render(container, {
+      sitekey,
+      theme: container.dataset.theme || 'dark',
+      callback: function(token) {
+        state.report.turnstileToken = token;
+        modals.report.updateSubmitButton();
+        if (window.posthog?.capture) {
+          window.posthog.capture('turnstile_widget_solved', { ui_surface: 'submit_report_modal' });
+        }
+      },
+      'error-callback': function() {
+        state.report.turnstileToken = null;
+        modals.report.updateSubmitButton();
+        modals.report.showError('Verification failed. Please refresh and try again.');
+        if (window.posthog?.capture) {
+          window.posthog.capture('turnstile_widget_error', { ui_surface: 'submit_report_modal' });
+        }
+      },
+      'expired-callback': function() {
+        state.report.turnstileToken = null;
+        modals.report.updateSubmitButton();
+        if (window.posthog?.capture) {
+          window.posthog.capture('turnstile_widget_expired', { ui_surface: 'submit_report_modal' });
+        }
+      }
+    });
+  }
+
+  function _resetReportTurnstile() {
+    if (window.turnstile && _reportWidgetId !== null) {
+      try { window.turnstile.reset(_reportWidgetId); } catch(e) {}
+    }
     state.report.turnstileToken = null;
     modals.report.updateSubmitButton();
-    modals.report.showError("Verification failed. Please refresh and try again.");
-    if (window.posthog) {
-      posthog.capture("turnstile_widget_error", { ui_surface: "submit_report_modal" });
+  }
+
+  // Called whenever the report modal opens — render or reset
+  window._initReportTurnstile = function() {
+    if (!window.turnstile) {
+      // Script not loaded yet; retry until ready
+      const poll = setInterval(() => {
+        if (window.turnstile) {
+          clearInterval(poll);
+          _renderReportTurnstile();
+        }
+      }, 100);
+      return;
+    }
+    if (_reportWidgetId !== null) {
+      // Widget already rendered — just reset it for a fresh token
+      _resetReportTurnstile();
+    } else {
+      _renderReportTurnstile();
     }
   };
-  window.onReportTurnstileExpired = function() {
-    state.report.turnstileToken = null;
-    modals.report.updateSubmitButton();
-    if (window.posthog) {
-      posthog.capture("turnstile_widget_expired", { ui_surface: "submit_report_modal" });
-    }
-  };
+
+  window._resetReportTurnstile = _resetReportTurnstile;
 
   // ==========================================
   // PUBLIC API

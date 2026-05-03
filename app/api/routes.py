@@ -640,7 +640,8 @@ async def user_report_submit(
     request_id = get_req_id(request)
     try:
         if not data.cf_turnstile_token:
-            logger.warning("user_report_rejected", reason_code="turnstile_required", source="submit_report_modal")
+            logger.warning("user_report_rejected", reason_code="turnstile_required", source="submit_report_modal",
+                           has_token=False, token_length=0)
             raise HTTPException(
                 status_code=http_status.HTTP_403_FORBIDDEN,
                 detail={"ok": False, "reason_code": "turnstile_required", "message": "Please complete the security check to submit a report."}
@@ -650,7 +651,8 @@ async def user_report_submit(
         is_valid = await verify_turnstile(token=data.cf_turnstile_token, client_ip=client_ip)
         
         if not is_valid:
-            logger.warning("user_report_rejected", reason_code="turnstile_failed", source="submit_report_modal")
+            logger.warning("user_report_rejected", reason_code="turnstile_failed", source="submit_report_modal",
+                           has_token=True, token_length=len(data.cf_turnstile_token))
             raise HTTPException(
                 status_code=http_status.HTTP_403_FORBIDDEN,
                 detail={"ok": False, "reason_code": "turnstile_failed", "message": "Security check failed. Please refresh and try again."}
