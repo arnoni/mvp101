@@ -1,0 +1,27 @@
+{
+  "name": "geo-proximity-lead-magnet",
+  "version": "1.0.0",
+  "description": "DillDrill - A privacy-focused tool for detecting construction noise and real-estate points of interest (POIs)",
+  "private": true,
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/arnoni/mvp101.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/arnoni/mvp101/issues"
+  },
+  "homepage": "https://github.com/arnoni/mvp101#readme",
+  "dependencies": {
+    "@vercel/speed-insights": "^2.0.0"
+  }
+}
