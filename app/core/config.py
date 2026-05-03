@@ -43,6 +43,10 @@ class Settings(BaseSettings):
     ADMIN_BYPASS_TOKEN: Optional[str] = Field(None, description="Signed admin token to bypass quotas/fallbacks")
     DATABASE_URL: Optional[str] = Field(None, description="PostgreSQL connection string (e.g., Neon) with sslmode=require")
     APP_ORIGIN: Optional[str] = Field(None, description="Allowed origin for CSRF checks, e.g. https://yourdomain.com")
+    APP_BASE_URL: Optional[str] = Field(None, description="Canonical application base URL")
+    PUBLIC_BASE_URL: Optional[str] = Field(None, description="Public base URL alias")
+    NEXT_PUBLIC_SITE_URL: Optional[str] = Field(None, description="Client-visible site URL")
+    SITE_URL: Optional[str] = Field(None, description="Legacy canonical site URL")
 
     # --- Constraints & Limitations (TSD Section 10) ---
     # Backward-compatible legacy key (prefer APP_BOUNDING_BOX).
