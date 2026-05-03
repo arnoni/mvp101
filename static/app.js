@@ -752,11 +752,25 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
+  function safeTurnstileDebug(payload) {
+    try {
+      if (window && window.localStorage && window.localStorage.getItem('dd_turnstile_debug') === '1') {
+        console.info("[turnstile] init", payload);
+      }
+    } catch (_err) { /* silent by design */ }
+  }
+
   function renderTurnstile() {
     els.turnstileSlot.classList.remove("hidden");
     ensureTurnstileScript();
 
     const sitekey = (document.body.dataset.turnstileSitekey || "").trim();
+    safeTurnstileDebug({
+      hostname: window.location.hostname,
+      origin: window.location.origin,
+      hasSiteKey: Boolean(sitekey),
+      source: "hero_search"
+    });
     if (!sitekey || ["none", "null", "undefined"].includes(sitekey.toLowerCase())) {
       console.error("Turnstile site key is missing or invalid.");
       els.conMsg.textContent = labels.verificationUnavailableSitekeyMissing;
@@ -2710,6 +2724,12 @@ const ModalSystem = (function() {
 
   window._initUnlockTurnstile = function() {
     const container = document.getElementById('unlock-turnstile-widget');
+    safeTurnstileDebug({
+      hostname: window.location.hostname,
+      origin: window.location.origin,
+      hasSiteKey: Boolean(container && container.dataset && container.dataset.sitekey),
+      source: "join_research_access_modal"
+    });
     const statusEl = document.getElementById('unlockTurnstileStatusMsg');
     if (!container) return;
     const sitekey = (container.dataset.sitekey || '').trim();

@@ -6,6 +6,7 @@ from fastapi import Request, HTTPException, status
 from fastapi.responses import JSONResponse
 import httpx
 import logging
+import sentry_sdk
 from app.core.config import settings
 from app.models.dto import ErrorResponse
 from pydantic import validate_call
@@ -21,6 +22,19 @@ except Exception as e:
     logger.error(f"Security utils: Failed to import redis_client: {e}")
     redis_client = None
 
+
+
+def _capture_turnstile_issue(event: str, *, level: str = "warning", **context) -> None:
+    try:
+        with sentry_sdk.push_scope() as scope:
+            scope.set_tag("component", "turnstile")
+            scope.set_tag("event", event)
+            for key, value in context.items():
+                scope.set_extra(key, value)
+            sentry_sdk.capture_message(event, level=level)
+    except Exception:
+        # Never let observability break auth/verification flow
+        pass
 async def protect_mutation(request: Request):
     # A. Enforce JSON only
     ct = request.headers.get("content-type", "")
@@ -46,7 +60,7 @@ async def protect_mutation(request: Request):
 
     return True
 @validate_call
-async def verify_turnstile(token: str, client_ip: str | None = None) -> bool:
+async def verify_turnstile(token: str, client_ip: str | None = None, *, source: str | None = None, origin: str | None = None, hostname: str | None = None) -> bool:
     """
     Verifies the Cloudflare Turnstile token against the Cloudflare API.
     Implements TSD Section 6: Turnstile verification.
@@ -78,8 +92,9 @@ async def verify_turnstile(token: str, client_ip: str | None = None) -> bool:
                 logger.info("Turnstile EXACT verification SUCCESS")
                 return True
             else:
-                error_codes = result.get('error-codes', [])
-                logger.warning(f"Turnstile verification FAILED. Cloudflare Errors: {error_codes}")
+                error_codes = result.get("error-codes", [])
+                logger.warning("turnstile_verification_failed", cloudflare_error_codes=error_codes, source=source, origin=origin, hostname=hostname, client_ip=client_ip)
+                _capture_turnstile_issue("turnstile_verification_failed", cloudflare_error_codes=error_codes, source=source, origin=origin, hostname=hostname, client_ip=client_ip)
                 return False
     except httpx.TimeoutException:
         # ... (error handling)
@@ -92,10 +107,12 @@ async def verify_turnstile(token: str, client_ip: str | None = None) -> bool:
             ).model_dump()
         )
     except httpx.HTTPStatusError as e:
-        logger.error(f"Turnstile API returned error: {e}")
+        logger.error("turnstile_siteverify_http_error", status_code=e.response.status_code if e.response else None, source=source, origin=origin, hostname=hostname, client_ip=client_ip)
+        _capture_turnstile_issue("turnstile_siteverify_http_error", level="error", status_code=e.response.status_code if e.response else None, source=source, origin=origin, hostname=hostname, client_ip=client_ip)
         return False
     except Exception as e:
         logger.error(f"Unexpected error during Turnstile verification: {e}")
+        _capture_turnstile_issue("turnstile_verification_unexpected_error", level="error", error_class=e.__class__.__name__, error_detail=str(e), source=source, origin=origin, hostname=hostname, client_ip=client_ip)
         return False
 
 async def is_turnstile_verified(anon_id: str | None = None, client_ip: str | None = None) -> bool:

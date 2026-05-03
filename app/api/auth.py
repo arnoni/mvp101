@@ -22,7 +22,7 @@ from app.services.analytics import capture
 from app.services.entitlement_service import TierStatus
 from app.services.magic_auth_service import MagicAuthService, PaymentGatewayFactory
 from app.utils.security import get_client_ip, verify_turnstile
-from app.utils.url import resolve_checkout_base
+from app.utils.url import resolve_public_base_url
 from email_service import EmailService
 
 logger = structlog.get_logger(__name__)
@@ -166,7 +166,7 @@ async def _send_magic_link_email(*, email: str, request_ip: str | None, db_engin
             payment_factory=PaymentGatewayFactory(),
         )
         token = await service.create_magic_link(email=email, request_ip=request_ip)
-        app_origin = settings.APP_ORIGIN or "http://localhost:8000"
+        app_origin = resolve_public_base_url()
         magic_link = f"{app_origin}/api/auth/magic?token={token}"
         email_service = EmailService()
         sent = bool(
@@ -539,7 +539,7 @@ async def _resend_magic_link_impl(payload: MagicLinkRequest, request: Request, *
         logger.error("magic_link_token_insert_failed", email=email, error=str(exc))
         return generic_response
 
-    app_origin = settings.APP_ORIGIN or "http://localhost:8000"
+    app_origin = resolve_public_base_url()
     magic_link = f"{app_origin}/api/auth/magic?token={raw_token}"
     try:
         email_service = EmailService()
