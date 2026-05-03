@@ -195,7 +195,7 @@ def _map_user_report_to_ugc(data: UserReportRequest) -> UGCReportRequest:
         category=category,
         severity=3,
         evidence_urls=None,
-        turnstile_token=data.turnstile_token,
+        turnstile_token=data.cf_turnstile_token,
     )
 
 class ParseLocationRequest(BaseModel):
