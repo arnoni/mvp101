@@ -20,6 +20,9 @@ build/
 *.whl
 *.tar.gz
 
+# Node.js
+node_modules/
+
 # Coverage & test
 .pytest_cache/
 .coverage
