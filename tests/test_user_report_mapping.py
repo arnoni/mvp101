@@ -45,3 +45,18 @@ def test_map_user_report_short_note_keeps_user_text():
 
     assert mapped.title == "Possible construction observed"
     assert mapped.description == "happy"
+
+
+def test_map_user_report_maps_cf_turnstile_token():
+    payload = UserReportRequest(
+        lat=16.047079,
+        lon=108.206230,
+        report_kind=ReportKind.CONSTRUCTION_ENDED,
+        is_nearby_now=True,
+        note="Done",
+        cf_turnstile_token="cf-token-123",
+    )
+
+    mapped = _map_user_report_to_ugc(payload)
+
+    assert mapped.turnstile_token == "cf-token-123"
