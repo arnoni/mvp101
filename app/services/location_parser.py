@@ -309,6 +309,12 @@ def extract_lat_lng_from_google_maps_url(url: str) -> tuple[float, float, str]:
         validate_lat_lng(lat, lng)
         return lat, lng, "viewport_center"
 
+    try:
+        dms_parsed = parse_degree_pair(decoded)
+        return dms_parsed.latitude, dms_parsed.longitude, "decoded_dms"
+    except MalformedLocationInputError:
+        pass
+
     raise MalformedLocationInputError(
         "Could not extract coordinates from the resolved Google Maps URL. "
         "The link may point to a place page without explicit coordinates."

@@ -1699,7 +1699,7 @@ const ModalSystem = (function() {
             turnstile_required: 'Please complete the verification challenge and try again.',
             turnstile_failed: 'Verification failed. Please complete the human check again and resubmit.',
           };
-          const fallbackMessage = 'We couldn't submit your report. Please try again in a moment.';
+          const fallbackMessage = "We couldn't submit your report. Please try again in a moment.";
           const apiMessage = typeof err?.payload?.message === 'string' ? err.payload.message : '';
           const errMessage = typeof err?.message === 'string' ? err.message : '';
           errorEl.textContent = statusToMsg[status] || (apiCode === 'TURNSTILE_FAILED' ? statusToMsg.turnstile_failed : '') || apiMessage || errMessage || fallbackMessage;

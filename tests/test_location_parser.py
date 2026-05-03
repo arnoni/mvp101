@@ -101,6 +101,24 @@ def test_parse_google_long_place_3d_4d_with_g_ep():
     assert parsed.longitude == pytest.approx(108.2548651)
 
 
+
+
+def test_parse_google_long_url_with_encoded_dms_and_place_coordinates():
+    url = "https://www.google.com/maps/place/16%C2%B004'28.0%22N+108%C2%B014'38.5%22E/@16.0744512,108.2414626,17z/data=!3m1!4b1!4m4!3m3!8m2!3d16.0744512!4d108.2440375"
+    parsed = parse_google_maps_url(url)
+    assert parsed.resolution_method == "place_3d4d"
+    assert parsed.latitude == pytest.approx(16.0744512)
+    assert parsed.longitude == pytest.approx(108.2440375)
+
+
+def test_parse_google_long_url_with_encoded_dms_only():
+    url = "https://www.google.com/maps/place/16%C2%B004'28.0%22N+108%C2%B014'38.5%22E"
+    parsed = parse_google_maps_url(url)
+    assert parsed.resolution_method == "decoded_dms"
+    assert parsed.latitude == pytest.approx(16.074444, rel=1e-6)
+    assert parsed.longitude == pytest.approx(108.244028, rel=1e-6)
+
+
 def test_parse_google_long_viewport_fallback():
     url = "https://www.google.com/maps/place/x/@16.0544,108.2022,17z"
     parsed = parse_google_maps_url(url)
