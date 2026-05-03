@@ -584,7 +584,8 @@
 
             <!-- Turnstile Security Widget -->
             <div class="cf-turnstile-container">
-              <div class="cf-turnstile" data-sitekey="{{ turnstile_site_key }}" data-theme="dark"></div>
+              <div id="unlock-turnstile-widget" data-sitekey="{{ turnstile_site_key }}" data-theme="dark"></div>
+              <div class="turnstile-status-msg" id="unlockTurnstileStatusMsg" data-turnstile-status="idle" aria-live="polite"></div>
             </div>
 
             <div class="button-group">

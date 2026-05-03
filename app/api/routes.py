@@ -42,8 +42,6 @@ import time
 
 router = APIRouter()
 logger = structlog.get_logger(__name__)
-
-
 def _raise_location_resolution_blocked_http_exception(msg: str | None = None) -> None:
     from app.services.location_parser import _BLOCKED_RESOLUTION_MESSAGE
     raise HTTPException(
