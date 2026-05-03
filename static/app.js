@@ -1670,6 +1670,7 @@ const ModalSystem = (function() {
           const reasonCode = err?.payload?.detail?.reason_code || err?.payload?.reason_code;
           const status = reasonCode || err?.payload?.status || (err?.status ? 'server_error' : 'network_error');
           this.setUiState('error', { status });
+          if (window._resetReportTurnstile) window._resetReportTurnstile();
           if (window.posthog?.capture) {
             window.posthog.capture('report_submit_api_failed', { error_code: status, source: 'submit_report_modal' });
           }
@@ -1693,8 +1694,6 @@ const ModalSystem = (function() {
             turnstile_failed: 'Verification expired. Please complete the check again.',
           };
           errorEl.textContent = statusToMsg[status] || err?.message || 'Something went wrong while submitting the report. Your text is still here. Please try again.';
-          // Reset widget so user can get a fresh token
-          if (window._resetReportTurnstile) window._resetReportTurnstile();
         } finally {
           utils.setButtonLoading(btn, false);
           // Only clear uiState — token and button state are managed by Turnstile callbacks
