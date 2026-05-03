@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Request, HTTPException, status as http_status, Depends, Response
+from fastapi.responses import JSONResponse
 import structlog
 from typing import Optional
 from urllib.parse import quote, unquote

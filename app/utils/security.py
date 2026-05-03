@@ -3,14 +3,40 @@
 # Implements TSD Section 8: Validate and sanitize all inputs
 
 from fastapi import Request, HTTPException, status
-from fastapi.responses import JSONResponse
 import httpx
-import logging
+import structlog
 import sentry_sdk
 from app.core.config import settings
 from app.models.dto import ErrorResponse
 from pydantic import validate_call
-logger = logging.getLogger(__name__)
+logger = structlog.get_logger(__name__)
+
+
+def _safe_log(level: str, event: str, **fields) -> None:
+    """Best-effort structlog event emission with Sentry fallback on logger failures."""
+    try:
+        getattr(logger, level)(event, **fields)
+    except Exception as log_error:
+        _capture_turnstile_issue(
+            "turnstile_logging_failed",
+            level="error",
+            log_level=level,
+            event_name=event,
+            error_class=log_error.__class__.__name__,
+            error_detail=str(log_error),
+            log_fields=fields,
+        )
+        try:
+            getattr(logger, level)(f"{event} | {fields}")
+        except Exception as fallback_error:
+            _capture_turnstile_issue(
+                "turnstile_logging_fallback_failed",
+                level="error",
+                log_level=level,
+                event_name=event,
+                error_class=fallback_error.__class__.__name__,
+                error_detail=str(fallback_error),
+            )
 
 try:
     from app.services.redis_client import redis_client
@@ -20,6 +46,10 @@ try:
         logger.warning("Security utils: Redis client correctly initialized as None (Disabled).")
 except Exception as e:
     logger.error(f"Security utils: Failed to import redis_client: {e}")
+    try:
+        sentry_sdk.capture_exception(e)
+    except Exception:
+        pass
     redis_client = None
 
 
@@ -67,7 +97,7 @@ async def verify_turnstile(token: str, client_ip: str | None = None, *, source: 
     """
     # 0. SMOKE TEST BYPASS: If token matches secret smoke token, skip verification
     if settings.SMOKE_TURNSTILE_TOKEN and token == settings.SMOKE_TURNSTILE_TOKEN:
-        logger.warning("turnstile_smoke_bypass", client_ip=client_ip)
+        _safe_log("warning", "turnstile_smoke_bypass", client_ip=client_ip)
         return True
 
     url = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
@@ -93,7 +123,15 @@ async def verify_turnstile(token: str, client_ip: str | None = None, *, source: 
                 return True
             else:
                 error_codes = result.get("error-codes", [])
-                logger.warning("turnstile_verification_failed", cloudflare_error_codes=error_codes, source=source, origin=origin, hostname=hostname, client_ip=client_ip)
+                _safe_log(
+                    "warning",
+                    "turnstile_verification_failed",
+                    cloudflare_error_codes=error_codes,
+                    source=source,
+                    origin=origin,
+                    hostname=hostname,
+                    client_ip=client_ip,
+                )
                 _capture_turnstile_issue("turnstile_verification_failed", cloudflare_error_codes=error_codes, source=source, origin=origin, hostname=hostname, client_ip=client_ip)
                 return False
     except httpx.TimeoutException:
@@ -107,7 +145,15 @@ async def verify_turnstile(token: str, client_ip: str | None = None, *, source: 
             ).model_dump()
         )
     except httpx.HTTPStatusError as e:
-        logger.error("turnstile_siteverify_http_error", status_code=e.response.status_code if e.response else None, source=source, origin=origin, hostname=hostname, client_ip=client_ip)
+        _safe_log(
+            "error",
+            "turnstile_siteverify_http_error",
+            status_code=e.response.status_code if e.response else None,
+            source=source,
+            origin=origin,
+            hostname=hostname,
+            client_ip=client_ip,
+        )
         _capture_turnstile_issue("turnstile_siteverify_http_error", level="error", status_code=e.response.status_code if e.response else None, source=source, origin=origin, hostname=hostname, client_ip=client_ip)
         return False
     except Exception as e:
