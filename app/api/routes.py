@@ -39,9 +39,24 @@ from app.services.location_input_classifier import classify_location_input
 from app.services.input_format_stats_service import increment_input_format_stats
 from app.services.query_history_repository import QueryHistoryEvent, QueryHistoryRepository
 import time
+import hashlib
 
 router = APIRouter()
 logger = structlog.get_logger(__name__)
+_TURNSTILE_TOKEN_TTL_SECONDS = 120
+_recent_turnstile_token_hashes: dict[str, float] = {}
+
+
+def _is_recent_turnstile_reuse(token: str) -> bool:
+    now = time.time()
+    expired_keys = [k for k, ts in _recent_turnstile_token_hashes.items() if now - ts > _TURNSTILE_TOKEN_TTL_SECONDS]
+    for key in expired_keys:
+        _recent_turnstile_token_hashes.pop(key, None)
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    if token_hash in _recent_turnstile_token_hashes:
+        return True
+    _recent_turnstile_token_hashes[token_hash] = now
+    return False
 
 
 def _raise_location_resolution_blocked_http_exception(msg: str | None = None) -> None:
@@ -647,6 +662,14 @@ async def user_report_submit(
                 detail={"ok": False, "reason_code": "turnstile_required", "message": "Please complete the security check to submit a report."}
             )
             
+        if _is_recent_turnstile_reuse(data.cf_turnstile_token):
+            logger.warning("user_report_rejected", reason_code="turnstile_reused", source="submit_report_modal",
+                           has_token=True, token_length=len(data.cf_turnstile_token))
+            raise HTTPException(
+                status_code=http_status.HTTP_400_BAD_REQUEST,
+                detail={"ok": False, "reason_code": "turnstile_reused", "message": "Verification token was already used. Please complete the challenge again."}
+            )
+
         client_ip = get_client_ip(request)
         is_valid = await verify_turnstile(token=data.cf_turnstile_token, client_ip=client_ip)
         

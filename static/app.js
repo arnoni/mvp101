@@ -128,7 +128,7 @@ document.addEventListener("DOMContentLoaded", () => {
     demand: { status: "idle", coordKey: null, score: null },
     verification: { required: false, passed: false, token: null, widgetId: null, renderAttempts: 0 },
     modals: { active: null, history: [] },
-    unlock: { email: "", plan: "sim_1_day", resendCooldownUntil: 0, lastTurnstileToken: null, checkoutSubmitting: false, resendSubmitting: false },
+    unlock: { email: "", plan: "sim_1_day", resendCooldownUntil: 0, lastTurnstileToken: null, turnstileToken: null, turnstileWidgetId: null, checkoutSubmitting: false, resendSubmitting: false },
     requests: { construction: null, demand: null, parsePreview: null },
     debounce: null
   };
@@ -1187,6 +1187,9 @@ const ModalSystem = (function() {
       if (modalId === 'reportModalLayer' && window._initReportTurnstile) {
         window._initReportTurnstile();
       }
+      if (modalId === 'supportModalLayer' && window._initUnlockTurnstile) {
+        window._initUnlockTurnstile();
+      }
 
       return modal;
     },
@@ -1651,6 +1654,7 @@ const ModalSystem = (function() {
           successState.classList.remove('hidden');
           const successText = successState.querySelector('[data-report-success-message]');
           if (successText) successText.textContent = payload.message || 'Report submitted. Thanks for helping others avoid noisy surprises.';
+          if (window._resetReportTurnstile) window._resetReportTurnstile();
 
           // Reset after delay
           state.report.autoCloseTimer = setTimeout(() => {
@@ -2088,8 +2092,8 @@ const ModalSystem = (function() {
         document.addEventListener('visibilitychange', () => {
           if (document.hidden) return;
           const msLeft = state.unlock.resendCooldownUntil - Date.now();
-          if (msLeft > 0 && msLeft <= 5000 && !this._turnstilePrewarmTriggered && window.turnstile) {
-            turnstile.reset();
+          if (msLeft > 0 && msLeft <= 5000 && !this._turnstilePrewarmTriggered && window.turnstile && state.unlock.turnstileWidgetId !== null) {
+            turnstile.reset(state.unlock.turnstileWidgetId);
             this._turnstilePrewarmTriggered = true;
           }
           this.syncResendButtonState();
@@ -2135,7 +2139,7 @@ const ModalSystem = (function() {
         const msLeft = state.unlock.resendCooldownUntil - Date.now();
         if (msLeft > 0) return;
 
-        const token = document.querySelector('[name="cf-turnstile-response"]')?.value;
+        const token = state.unlock.turnstileToken;
         const hasFreshToken = !!token && token !== state.unlock.lastTurnstileToken;
         resendBtn.disabled = !hasFreshToken;
         resendBtn.textContent = baseText;
@@ -2172,8 +2176,8 @@ const ModalSystem = (function() {
             return;
           }
           const secondsLeft = Math.ceil(msLeft / 1000);
-          if (secondsLeft <= 5 && !this._turnstilePrewarmTriggered && window.turnstile) {
-            turnstile.reset();
+          if (secondsLeft <= 5 && !this._turnstilePrewarmTriggered && window.turnstile && state.unlock.turnstileWidgetId !== null) {
+            turnstile.reset(state.unlock.turnstileWidgetId);
             this._turnstilePrewarmTriggered = true;
           }
           resendBtn.disabled = true;
@@ -2222,7 +2226,7 @@ const ModalSystem = (function() {
         });
         
         // Turnstile token extraction
-        const turnstileToken = document.querySelector('[name="cf-turnstile-response"]')?.value;
+        const turnstileToken = state.unlock.turnstileToken;
 
         if (!utils.isValidEmail(email)) {
           console.warn("DEBUG: Invalid email entered:", email);
@@ -2313,7 +2317,7 @@ const ModalSystem = (function() {
             }
             if (errorEl) errorEl.textContent = '';
             this.syncResendButtonState();
-            if (window.turnstile) turnstile.reset();
+            if (window._resetUnlockTurnstile) window._resetUnlockTurnstile();
             return; // Stop execution so we DO NOT redirect
           }
 
@@ -2340,7 +2344,7 @@ const ModalSystem = (function() {
               resendMsg.textContent = `Check ${email} for your access link.`;
             }
             this.syncResendButtonState();
-            if (window.turnstile) turnstile.reset();
+            if (window._resetUnlockTurnstile) window._resetUnlockTurnstile();
             return;
           }
           if (data.checkout_url) {
@@ -2366,7 +2370,7 @@ const ModalSystem = (function() {
           this.showStep(1);
           errorEl.textContent = err?.message || this.formatSupportError(err);
           // Reset Turnstile on failure 
-          if (window.turnstile) turnstile.reset();
+          if (window._resetUnlockTurnstile) window._resetUnlockTurnstile();
           this.syncResendButtonState();
         } finally {
           if (watchdogTimer) {
@@ -2379,7 +2383,7 @@ const ModalSystem = (function() {
         const emailInput = document.getElementById('purchaseEmail');
         const errorEl = document.getElementById('purchaseEmailError');
         const email = emailInput.value.trim().toLowerCase();
-        const turnstileToken = document.querySelector('[name="cf-turnstile-response"]')?.value;
+        const turnstileToken = state.unlock.turnstileToken;
 
         if (state.unlock.resendSubmitting) {
           console.warn("DEBUG: resendLink() already submitting");
@@ -2398,7 +2402,7 @@ const ModalSystem = (function() {
         }
         if (!turnstileToken || turnstileToken === state.unlock.lastTurnstileToken) {
           errorEl.textContent = labels.resendFreshSecurity;
-          if (window.turnstile) turnstile.reset();
+          if (window._resetUnlockTurnstile) window._resetUnlockTurnstile();
           this.syncResendButtonState();
           return;
         }
@@ -2425,7 +2429,7 @@ const ModalSystem = (function() {
             status: 'resend_succeeded',
             step: 'purchaseStep3'
           });
-          if (window.turnstile) turnstile.reset();
+          if (window._resetUnlockTurnstile) window._resetUnlockTurnstile();
           this.startResendCooldown(180);
         } catch (err) {
           if (!this.isCurrentOperation('resend', resendOpId)) return;
@@ -2437,7 +2441,7 @@ const ModalSystem = (function() {
             step: 'purchaseStep3'
           });
           errorEl.textContent = err.message || 'Could not resend link.';
-          if (window.turnstile) turnstile.reset();
+          if (window._resetUnlockTurnstile) window._resetUnlockTurnstile();
         } finally {
           if (this.isCurrentOperation('resend', resendOpId)) {
             state.unlock.resendSubmitting = false;
@@ -2460,6 +2464,8 @@ const ModalSystem = (function() {
         state.unlock.resendSubmitting = false;
         state.unlock.plan = 'sim_1_day';
         state.unlock.uiSurface = 'hero_unlock_button';
+        state.unlock.lastTurnstileToken = null;
+        if (window._resetUnlockTurnstile) window._resetUnlockTurnstile();
         const planGrid = document.getElementById('planGrid');
         planGrid?.querySelectorAll('[data-plan]').forEach(card => {
           const isDefault = card.dataset.plan === 'sim_1_day';
@@ -2630,6 +2636,10 @@ const ModalSystem = (function() {
       'expired-callback': function() {
         state.report.turnstileToken = null;
         modals.report.updateSubmitButton();
+        modals.report.showError('Verification expired. Please complete the challenge again.');
+        if (window.turnstile && _reportWidgetId !== null) {
+          try { window.turnstile.reset(_reportWidgetId); } catch (e) {}
+        }
         if (window.posthog?.capture) {
           window.posthog.capture('turnstile_widget_expired', { ui_surface: 'submit_report_modal' });
         }
@@ -2638,6 +2648,10 @@ const ModalSystem = (function() {
   }
 
   function _resetReportTurnstile() {
+    if (window._reportTurnstilePollInterval) {
+      clearInterval(window._reportTurnstilePollInterval);
+      window._reportTurnstilePollInterval = null;
+    }
     if (window.turnstile && _reportWidgetId !== null) {
       try { window.turnstile.reset(_reportWidgetId); } catch(e) {}
     }
@@ -2648,10 +2662,15 @@ const ModalSystem = (function() {
   // Called whenever the report modal opens — render or reset
   window._initReportTurnstile = function() {
     if (!window.turnstile) {
+      const statusEl = document.getElementById('reportError');
+      if (statusEl) statusEl.textContent = 'Loading verification…';
       // Script not loaded yet; retry until ready
-      const poll = setInterval(() => {
+      if (window._reportTurnstilePollInterval) clearInterval(window._reportTurnstilePollInterval);
+      window._reportTurnstilePollInterval = setInterval(() => {
         if (window.turnstile) {
-          clearInterval(poll);
+          clearInterval(window._reportTurnstilePollInterval);
+          window._reportTurnstilePollInterval = null;
+          if (statusEl && statusEl.textContent === 'Loading verification…') statusEl.textContent = '';
           _renderReportTurnstile();
         }
       }, 100);
@@ -2666,6 +2685,73 @@ const ModalSystem = (function() {
   };
 
   window._resetReportTurnstile = _resetReportTurnstile;
+
+  window._initUnlockTurnstile = function() {
+    const container = document.getElementById('unlock-turnstile-widget');
+    const statusEl = document.getElementById('unlockTurnstileStatusMsg');
+    if (!container) return;
+    const sitekey = (container.dataset.sitekey || '').trim();
+    if (!sitekey) return;
+    if (!window.turnstile) {
+      if (statusEl) {
+        statusEl.textContent = 'Loading verification…';
+        statusEl.dataset.turnstileStatus = 'loading';
+      }
+      if (window._unlockTurnstilePollInterval) clearInterval(window._unlockTurnstilePollInterval);
+      window._unlockTurnstilePollInterval = setInterval(() => {
+        if (window.turnstile) {
+          clearInterval(window._unlockTurnstilePollInterval);
+          window._unlockTurnstilePollInterval = null;
+          if (statusEl) {
+            statusEl.textContent = '';
+            statusEl.dataset.turnstileStatus = 'idle';
+          }
+          window._initUnlockTurnstile();
+        }
+      }, 100);
+      return;
+    }
+    if (state.unlock.turnstileWidgetId !== null) {
+      window._resetUnlockTurnstile();
+      return;
+    }
+    state.unlock.turnstileWidgetId = window.turnstile.render(container, {
+      sitekey,
+      theme: container.dataset.theme || 'dark',
+      callback: function(token) {
+        state.unlock.turnstileToken = token;
+        if (statusEl) { statusEl.textContent = ''; statusEl.dataset.turnstileStatus = 'idle'; }
+        modals.support.syncResendButtonState();
+      },
+      'error-callback': function() {
+        state.unlock.turnstileToken = null;
+        if (statusEl) { statusEl.textContent = 'Verification failed. Please refresh and try again.'; statusEl.dataset.turnstileStatus = 'error'; }
+        modals.support.syncResendButtonState();
+      },
+      'expired-callback': function() {
+        state.unlock.turnstileToken = null;
+        if (statusEl) { statusEl.textContent = 'Verification expired. Please complete the challenge again.'; statusEl.dataset.turnstileStatus = 'expired'; }
+        if (window.turnstile && state.unlock.turnstileWidgetId !== null) {
+          try { window.turnstile.reset(state.unlock.turnstileWidgetId); } catch (e) {}
+        }
+        modals.support.syncResendButtonState();
+      }
+    });
+  };
+
+  window._resetUnlockTurnstile = function() {
+    if (window._unlockTurnstilePollInterval) {
+      clearInterval(window._unlockTurnstilePollInterval);
+      window._unlockTurnstilePollInterval = null;
+    }
+    if (window.turnstile && state.unlock.turnstileWidgetId !== null) {
+      try { window.turnstile.reset(state.unlock.turnstileWidgetId); } catch (e) {}
+    }
+    state.unlock.turnstileToken = null;
+    const statusEl = document.getElementById('unlockTurnstileStatusMsg');
+    if (statusEl) { statusEl.textContent = ''; statusEl.dataset.turnstileStatus = 'idle'; }
+    modals.support.syncResendButtonState();
+  };
 
   // ==========================================
   // PUBLIC API
