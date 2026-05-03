@@ -1223,6 +1223,9 @@ const ModalSystem = (function() {
       if (modal.id === 'reportModalLayer' && window._resetReportTurnstile) {
         window._resetReportTurnstile();
       }
+      if (modal.id === 'supportModalLayer' && window._resetUnlockTurnstile) {
+        window._resetUnlockTurnstile();
+      }
 
       if (state.modals.active === modal.id) {
         state.modals.active = null;
@@ -2665,13 +2668,24 @@ const ModalSystem = (function() {
       const statusEl = document.getElementById('reportError');
       if (statusEl) statusEl.textContent = 'Loading verification…';
       // Script not loaded yet; retry until ready
+      let attempts = 0;
+      const maxAttempts = 100;
       if (window._reportTurnstilePollInterval) clearInterval(window._reportTurnstilePollInterval);
       window._reportTurnstilePollInterval = setInterval(() => {
+        attempts += 1;
         if (window.turnstile) {
           clearInterval(window._reportTurnstilePollInterval);
           window._reportTurnstilePollInterval = null;
           if (statusEl && statusEl.textContent === 'Loading verification…') statusEl.textContent = '';
           _renderReportTurnstile();
+          return;
+        }
+        if (attempts >= maxAttempts) {
+          clearInterval(window._reportTurnstilePollInterval);
+          window._reportTurnstilePollInterval = null;
+          if (statusEl) statusEl.textContent = 'Verification unavailable. Please check your connection or disable ad blockers and try again.';
+          state.report.turnstileToken = null;
+          modals.report.updateSubmitButton();
         }
       }, 100);
       return;
@@ -2697,8 +2711,11 @@ const ModalSystem = (function() {
         statusEl.textContent = 'Loading verification…';
         statusEl.dataset.turnstileStatus = 'loading';
       }
+      let attempts = 0;
+      const maxAttempts = 100;
       if (window._unlockTurnstilePollInterval) clearInterval(window._unlockTurnstilePollInterval);
       window._unlockTurnstilePollInterval = setInterval(() => {
+        attempts += 1;
         if (window.turnstile) {
           clearInterval(window._unlockTurnstilePollInterval);
           window._unlockTurnstilePollInterval = null;
@@ -2707,6 +2724,17 @@ const ModalSystem = (function() {
             statusEl.dataset.turnstileStatus = 'idle';
           }
           window._initUnlockTurnstile();
+          return;
+        }
+        if (attempts >= maxAttempts) {
+          clearInterval(window._unlockTurnstilePollInterval);
+          window._unlockTurnstilePollInterval = null;
+          state.unlock.turnstileToken = null;
+          if (statusEl) {
+            statusEl.textContent = 'Verification unavailable. Please check your connection or disable ad blockers and try again.';
+            statusEl.dataset.turnstileStatus = 'unavailable';
+          }
+          modals.support.syncResendButtonState();
         }
       }, 100);
       return;
