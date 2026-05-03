@@ -638,22 +638,54 @@ async def user_report_submit(
     request_id = get_req_id(request)
     try:
         if not data.cf_turnstile_token:
-            logger.warning("user_report_rejected", reason_code="turnstile_required", source="submit_report_modal",
-                           has_token=False, token_length=0)
-            raise HTTPException(
+            logger.warning(
+                "user_report_rejected",
+                reason_code="turnstile_required",
+                source="submit_report_modal",
+                has_token=False,
+                token_length=0,
+                request_id=request_id,
+            )
+            return JSONResponse(
                 status_code=http_status.HTTP_403_FORBIDDEN,
-                detail={"ok": False, "reason_code": "turnstile_required", "message": "Please complete the security check to submit a report."}
+                content={
+                    "ok": False,
+                    "code": "TURNSTILE_REQUIRED",
+                    "reason_code": "turnstile_required",
+                    "message": "Please verify you are human before submitting.",
+                    "request_id": request_id,
+                },
             )
             
         client_ip = get_client_ip(request)
         is_valid = await verify_turnstile(token=data.cf_turnstile_token, client_ip=client_ip)
         
         if not is_valid:
-            logger.warning("user_report_rejected", reason_code="turnstile_failed", source="submit_report_modal",
-                           has_token=True, token_length=len(data.cf_turnstile_token))
-            raise HTTPException(
+            logger.warning(
+                "user_report_rejected",
+                reason_code="turnstile_failed",
+                source="submit_report_modal",
+                cloudflare_error_codes=["invalid-input-response"],
+                has_token=True,
+                token_length=len(data.cf_turnstile_token),
+                request_id=request_id,
+            )
+            import sentry_sdk
+            with sentry_sdk.push_scope() as scope:
+                scope.set_tag("feature", "user_report_submit")
+                scope.set_tag("reason_code", "turnstile_failed")
+                scope.set_tag("source", "submit_report_modal")
+                scope.set_tag("status_code", "403")
+                sentry_sdk.capture_message("user_report_turnstile_failed", level="warning")
+            return JSONResponse(
                 status_code=http_status.HTTP_403_FORBIDDEN,
-                detail={"ok": False, "reason_code": "turnstile_failed", "message": "Security check failed. Please refresh and try again."}
+                content={
+                    "ok": False,
+                    "code": "TURNSTILE_FAILED",
+                    "reason_code": "turnstile_failed",
+                    "message": "Verification failed. Please complete the human check again and resubmit.",
+                    "request_id": request_id,
+                },
             )
 
         validation_reason = validate_report_location(data.lat, data.lon)
