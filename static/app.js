@@ -1492,6 +1492,7 @@ const ModalSystem = (function() {
           ...(distinctId ? { posthog_distinct_id: distinctId } : {}),
           ...(email ? { email } : {})
         });
+        window.posthog.flush?.();
       },
       renderLocationError() {
         const el = document.getElementById('reportLocationError');
@@ -1736,6 +1737,7 @@ const ModalSystem = (function() {
           ...(distinctId ? { posthog_distinct_id: distinctId } : {}),
           ...(email ? { email } : {})
         });
+        window.posthog.flush?.();
       },
       updateCharCount() {
         const textarea = document.getElementById('shareText');
