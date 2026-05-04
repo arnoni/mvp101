@@ -226,16 +226,48 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   function logJoinResearchException(eventName, err, extra = {}) {
-    const ctx = getJoinResearchTelemetryContext({ event: eventName, ...extra });
+    const access = AccessState?.get ? AccessState.get() : {};
+    const ctx = getJoinResearchTelemetryContext({
+      event: eventName,
+      action: 'open_join_research_modal',
+      app_version: window.SENTRY_RELEASE || document.body?.dataset?.frontendRelease || 'unknown',
+      current_tier: access?.tier || document.body?.dataset?.tier || 'unknown',
+      quota_state: state?.report?.quotaBlocked ? 'blocked' : 'ok',
+      ...extra
+    });
     console.error(eventName, { message: err?.message || null, stack: err?.stack || null, ...ctx });
     if (window.Sentry?.captureException) {
       try {
         window.Sentry.captureException(err || new Error(eventName), {
-          tags: { surface: ctx.surface, modal: ctx.modal },
+          tags: { surface: ctx.surface, modal: ctx.modal, action: ctx.action },
           extra: ctx
         });
       } catch (_e) {}
     }
+  }
+
+  function safeLogJoinResearchException(eventName, err, extra = {}) {
+    try {
+      if (typeof logJoinResearchException === 'function') {
+        logJoinResearchException(eventName, err, extra);
+        return;
+      }
+    } catch (_ignored) {}
+
+    // Last-resort logging path: never allow telemetry helpers to break modal UX.
+    try {
+      console.error(eventName, {
+        message: err?.message || null,
+        stack: err?.stack || null,
+        ...extra
+      });
+      if (window.Sentry?.captureException) {
+        window.Sentry.captureException(err || new Error(eventName), {
+          tags: { action: 'open_join_research_modal' },
+          extra: { event: eventName, ...extra }
+        });
+      }
+    } catch (_ignored2) {}
   }
 
   function initFrontendSentry() {
@@ -2037,7 +2069,7 @@ const ModalSystem = (function() {
           this.reset();
         } catch (err) {
           const errorId = utils.newErrorId('JOIN_MODAL_RESET');
-          logJoinResearchException('join_research_modal_reset_failed', err, {
+          safeLogJoinResearchException('join_research_modal_reset_failed', err, {
             errorId,
             surface,
             message: err?.message || null,
@@ -2058,7 +2090,7 @@ const ModalSystem = (function() {
           }
         } catch (err) {
           const errorId = utils.newErrorId('JOIN_MODAL_NATIVE_OPEN');
-          logJoinResearchException('join_research_modal_native_open_threw', err, {
+          safeLogJoinResearchException('join_research_modal_native_open_threw', err, {
             errorId,
             surface,
             message: err?.message || null,
@@ -2092,7 +2124,7 @@ const ModalSystem = (function() {
         } catch (err) {
           const errorId = utils.newErrorId('JOIN_MODAL_FALLBACK_OPEN');
           const detailedMessage = this.formatJoinModalErrorMessage('fallback_open_failed', errorId);
-          logJoinResearchException('join_research_modal_fallback_open_failed', err, {
+          safeLogJoinResearchException('join_research_modal_fallback_open_failed', err, {
             errorId,
             surface,
             message: err?.message || null,
@@ -2374,7 +2406,7 @@ const ModalSystem = (function() {
         this.showStep(2); // Show processing spinner 
         watchdogTimer = window.setTimeout(() => {
           if (!this.isCurrentOperation('checkout', checkoutOpId) || !state.unlock.checkoutSubmitting) return;
-          logJoinResearchException(
+          safeLogJoinResearchException(
             'join_research_checkout_watchdog_timeout',
             new Error('Checkout watchdog timeout'),
             { checkoutOpId, ui_surface: state.unlock.uiSurface || 'hero_unlock_button' }
@@ -2485,7 +2517,7 @@ const ModalSystem = (function() {
             error_message: err?.message || 'Unknown error',
           });
           if (!this.isCurrentOperation('checkout', checkoutOpId)) return;
-          logJoinResearchException('join_research_access_submit_failed', err, { ui_surface: state.unlock.uiSurface || 'hero_unlock_button' });
+          safeLogJoinResearchException('join_research_access_submit_failed', err, { ui_surface: state.unlock.uiSurface || 'hero_unlock_button' });
           state.unlock.checkoutSubmitting = false;
           if (proceedBtn) {
             utils.setButtonLoading(proceedBtn, false);
@@ -2565,7 +2597,7 @@ const ModalSystem = (function() {
             error_message: err?.message || 'Could not resend link.',
             step: 'purchaseStep3'
           });
-          logJoinResearchException(
+          safeLogJoinResearchException(
             'join_research_resend_failed',
             err,
             { ui_surface: state.unlock.uiSurface || 'hero_unlock_button' }
@@ -2869,7 +2901,7 @@ const ModalSystem = (function() {
           clearInterval(window._unlockTurnstilePollInterval);
           window._unlockTurnstilePollInterval = null;
           state.unlock.turnstileToken = null;
-          logJoinResearchException(
+          safeLogJoinResearchException(
             'join_research_turnstile_script_load_failed',
             new Error('Unlock Turnstile script did not load after max poll attempts'),
             { widget: 'unlock', attempts }
@@ -2897,7 +2929,7 @@ const ModalSystem = (function() {
       },
       'error-callback': function() {
         state.unlock.turnstileToken = null;
-        logJoinResearchException(
+        safeLogJoinResearchException(
           'join_research_turnstile_error',
           new Error('Unlock Turnstile widget error'),
           { widget: 'unlock', ui_surface: state.unlock.uiSurface || 'hero_unlock_button' }
