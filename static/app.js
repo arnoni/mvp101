@@ -943,6 +943,7 @@ const ModalSystem = (function() {
       locationSource: 'manual_input',
       locationSourceLocked: false,
       uiState: 'idle',
+      quotaBlocked: false,
       submitAttemptId: 0,
       autoCloseTimer: null,
       turnstileToken: null
@@ -1519,7 +1520,7 @@ const ModalSystem = (function() {
       updateSubmitButton() {
         const submitBtn = document.getElementById('reportSubmitBtn');
         if (submitBtn) {
-          submitBtn.disabled = !state.report.turnstileToken || state.report.uiState === 'submitting';
+          submitBtn.disabled = !state.report.turnstileToken || state.report.uiState === 'submitting' || state.report.quotaBlocked;
         }
       },
 
@@ -1683,10 +1684,26 @@ const ModalSystem = (function() {
         } catch (err) {
           const reasonCode = err?.payload?.detail?.reason_code || err?.payload?.reason_code;
           const apiCode = (err?.payload?.code || err?.payload?.detail?.code || '').toString().toUpperCase();
-          const status = reasonCode || err?.payload?.status || (err?.status ? 'server_error' : 'network_error');
+          const status = reasonCode || err?.payload?.status || (err?.status ? 'http_error' : 'network_error');
           this.setUiState('error', { status });
-          if (window._resetReportTurnstile) window._resetReportTurnstile();
-          if (window.posthog?.capture) {
+          const is429 = Number(err?.status) === 429;
+          const isTurnstileError = reasonCode === 'turnstile_failed' || reasonCode === 'turnstile_required' || apiCode === 'TURNSTILE_FAILED';
+          const isExpected429 = is429 && (reasonCode === 'daily_report_quota_exceeded' || reasonCode === 'user_report_rate_limited');
+          if (is429 && (reasonCode === 'daily_report_quota_exceeded' || reasonCode === 'user_report_rate_limited')) {
+            state.report.quotaBlocked = reasonCode === 'daily_report_quota_exceeded';
+            if (window.posthog?.capture) {
+              window.posthog.capture('report_submit_blocked', {
+                reason_code: reasonCode,
+                source: 'submit_report_modal',
+                http_status: 429,
+                request_id: err?.payload?.request_id || err?.errorId || null,
+              });
+            }
+          } else {
+            state.report.quotaBlocked = false;
+          }
+          if (isTurnstileError && window._resetReportTurnstile) window._resetReportTurnstile();
+          if (!is429 && window.posthog?.capture) {
             window.posthog.capture('report_submit_failed', {
               error_code: status,
               reason_code: reasonCode || (apiCode === 'TURNSTILE_FAILED' ? 'turnstile_failed' : undefined),
@@ -1696,7 +1713,7 @@ const ModalSystem = (function() {
           }
           // Safe exception logging — does not depend on outer-scope logClientException
           try {
-            if (window.Sentry?.captureException) {
+            if (!isExpected429 && window.Sentry?.captureException) {
               window.Sentry.captureException(err, {
                 tags: { event: 'report_submit_failed', area: 'submit_report_modal' },
                 extra: { code: err?.code, errorId: err?.errorId, payload: err?.payload, status }
@@ -1709,6 +1726,8 @@ const ModalSystem = (function() {
             notes_too_long: 'Notes are too long. Please shorten them and try again.',
             duplicate_report: 'This location was recently reported. Thanks for the heads up anyway.',
             quota_exceeded: "You've reached your report limit for now. Try again later.",
+            daily_report_quota_exceeded: 'Daily report limit reached. Please try again tomorrow.',
+            user_report_rate_limited: 'Too many report attempts. Please wait a moment and try again.',
             unauthorized: 'Your session may have expired. Please refresh and try again.',
             turnstile_required: 'Please complete the verification challenge and try again.',
             turnstile_failed: 'Verification failed. Please complete the human check again and resubmit.',
@@ -1744,6 +1763,7 @@ const ModalSystem = (function() {
         state.report.note = '';
         state.report.locationSourceLocked = false;
         state.report.uiState = 'idle';
+        state.report.quotaBlocked = false;
         
         // Reset to first option
         const firstType = document.querySelector('[data-report-type="active_construction"]');

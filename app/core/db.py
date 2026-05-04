@@ -33,6 +33,9 @@ def build_asyncpg_url_and_connect_args(database_url: str) -> tuple[str, dict[str
         connect_args = {
             "ssl": ssl.create_default_context(),
             "statement_cache_size": 0,
+            # Required for pgBouncer transaction pooling with asyncpg; disables
+            # named prepared statements that can fail across pooled connections.
+            "prepared_statement_cache_size": 0,
         }
 
     logger.debug(
