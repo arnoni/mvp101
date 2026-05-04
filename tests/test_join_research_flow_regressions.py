@@ -36,3 +36,10 @@ def test_empty_location_is_not_sent_as_zero_or_simulated_report():
     assert "client_parsed_lng: hasVisibleInput && parsed ? parsed.lng : null" in app_js
     assert "Demand analyzed (Fallback)" not in app_js
     assert "Simulated Analysis (Network Fallback)" not in app_js
+
+
+def test_join_research_modal_open_uses_safe_exception_logger():
+    app_js = Path("static/app.js").read_text(encoding="utf-8")
+    assert "function safeLogJoinResearchException(eventName, err, extra = {})" in app_js
+    assert "if (typeof logJoinResearchException === 'function')" in app_js
+    assert "safeLogJoinResearchException('join_research_modal_reset_failed'" in app_js
