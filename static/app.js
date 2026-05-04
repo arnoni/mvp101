@@ -197,7 +197,67 @@ document.addEventListener("DOMContentLoaded", () => {
     errorLocationNotSupported: document.body.dataset.labelErrorLocationNotSupported || "This location is outside supported regions. Please use a location inside supported coverage areas."
   };
 
+  const supportLabelFallbacks = {
+    emailInvalid: 'Please enter a valid email address.',
+    securityCheckRequired: 'Please complete the security check.',
+    joinResearchCta: 'Join Research ➔',
+    resendEnterEmail: 'Enter your email above, then click Resend.',
+    resendFreshSecurity: 'Please complete a fresh security check before resend.'
+  };
 
+  function getSupportLabel(key) {
+    const value = labels && Object.prototype.hasOwnProperty.call(labels, key) ? labels[key] : null;
+    if (typeof value === 'string' && value.trim()) return value;
+    return supportLabelFallbacks[key] || '';
+  }
+
+  function getJoinResearchTelemetryContext(extra = {}) {
+    const email = (document.getElementById('purchaseEmail')?.value || '').trim().toLowerCase();
+    const domain = email.includes('@') ? email.split('@').pop() : null;
+    return {
+      surface: 'demand_level_page',
+      modal: 'join_research_access_modal',
+      selected_access_level: state.unlock?.plan || 'sim_1_day',
+      email_domain: domain || 'unknown',
+      turnstile_token_present: Boolean(state.unlock?.turnstileToken),
+      frontend_release: window.SENTRY_RELEASE || document.body?.dataset?.frontendRelease || 'unknown',
+      ...extra
+    };
+  }
+
+  function logJoinResearchException(eventName, err, extra = {}) {
+    const ctx = getJoinResearchTelemetryContext({ event: eventName, ...extra });
+    console.error(eventName, { message: err?.message || null, stack: err?.stack || null, ...ctx });
+    if (window.Sentry?.captureException) {
+      try {
+        window.Sentry.captureException(err || new Error(eventName), {
+          tags: { surface: ctx.surface, modal: ctx.modal },
+          extra: ctx
+        });
+      } catch (_e) {}
+    }
+  }
+
+  function initFrontendSentry() {
+    if (!window.Sentry || window.__DD_SENTRY_INIT_DONE) return;
+    const dsn = document.body?.dataset?.sentryDsn || window.SENTRY_DSN;
+    if (!dsn) return;
+    const release = window.SENTRY_RELEASE || document.body?.dataset?.frontendRelease || 'unknown';
+    const environment = document.body?.dataset?.environment || window.ENVIRONMENT || 'production';
+    try {
+      window.Sentry.init({
+        dsn,
+        release,
+        environment
+      });
+      window.__DD_SENTRY_INIT_DONE = true;
+      // NOTE: If Sentry events do not appear in production, verify CSP connect-src allows https://o*.ingest.sentry.io.
+    } catch (_err) {
+      /* never block app boot on telemetry init */
+    }
+  }
+
+  initFrontendSentry();
 
   function logClientException(eventName, err, context = {}) {
     const payload = {
@@ -630,6 +690,10 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         const backendMessage = data?.message || data?.detail?.message || data?.detail?.detail?.message;
         state.construction.status = "idle";
+        if (res.status === 429 && state.modals.active) {
+          els.conMsg.textContent = "Construction check paused while modal is open.";
+          return;
+        }
         els.conMsg.textContent = backendMessage || "Failed to check construction.";
         return;
       } else {
@@ -671,7 +735,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
     } catch (e) {
       if (e.name !== "AbortError") {
-        console.error("Construction fetch error:", e);
+        logClientException(
+          'construction_fetch_error',
+          e,
+          { area: 'construction_fetch', coord_key: state.coords.key }
+        );
         state.construction.status = "idle";
         els.conMsg.textContent = "Failed to check construction.";
       }
@@ -727,6 +795,10 @@ document.addEventListener("DOMContentLoaded", () => {
         }
         const backendMessage = data?.message || data?.detail?.message || data?.detail?.detail?.message;
         state.demand.status = "idle";
+        if (res.status === 429 && state.modals.active) {
+          els.demMsg.textContent = "Demand check paused while modal is open.";
+          return;
+        }
         els.demMsg.textContent = backendMessage || "Failed to check demand.";
         return;
       } else {
@@ -745,7 +817,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
     } catch (e) {
       if (e.name !== "AbortError") {
-        console.error("Demand fetch error:", e);
+        logClientException(
+          'demand_fetch_error',
+          e,
+          { area: 'demand_fetch', coord_key: state.coords.key }
+        );
         state.demand.status = "idle";
         els.demMsg.textContent = "Failed to check demand.";
       }
@@ -767,7 +843,8 @@ document.addEventListener("DOMContentLoaded", () => {
     ensureTurnstileScript();
 
     const sitekey = (document.body.dataset.turnstileSitekey || "").trim();
-    safeTurnstileDebug({
+    const unlockSafeTurnstileDebug = window.safeTurnstileDebug || safeTurnstileDebug || (() => {});
+    unlockSafeTurnstileDebug({
       hostname: window.location.hostname,
       origin: window.location.origin,
       hasSiteKey: Boolean(sitekey),
@@ -1960,7 +2037,7 @@ const ModalSystem = (function() {
           this.reset();
         } catch (err) {
           const errorId = utils.newErrorId('JOIN_MODAL_RESET');
-          console.error('join_research_modal_reset_failed', {
+          logJoinResearchException('join_research_modal_reset_failed', err, {
             errorId,
             surface,
             message: err?.message || null,
@@ -1976,11 +2053,12 @@ const ModalSystem = (function() {
               ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
               status: 'opened'
             });
+            if (window._initUnlockTurnstile) window._initUnlockTurnstile();
             return true;
           }
         } catch (err) {
           const errorId = utils.newErrorId('JOIN_MODAL_NATIVE_OPEN');
-          console.error('join_research_modal_native_open_threw', {
+          logJoinResearchException('join_research_modal_native_open_threw', err, {
             errorId,
             surface,
             message: err?.message || null,
@@ -2009,11 +2087,12 @@ const ModalSystem = (function() {
             ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
             status: 'opened'
           });
+          if (window._initUnlockTurnstile) window._initUnlockTurnstile();
           return true;
         } catch (err) {
           const errorId = utils.newErrorId('JOIN_MODAL_FALLBACK_OPEN');
           const detailedMessage = this.formatJoinModalErrorMessage('fallback_open_failed', errorId);
-          console.error('join_research_modal_fallback_open_failed', {
+          logJoinResearchException('join_research_modal_fallback_open_failed', err, {
             errorId,
             surface,
             message: err?.message || null,
@@ -2040,7 +2119,7 @@ const ModalSystem = (function() {
             body: JSON.stringify({
               event: eventName,
               flow_type: 'simulated_paid',
-              surface: 'join_research_access_modal',
+              surface: 'demand_level_page',
               modal_name: 'join_research_access_modal',
               ...payload
             })
@@ -2105,7 +2184,7 @@ const ModalSystem = (function() {
           if (now - this._lastDisabledPlanEventAt < 250) return;
           this._lastDisabledPlanEventAt = now;
           this.emitAnalyticsEvent('disabled_access_level_clicked', {
-            ui_surface: 'join_research_access_modal',
+            ui_surface: 'demand_level_page',
             access_level: '72_hour_preview',
             reason: 'disabled_not_available_in_simulated_flow'
           });
@@ -2275,12 +2354,12 @@ const ModalSystem = (function() {
 
         if (!utils.isValidEmail(email)) {
           console.warn("DEBUG: Invalid email entered:", email);
-          errorEl.textContent = labels.emailInvalid;
+          errorEl.textContent = getSupportLabel('emailInvalid');
           return;
         }
         if (!turnstileToken) {
           console.warn("DEBUG: Turnstile token missing");
-          errorEl.textContent = labels.securityCheckRequired;
+          errorEl.textContent = getSupportLabel('securityCheckRequired');
           return;
         }
 
@@ -2295,10 +2374,11 @@ const ModalSystem = (function() {
         this.showStep(2); // Show processing spinner 
         watchdogTimer = window.setTimeout(() => {
           if (!this.isCurrentOperation('checkout', checkoutOpId) || !state.unlock.checkoutSubmitting) return;
-          console.error('join_research_checkout_watchdog_timeout', {
-            checkoutOpId,
-            uiSurface: state.unlock.uiSurface || 'hero_unlock_button'
-          });
+          logJoinResearchException(
+            'join_research_checkout_watchdog_timeout',
+            new Error('Checkout watchdog timeout'),
+            { checkoutOpId, ui_surface: state.unlock.uiSurface || 'hero_unlock_button' }
+          );
           state.unlock.checkoutSubmitting = false;
           this.showStep(1);
           errorEl.textContent = 'Research access request timed out. Please try again.';
@@ -2362,7 +2442,7 @@ const ModalSystem = (function() {
             }
             if (errorEl) errorEl.textContent = '';
             this.syncResendButtonState();
-            if (window._resetUnlockTurnstile) window._resetUnlockTurnstile();
+            if (window._initUnlockTurnstile) window._initUnlockTurnstile();
             return; // Stop execution so we DO NOT redirect
           }
 
@@ -2405,7 +2485,7 @@ const ModalSystem = (function() {
             error_message: err?.message || 'Unknown error',
           });
           if (!this.isCurrentOperation('checkout', checkoutOpId)) return;
-          console.error("DEBUG: proceedToPayment() error:", err);
+          logJoinResearchException('join_research_access_submit_failed', err, { ui_surface: state.unlock.uiSurface || 'hero_unlock_button' });
           state.unlock.checkoutSubmitting = false;
           if (proceedBtn) {
             utils.setButtonLoading(proceedBtn, false);
@@ -2441,12 +2521,12 @@ const ModalSystem = (function() {
           step: 'purchaseStep3'
         });
         if (!utils.isValidEmail(email)) {
-          errorEl.textContent = labels.resendEnterEmail;
+          errorEl.textContent = getSupportLabel('resendEnterEmail');
           emailInput.focus();
           return;
         }
         if (!turnstileToken || turnstileToken === state.unlock.lastTurnstileToken) {
-          errorEl.textContent = labels.resendFreshSecurity;
+          errorEl.textContent = getSupportLabel('resendFreshSecurity');
           if (window._resetUnlockTurnstile) window._resetUnlockTurnstile();
           this.syncResendButtonState();
           return;
@@ -2485,6 +2565,11 @@ const ModalSystem = (function() {
             error_message: err?.message || 'Could not resend link.',
             step: 'purchaseStep3'
           });
+          logJoinResearchException(
+            'join_research_resend_failed',
+            err,
+            { ui_surface: state.unlock.uiSurface || 'hero_unlock_button' }
+          );
           errorEl.textContent = err.message || 'Could not resend link.';
           if (window._resetUnlockTurnstile) window._resetUnlockTurnstile();
         } finally {
@@ -2526,7 +2611,7 @@ const ModalSystem = (function() {
         if (proceedBtn) {
           utils.setButtonLoading(proceedBtn, false);
           const btnText = proceedBtn.querySelector('.btn-text');
-          if (btnText) btnText.textContent = labels.joinResearchCta;
+          if (btnText) btnText.textContent = getSupportLabel('joinResearchCta');
         }
       }
     },
@@ -2672,6 +2757,11 @@ const ModalSystem = (function() {
       },
       'error-callback': function() {
         state.report.turnstileToken = null;
+        logClientException(
+          'report_turnstile_error',
+          new Error('Report Turnstile widget error'),
+          { area: 'submit_report_modal' }
+        );
         modals.report.updateSubmitButton();
         modals.report.showError('Verification failed. Please refresh and try again.');
         if (window.posthog?.capture) {
@@ -2744,7 +2834,8 @@ const ModalSystem = (function() {
 
   window._initUnlockTurnstile = function() {
     const container = document.getElementById('unlock-turnstile-widget');
-    safeTurnstileDebug({
+    const unlockSafeTurnstileDebug = window.safeTurnstileDebug || safeTurnstileDebug || (() => {});
+    unlockSafeTurnstileDebug({
       hostname: window.location.hostname,
       origin: window.location.origin,
       hasSiteKey: Boolean(container && container.dataset && container.dataset.sitekey),
@@ -2778,6 +2869,11 @@ const ModalSystem = (function() {
           clearInterval(window._unlockTurnstilePollInterval);
           window._unlockTurnstilePollInterval = null;
           state.unlock.turnstileToken = null;
+          logJoinResearchException(
+            'join_research_turnstile_script_load_failed',
+            new Error('Unlock Turnstile script did not load after max poll attempts'),
+            { widget: 'unlock', attempts }
+          );
           if (statusEl) {
             statusEl.textContent = 'Verification unavailable. Please check your connection or disable ad blockers and try again.';
             statusEl.dataset.turnstileStatus = 'unavailable';
@@ -2801,6 +2897,11 @@ const ModalSystem = (function() {
       },
       'error-callback': function() {
         state.unlock.turnstileToken = null;
+        logJoinResearchException(
+          'join_research_turnstile_error',
+          new Error('Unlock Turnstile widget error'),
+          { widget: 'unlock', ui_surface: state.unlock.uiSurface || 'hero_unlock_button' }
+        );
         if (statusEl) { statusEl.textContent = 'Verification failed. Please refresh and try again.'; statusEl.dataset.turnstileStatus = 'error'; }
         modals.support.syncResendButtonState();
       },
