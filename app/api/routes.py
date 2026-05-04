@@ -6,7 +6,7 @@ from urllib.parse import quote, unquote
 from pydantic import BaseModel, Field
 from pydantic import ValidationError
 import uuid
-from sqlalchemy import insert
+from sqlalchemy import insert, text
 
 from app.core.config import settings
 from app.models.models import FunnelEvent
@@ -45,6 +45,37 @@ import os
 router = APIRouter()
 logger = structlog.get_logger(__name__)
 USER_REPORT_DAILY_SUCCESS_LIMIT = int(os.getenv("USER_REPORT_DAILY_SUCCESS_LIMIT", "3"))
+UGC_INSERT_SQL = text("""
+INSERT INTO ugc_reports (
+  public_id,
+  reporter_anon_id,
+  reporter_user_id,
+  reporter_tier,
+  title,
+  description,
+  category,
+  severity,
+  geom,
+  status,
+  content_hash,
+  geo_cell
+)
+VALUES (
+  CAST(:public_id AS uuid),
+  :reporter_anon_id,
+  :reporter_user_id,
+  :reporter_tier,
+  :title,
+  :description,
+  :category,
+  :severity,
+  ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
+  'pending'::ugc_report_status,
+  :content_hash,
+  :geo_cell
+)
+RETURNING id, public_id, created_at
+""")
 def _raise_location_resolution_blocked_http_exception(msg: str | None = None) -> None:
     from app.services.location_parser import _BLOCKED_RESOLUTION_MESSAGE
     raise HTTPException(
@@ -471,6 +502,7 @@ async def search(
             if user_id is not None:
                 capture(str(user_id), "check_attempted", {"tier": _tier_to_funnel(tier)})
 
+        # Turnstile required: token enforced via run_gate()
         try:
             gate_result = await run_gate(
                 request=request,
@@ -863,6 +895,7 @@ async def user_report_submit(
         result = await ugc_report_submit(request=request, data=ugc_data, quota_repo=quota_repo, policy_engine=policy_engine)
         if not result.get("duplicate", False):
             try:
+                # quota incremented only after successful DB commit
                 await _increment_user_report_success_quota(
                     request, redis_cli, key=success_quota_key, limit=success_quota_limit
                 )
@@ -1027,7 +1060,6 @@ async def ugc_report_submit(
                     detail=ErrorResponse(error="EVIDENCE_URL_TOO_LONG", detail="Evidence URL exceeds maximum length.").model_dump()
                 )
     import hashlib, json, time, uuid
-    from sqlalchemy import text
     redis_cli = getattr(request.app.state, "redis", None)
     if not redis_cli:
         raise HTTPException(status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE, detail="enforcement unavailable")
@@ -1049,37 +1081,6 @@ async def ugc_report_submit(
     db_engine = getattr(request.app.state, "db_engine", None)
     if not db_engine:
         raise HTTPException(status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE, detail="enforcement unavailable")
-    UGC_INSERT_SQL = text("""
-    INSERT INTO ugc_reports (
-      public_id,
-      reporter_anon_id,
-      reporter_user_id,
-      reporter_tier,
-      title,
-      description,
-      category,
-      severity,
-      geom,
-      status,
-      content_hash,
-      geo_cell
-    )
-    VALUES (
-      :public_id::uuid,
-      :reporter_anon_id,
-      :reporter_user_id,
-      :reporter_tier,
-      :title,
-      :description,
-      :category,
-      :severity,
-      ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
-      'pending'::ugc_report_status,
-      :content_hash,
-      :geo_cell
-    )
-    RETURNING id, public_id, created_at
-    """)
     try:
       async with db_engine.begin() as conn:
         row = (await conn.execute(
