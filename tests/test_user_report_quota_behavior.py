@@ -196,3 +196,36 @@ def test_dedup_ghost_bug_no_phantom_duplicate_after_failed_insert_then_retry(mon
     assert first.status_code == 500
     assert second.status_code == 200
     assert second.json()["status"] == "report_created"
+
+
+def test_ugc_report_submit_does_not_increment_success_quota_on_db_failure(monkeypatch):
+    fake = FakeRedis()
+    app.state.redis = fake
+
+    class _FailingConn:
+        async def execute(self, *_args, **_kwargs):
+            raise RuntimeError("forced db insert failure")
+
+    class _FailingBegin:
+        async def __aenter__(self):
+            return _FailingConn()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    class _FailingEngine:
+        def begin(self):
+            return _FailingBegin()
+
+    app.state.db_engine = _FailingEngine()
+
+    async def _valid_turnstile(*_args, **_kwargs):
+        return True
+
+    monkeypatch.setattr("app.api.routes.verify_turnstile", _valid_turnstile)
+
+    with TestClient(app) as client:
+        res = client.post("/api/user-reports", json=_payload("valid"))
+
+    assert res.status_code == 503
+    assert not any(k.startswith("quota:user_reports:successful:") for k in fake.store.keys())

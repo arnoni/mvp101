@@ -483,7 +483,6 @@ document.addEventListener("DOMContentLoaded", () => {
         els.conMsg.textContent = labels.coordinatesChanged;
         const access = AccessState.get();
         els.demMsg.textContent = access.demandAllowed ? labels.demandReady : labels.demandLocked;
-        els.turnstileSlot.classList.add("hidden");
       }
 
       state.coords = { lat, lng, valid: Boolean(parsed), key: newKey };
@@ -586,9 +585,12 @@ document.addEventListener("DOMContentLoaded", () => {
       return;
     }
     
-    // Auto-scroll to turnstile if needed
-    if (state.verification.required && !state.verification.passed) {
+    // Turnstile is required for /api/search
+    if (!state.verification.token) {
+      state.verification.required = true;
+      els.conMsg.textContent = labels.verificationRequired;
       els.turnstileSlot.scrollIntoView({ behavior: "smooth", block: "center" });
+      updateButtons();
       return;
     }
 
@@ -807,12 +809,12 @@ document.addEventListener("DOMContentLoaded", () => {
           state.verification.token = token;
           state.verification.required = false;
           els.conMsg.textContent = labels.verificationCompleteReady;
-          els.turnstileSlot.classList.add("hidden");
           updateButtons();
-          fetchConstruction(); // Auto-retry
         },
         'error-callback': (err) => {
           console.error("Turnstile Error:", err);
+          state.verification.passed = false;
+          state.verification.token = null;
           state.verification.widgetId = null;
           els.conMsg.textContent = labels.verificationFailedRefresh;
         },
@@ -903,11 +905,9 @@ document.addEventListener("DOMContentLoaded", () => {
   animateGauge(els.conBand, els.conNeedle, null);
   animateGauge(els.demBand, els.demNeedle, null);
 
-  // Initial Pre-hydration Check
-  if (document.body.dataset.turnstileRequired === "true") {
-    state.verification.required = true;
-    renderTurnstile();
-  }
+  // Render hero Turnstile on page load (required for /api/search).
+  state.verification.required = true;
+  renderTurnstile();
   syncAccessUI();
   updateButtons();
   void restoreAfterMagicSuccessIfNeeded();
