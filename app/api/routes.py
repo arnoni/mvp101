@@ -40,9 +40,11 @@ from app.services.location_input_classifier import classify_location_input
 from app.services.input_format_stats_service import increment_input_format_stats
 from app.services.query_history_repository import QueryHistoryEvent, QueryHistoryRepository
 import time
+import os
 
 router = APIRouter()
 logger = structlog.get_logger(__name__)
+USER_REPORT_DAILY_SUCCESS_LIMIT = int(os.getenv("USER_REPORT_DAILY_SUCCESS_LIMIT", "3"))
 def _raise_location_resolution_blocked_http_exception(msg: str | None = None) -> None:
     from app.services.location_parser import _BLOCKED_RESOLUTION_MESSAGE
     raise HTTPException(
@@ -629,6 +631,139 @@ def validate_report_location(lat: float, lon: float) -> str | None:
     return None
 
 
+def _hash_identifier(value: str) -> str:
+    import hashlib
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+
+
+def _user_report_scope(request: Request) -> str:
+    user_id = getattr(request.state, "user_id", None) or getattr(request.state, "identity_id", None)
+    anon_id = getattr(request.state, "anon_id", None)
+    if user_id:
+        return f"user:{user_id}"
+    if anon_id:
+        return f"anon:{anon_id}"
+    return f"ip:{get_client_ip(request)}"
+
+
+def _seconds_until_utc_midnight() -> int:
+    return max(1, 86400 - (int(time.time()) % 86400))
+
+
+def _flush_posthog() -> None:
+    if posthog:
+        posthog.flush()
+
+
+async def _check_user_report_attempt_rate_limit(request: Request, redis_cli, *, limit: int = 10, window_seconds: int = 60) -> None:
+    scope = _user_report_scope(request)
+    key = f"rate_limit:user_reports:attempts:{scope}:{int(time.time() // window_seconds)}"
+    used = await redis_cli.incr(key)
+    if used == 1:
+        await redis_cli.expire(key, window_seconds)
+    decision = "allow" if used <= limit else "block"
+    logger.info(
+        "user_report_attempt_rate_limit_checked",
+        request_id=get_req_id(request),
+        rate_limit_key_hash=_hash_identifier(key),
+        limit=limit,
+        window_seconds=window_seconds,
+        used=int(used),
+        decision=decision,
+    )
+    if used > limit:
+        raise HTTPException(
+            status_code=http_status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "ok": False,
+                "status": "rate_limited",
+                "code": "USER_REPORT_RATE_LIMITED",
+                "reason_code": "user_report_rate_limited",
+                "message": "Too many report attempts. Please wait a moment and try again.",
+                "retry_after_seconds": window_seconds,
+                "request_id": get_req_id(request),
+            },
+            headers={"Retry-After": str(window_seconds)},
+        )
+
+
+async def _assert_user_report_success_quota_available(request: Request, redis_cli, *, limit: int = 3) -> tuple[str, int]:
+    scope = _user_report_scope(request)
+    date_bucket = time.strftime("%Y_%m_%d", time.gmtime())
+    key = f"quota:user_reports:successful:{scope}:{date_bucket}"
+    used_before = int(await redis_cli.get(key) or 0)
+    remaining = max(0, int(limit) - used_before)
+    decision = "allow" if used_before < int(limit) else "block"
+    logger.info(
+        "user_report_success_quota_checked",
+        request_id=get_req_id(request),
+        quota_type="successful_daily_submission",
+        quota_key_hash=_hash_identifier(key),
+        quota_limit=int(limit),
+        quota_used_before=used_before,
+        quota_remaining_before=remaining,
+        decision=decision,
+    )
+    if used_before >= int(limit):
+        retry_after_seconds = _seconds_until_utc_midnight()
+        logger.info(
+            "user_report_submit_blocked",
+            request_id=get_req_id(request),
+            reason_code="daily_report_quota_exceeded",
+            quota_type="successful_daily_submission",
+            quota_key_hash=_hash_identifier(key),
+            quota_limit=int(limit),
+            quota_used=used_before,
+            retry_after_seconds=retry_after_seconds,
+        )
+        raise HTTPException(
+            status_code=http_status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "ok": False,
+                "status": "quota_exceeded",
+                "code": "DAILY_REPORT_QUOTA_EXCEEDED",
+                "reason_code": "daily_report_quota_exceeded",
+                "message": "Daily report limit reached. Please try again tomorrow.",
+                "retry_after_seconds": retry_after_seconds,
+                "request_id": get_req_id(request),
+            },
+            headers={"Retry-After": str(retry_after_seconds)},
+        )
+    return key, int(limit)
+
+
+async def _increment_user_report_success_quota(request: Request, redis_cli, *, key: str, limit: int) -> None:
+    used_after = int(await redis_cli.incr(key))
+    if used_after == 1:
+        await redis_cli.expire(key, _seconds_until_utc_midnight())
+    if used_after > int(limit):
+        await redis_cli.decr(key)
+        # Quota increment happens post-persistence by design. If concurrent writes push over the
+        # limit, we compensate the counter and return 429 on this request; the inserted row remains.
+        # This means a ugc_reports row can exist even when quota was DECR-compensated back down.
+        # That's acceptable for MVP: persistence is source-of-truth, while Redis quota is best-effort.
+        raise HTTPException(
+            status_code=http_status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "ok": False,
+                "status": "quota_exceeded",
+                "code": "DAILY_REPORT_QUOTA_EXCEEDED",
+                "reason_code": "daily_report_quota_exceeded",
+                "message": "Daily report limit reached. Please try again tomorrow.",
+                "retry_after_seconds": _seconds_until_utc_midnight(),
+                "request_id": get_req_id(request),
+            },
+            headers={"Retry-After": str(_seconds_until_utc_midnight())},
+        )
+    logger.info(
+        "user_report_success_quota_incremented",
+        request_id=get_req_id(request),
+        quota_type="successful_daily_submission",
+        quota_used_after=used_after,
+        quota_remaining_after=max(0, int(limit) - used_after),
+    )
+
+
 @router.post("/user-reports", response_model=UserReportResponse)
 async def user_report_submit(
     request: Request,
@@ -637,7 +772,11 @@ async def user_report_submit(
     policy_engine: PolicyEngine = Depends(get_policy_engine),
 ):
     request_id = get_req_id(request)
+    redis_cli = getattr(request.app.state, "redis", None)
+    if not redis_cli:
+        raise HTTPException(status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE, detail="enforcement unavailable")
     try:
+        await _check_user_report_attempt_rate_limit(request, redis_cli)
         if not data.cf_turnstile_token:
             logger.warning(
                 "user_report_rejected",
@@ -717,7 +856,18 @@ async def user_report_submit(
                 ).model_dump() | {"error_id": error_id}
             )
         ugc_data = _map_user_report_to_ugc(data)
+        daily_limit = USER_REPORT_DAILY_SUCCESS_LIMIT
+        success_quota_key, success_quota_limit = await _assert_user_report_success_quota_available(
+            request, redis_cli, limit=daily_limit
+        )
         result = await ugc_report_submit(request=request, data=ugc_data, quota_repo=quota_repo, policy_engine=policy_engine)
+        if not result.get("duplicate", False):
+            try:
+                await _increment_user_report_success_quota(
+                    request, redis_cli, key=success_quota_key, limit=success_quota_limit
+                )
+            except Exception as quota_exc:
+                logger.warning("user_report_success_quota_increment_failed", request_id=request_id, error=str(quota_exc))
         logger.info(
             "user_report_submitted",
             user_id=getattr(request.state, "identity_id", None),
@@ -743,8 +893,7 @@ async def user_report_submit(
                 "duplicate": result.get("duplicate", False)
             }
         )
-        if posthog:
-            posthog.flush()
+        _flush_posthog()
             
         status = "duplicate_report" if result.get("duplicate", False) else "report_created"
         message = (
@@ -794,6 +943,8 @@ async def user_report_submit(
                 detail=f"Failed to submit report. Error ID: {error_id}"
             ).model_dump() | {"error_id": error_id}
         )
+    finally:
+        _flush_posthog()
 
 
 @router.post("/language")
@@ -852,8 +1003,6 @@ async def ugc_report_submit(
     anon_id = getattr(request.state, "anon_id", None) or "unknown_anon"
     user_id = getattr(request.state, "user_id", None)
     tier = getattr(request.state, "tier", TierStatus.FREE)
-    entitlement_stale = getattr(request.state, "entitlement_stale", False)
-    daily_limit = int(getattr(request.state, "daily_limit", 3) or 3)
     if not is_inside_app_bbox(data.lat, data.lon):
         raise HTTPException(
             status_code=http_status.HTTP_400_BAD_REQUEST,
@@ -877,26 +1026,6 @@ async def ugc_report_submit(
                     status_code=http_status.HTTP_400_BAD_REQUEST,
                     detail=ErrorResponse(error="EVIDENCE_URL_TOO_LONG", detail="Evidence URL exceeds maximum length.").model_dump()
                 )
-    anon_id = getattr(request.state, "anon_id", None) or "unknown_anon"
-    user_id = getattr(request.state, "user_id", None)
-    tier = getattr(request.state, "tier", TierStatus.FREE)
-    entitlement_stale = getattr(request.state, "entitlement_stale", False)
-    daily_limit = int(getattr(request.state, "daily_limit", 3) or 3)
-    area_code = AreaBucketer.get_area_code(data.lat, data.lon)
-    gate_result = await run_gate(
-        request=request,
-        data_turnstile_token=data.turnstile_token,
-        policy_engine=policy_engine,
-        quota_repo=quota_repo,
-        anon_id=anon_id,
-        user_id=user_id,
-        tier=tier,
-        entitlement_stale=entitlement_stale,
-        daily_limit=daily_limit,
-        area_code=area_code,
-        force_turnstile_required=True,
-        disallow_admin_bypass=True,
-    )
     import hashlib, json, time, uuid
     from sqlalchemy import text
     redis_cli = getattr(request.app.state, "redis", None)
@@ -917,10 +1046,6 @@ async def ugc_report_submit(
     dedup_key = hashlib.sha256(f"{anon_id}|{geo_cell}|{content_hash}|{day_bucket}".encode("utf-8")).hexdigest()
     dedup_redis_key = f"ugc:dedup:{dedup_key}"
     public_id = str(uuid.uuid4())
-    claimed = await redis_cli.set(dedup_redis_key, public_id, ex=7 * 24 * 3600, nx=True)
-    if not claimed:
-        existing = await redis_cli.get(dedup_redis_key)
-        return {"ok": True, "report_id": existing, "duplicate": True}
     db_engine = getattr(request.app.state, "db_engine", None)
     if not db_engine:
         raise HTTPException(status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE, detail="enforcement unavailable")
@@ -953,7 +1078,7 @@ async def ugc_report_submit(
       :content_hash,
       :geo_cell
     )
-    RETURNING id, public_id
+    RETURNING id, public_id, created_at
     """)
     try:
       async with db_engine.begin() as conn:
@@ -993,13 +1118,18 @@ async def ugc_report_submit(
                 description="Failed to cache UGC evidence URLs in Redis.",
             )
     try:
-        await redis_cli.set(dedup_redis_key, public_id, ex=7 * 24 * 3600)
+        # Residual serverless risk: if the function crashes after DB commit but before this Redis write,
+        # a retry may insert again because Redis is the only shared dedup state across invocations.
+        claimed = await redis_cli.set(dedup_redis_key, public_id, ex=7 * 24 * 3600, nx=True)
+        if not claimed:
+            existing = await redis_cli.get(dedup_redis_key)
+            return {"ok": True, "report_id": existing or public_id, "duplicate": True}
     except Exception as exc:
         logger.warning(
             "ugc_report_dedup_cache_write_failed",
             error=str(exc),
             report_id=public_id,
-            dedup_key=dedup_redis_key,
+            dedup_key_hash=_hash_identifier(dedup_redis_key),
             description="Failed to persist UGC deduplication key in Redis.",
         )
     return {"ok": True, "report_id": public_id, "duplicate": False}
