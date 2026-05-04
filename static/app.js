@@ -670,7 +670,12 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // 4. API CALLS WITH ABORT CONTROLLER
-  async function fetchConstruction() {
+  async function fetchConstruction(event) {
+    if (event) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+
     if (!(state.coords.valid || state.input.kind === "google_maps_short_url")) {
       state.input.touched = true;
       els.err.textContent = "Enter coordinates or a Google Maps URL to generate a report.";
@@ -931,6 +936,7 @@ document.addEventListener("DOMContentLoaded", () => {
           state.verification.passed = false;
           state.verification.token = null;
           state.verification.widgetId = null;
+          els.conMsg.textContent = 'Security check expired. Please verify again.';
           renderTurnstile(); // Re-render if expired
         }
       });
@@ -1008,7 +1014,7 @@ document.addEventListener("DOMContentLoaded", () => {
   });
   
   document.getElementById("coordForm").addEventListener("submit", (e) => { e.preventDefault(); fetchConstruction(); });
-  els.conBtn.addEventListener("click", fetchConstruction);
+  els.conBtn.addEventListener("click", (event) => fetchConstruction(event));
   els.demBtn.addEventListener("click", fetchDemand);
   
   animateGauge(els.conBand, els.conNeedle, null);
@@ -2044,6 +2050,16 @@ const ModalSystem = (function() {
       _checkoutOpSeq: 0,
       _resendOpSeq: 0,
 
+      safeLogJoinResearchException(eventName, err, extra = {}) {
+        try {
+          if (typeof logJoinResearchException === 'function') {
+            logJoinResearchException(eventName, err, extra);
+          }
+        } catch (_telemetryErr) {
+          // Telemetry failure must never block UI
+        }
+      },
+
       formatJoinModalErrorMessage(reason, errorId) {
         const base = 'Join Research is temporarily unavailable.';
         const reasonMap = {
@@ -2069,7 +2085,7 @@ const ModalSystem = (function() {
           this.reset();
         } catch (err) {
           const errorId = utils.newErrorId('JOIN_MODAL_RESET');
-          safeLogJoinResearchException('join_research_modal_reset_failed', err, {
+          this.safeLogJoinResearchException('join_research_modal_reset_failed', err, {
             errorId,
             surface,
             message: err?.message || null,
@@ -2090,7 +2106,7 @@ const ModalSystem = (function() {
           }
         } catch (err) {
           const errorId = utils.newErrorId('JOIN_MODAL_NATIVE_OPEN');
-          safeLogJoinResearchException('join_research_modal_native_open_threw', err, {
+          this.safeLogJoinResearchException('join_research_modal_native_open_threw', err, {
             errorId,
             surface,
             message: err?.message || null,
@@ -2124,7 +2140,7 @@ const ModalSystem = (function() {
         } catch (err) {
           const errorId = utils.newErrorId('JOIN_MODAL_FALLBACK_OPEN');
           const detailedMessage = this.formatJoinModalErrorMessage('fallback_open_failed', errorId);
-          safeLogJoinResearchException('join_research_modal_fallback_open_failed', err, {
+          this.safeLogJoinResearchException('join_research_modal_fallback_open_failed', err, {
             errorId,
             surface,
             message: err?.message || null,
