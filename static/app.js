@@ -1,3048 +1,820 @@
-const AccessState = (() => {
-  let access = { tier: "free", demandAllowed: false, dailyLimit: 3 };
-  const listeners = new Set();
-
-  function emit() {
-    listeners.forEach((listener) => listener({ ...access }));
+(() => { "use strict";
+  // ── 1. AccessState ──────────────────────────────────────────────
+  let accessStateValue = { tier: "free", demandAllowed: false, dailyLimit: 3 };
+  const accessListeners = new Set();
+  function emitAccessState() {
+    const snapshot = { ...accessStateValue };
+    accessListeners.forEach((listener) => { try { listener(snapshot); } catch (err) { logClientException("access_state_listener_failed", err); } });
   }
-
   function readDomAccess() {
     const appEl = document.getElementById("app");
-    const bodyTier = document.body?.dataset.tier || "free";
-    const appTier = appEl?.dataset.tier || bodyTier;
-    const rawDemand = appEl?.dataset.demandAllowed ?? document.body?.dataset.demandAllowed ?? "false";
-    const rawDailyLimit = appEl?.dataset.dailyLimit ?? document.body?.dataset.dailyLimit ?? "3";
-    const parsedDailyLimit = Number.parseInt(rawDailyLimit, 10);
-    access = { tier: appTier, demandAllowed: rawDemand === "true", dailyLimit: Number.isFinite(parsedDailyLimit) ? parsedDailyLimit : 3 };
-    emit();
+    const tier = appEl?.dataset.tier || document.body?.dataset.tier || "free";
+    const demandRaw = appEl?.dataset.demandAllowed ?? document.body?.dataset.demandAllowed ?? "false";
+    const limitRaw = appEl?.dataset.dailyLimit ?? document.body?.dataset.dailyLimit ?? "3";
+    const dailyLimit = Number.parseInt(limitRaw, 10);
+    accessStateValue = { tier: String(tier || "free"), demandAllowed: demandRaw === "true", dailyLimit: Number.isFinite(dailyLimit) ? dailyLimit : 3 };
+    emitAccessState();
+    return { ...accessStateValue };
   }
-
-  function set(nextAccess) {
-    access = { ...access, ...nextAccess };
-    const demandAllowed = access.demandAllowed ? "true" : "false";
-    document.body.dataset.demandAllowed = demandAllowed;
-    document.body.dataset.tier = access.tier;
-    document.body.dataset.dailyLimit = String(access.dailyLimit ?? 3);
+  function setAccessState(next) {
+    accessStateValue = { ...accessStateValue, ...(next || {}) };
     const appEl = document.getElementById("app");
-    if (appEl) {
-      appEl.dataset.demandAllowed = demandAllowed;
-      appEl.dataset.tier = access.tier;
-      appEl.dataset.dailyLimit = String(access.dailyLimit ?? 3);
-    }
-    emit();
+    const demandAllowed = accessStateValue.demandAllowed ? "true" : "false";
+    const dailyLimit = String(accessStateValue.dailyLimit ?? 3);
+    if (document.body) { document.body.dataset.tier = accessStateValue.tier; document.body.dataset.demandAllowed = demandAllowed; document.body.dataset.dailyLimit = dailyLimit; }
+    if (appEl) { appEl.dataset.tier = accessStateValue.tier; appEl.dataset.demandAllowed = demandAllowed; appEl.dataset.dailyLimit = dailyLimit; }
+    emitAccessState();
+    return { ...accessStateValue };
   }
-
-  return {
-    readDomAccess,
-    set,
-    get: () => ({ ...access }),
-    subscribe(listener) {
-      listeners.add(listener);
-      return () => listeners.delete(listener);
-    }
-  };
-})();
-
-function getTierDisplayLabel(tier) {
-  const tierDisplayMap = {
-    simulated_paid: "Joined",
-  };
-
-  const normalizedTier = String(tier || "").toLowerCase();
-  if (tierDisplayMap[normalizedTier]) return tierDisplayMap[normalizedTier];
-  return normalizedTier ? normalizedTier.charAt(0).toUpperCase() + normalizedTier.slice(1) : "Free";
-}
-
-function getParserErrorMessage(payload, status) {
-  // The middleware wraps HTTPException as: { detail: { error: "HTTP_ERROR", detail: { error_code, message }, status_code } }
-  // Support both wrapped and unwrapped forms.
-  const inner = payload?.detail?.detail || payload?.detail || payload || {};
-  const errorCode = inner?.error_code;
-  const msg = inner?.message;
-
-  if (errorCode === "SHORT_URL_RESOLUTION_BLOCKED") {
-    return msg || "We could not open this short Google Maps link due to access restrictions. Please open it in Google Maps, copy the full URL, and try again.";
-  }
-  if (errorCode === "LOCATION_NOT_SUPPORTED") {
-    return msg || "This location is outside supported regions. Please use a location inside supported coverage areas.";
-  }
-  if (errorCode === "UNSUPPORTED_LOCATION_INPUT") {
-    return "Please use a Google Maps link or latitude/longitude coordinates.";
-  }
-  if (errorCode === "INVALID_COORDINATE_RANGE") {
-    return "Coordinates are out of range. Latitude must be between -90 and 90, and longitude between -180 and 180.";
-  }
-  if (errorCode === "SHORT_URL_RESOLUTION_FAILED") {
-    return "Could not expand this Google Maps short link. Please try again.";
-  }
-  if (errorCode === "MALFORMED_LOCATION_INPUT" || errorCode === "INVALID_LOCATION_INPUT") {
-    return "Could not read coordinates from that location input. Please check the link and try again.";
-  }
-  return `Parser service returned HTTP ${status}.`;
-}
-
-async function tryParseLocationInput(raw, signal) {
-  let response;
-  try {
-    response = await fetch("/api/parse-location", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ location_input: raw }),
-      signal
-    });
-  } catch (networkErr) {
-    if (networkErr?.name === "AbortError") throw networkErr;
-    throw new Error("Could not reach the parser service. Please check your connection and try again.");
-  }
-  let payload;
-  try {
-    payload = await response.json();
-  } catch {
-    throw new Error(response.ok ? "Parser service returned an unreadable response." : `Parser service returned HTTP ${response.status}.`);
-  }
-  if (!response.ok || !payload?.ok) {
-    const msg = getParserErrorMessage(payload, response.status);
-    throw new Error(msg);
-  }
-  const lat = Number(payload.normalized?.latitude);
-  const lon = Number(payload.normalized?.longitude);
-  if (!Number.isFinite(lat) || !Number.isFinite(lon)) throw new Error("The parser could not return coordinates for this location input.");
-  return { lat, lon, normalizedText: payload.normalized?.display || raw };
-}
-
-function updateAccessState(isPaid, tier = null, dailyLimit = null) {
-  const normalizedTier = tier || (isPaid ? "paid" : "free");
-  const next = { tier: normalizedTier, demandAllowed: Boolean(isPaid) };
-  if (Number.isFinite(dailyLimit)) {
-    next.dailyLimit = Math.max(1, Math.trunc(dailyLimit));
-  }
-  AccessState.set(next);
-}
-
-document.addEventListener("DOMContentLoaded", () => {
-  // 1. STATE MACHINE (Single Source of Truth)
-  const state = {
-    coords: { lat: null, lng: null, valid: false, key: null },
-    input: { kind: "empty", original: "", preview: "", parsed: null, error: "", touched: false },
-    construction: { status: "idle", coordKey: null, score: null },
-    demand: { status: "idle", coordKey: null, score: null },
-    verification: { required: false, passed: false, token: null, widgetId: null, renderAttempts: 0 },
-    modals: { active: null, history: [] },
-    unlock: { email: "", plan: "sim_1_day", resendCooldownUntil: 0, lastTurnstileToken: null, turnstileToken: null, turnstileWidgetId: null, checkoutSubmitting: false, resendSubmitting: false },
-    requests: { construction: null, demand: null, parsePreview: null },
-    debounce: null
-  };
-
-  const normalizeKey = k => k ? k.split(',').map(n => parseFloat(n).toFixed(4)).join(',') : null;
-
-  // DOM Elements
-  const els = {
-    location: document.getElementById("locationInput"),
-    preview: document.getElementById("parsedPreview"),
-    err: document.getElementById("coordError"),
-    mainBtn: document.getElementById("mainActionBtn"),
-    
-    conBtn: document.getElementById("constructionGoBtn"),
-    conMsg: document.getElementById("constructionMessage"),
-    conBand: document.getElementById("constructionBand"),
-    conNeedle: document.getElementById("constructionNeedle"),
-    
-    demBtn: document.getElementById("demandGoBtn"),
-    demMsg: document.getElementById("demandMessage"),
-    demBand: document.getElementById("demandBand"),
-    demNeedle: document.getElementById("demandNeedle"),
-
-    turnstileSlot: document.getElementById("turnstileSlot"),
-    turnstileContainer: document.getElementById("turnstileContainer"),
-    
-    unlockEmail: document.getElementById("unlockEmail"),
-    unlockEmailErr: document.getElementById("unlockEmailError"),
-    continuePaymentBtn: document.getElementById("continueToPaymentBtn"),
-    awaitingEmailDisplay: document.getElementById("awaitingEmailDisplay")
-  };
-  const labels = {
-    constructionGo: els.conBtn?.dataset.labelGo || (els.conBtn?.textContent || "").trim(),
-    demandGo: els.demBtn?.dataset.labelGo || document.body.dataset.labelGo || (els.demBtn?.textContent || "").trim(),
-    demandUnlock: els.demBtn?.dataset.labelUnlock || document.body.dataset.labelUnlock || (els.demBtn?.textContent || "").trim(),
-    demandReady: els.demMsg?.dataset.labelReady || document.body.dataset.labelReady || (els.demMsg?.textContent || "").trim(),
-    demandLocked: els.demMsg?.dataset.labelLocked || document.body.dataset.labelPaidRequired || (els.demMsg?.textContent || "").trim(),
-    parsedAs: document.body.dataset.labelParsedAs || "Parsed as:",
-    parsingLink: document.body.dataset.labelParsingLink || "Parsing link...",
-    passActivatedToast: document.body.dataset.labelPassActivatedToast || "🎉 Pass Activated! You now have full access.",
-    coordinatesChanged: document.body.dataset.labelCoordinatesChanged || "Coordinates changed",
-    completeVerification: document.body.dataset.labelCompleteVerification || "Complete Verification",
-    verify: document.body.dataset.labelVerify || "Verify",
-    checkConstruction: document.body.dataset.labelCheckConstruction || "Check Construction",
-    analyzingSignals: document.body.dataset.labelAnalyzingSignals || "Analyzing signals...",
-    constructionComingSoon: document.body.dataset.labelConstructionComingSoon || "Coming soon...",
-    checkingDemand: document.body.dataset.labelCheckingDemand || "Checking demand...",
-    verificationRequired: document.body.dataset.labelVerificationRequired || "Verification required",
-    verificationLoadingChallenge: document.body.dataset.labelVerificationLoadingChallenge || "Loading verification challenge…",
-    verificationUnavailableSitekeyMissing: document.body.dataset.labelVerificationUnavailableSitekeyMissing || "Verification unavailable: site key missing.",
-    verificationUnableToLoad: document.body.dataset.labelVerificationUnableToLoad || "Unable to load verification challenge. Please refresh and try again.",
-    verificationFailedRefresh: document.body.dataset.labelVerificationFailedRefresh || "Verification failed. Please refresh.",
-    verificationUnableToRender: document.body.dataset.labelVerificationUnableToRender || "Unable to render verification challenge. Please refresh.",
-    verificationCompleteReady: document.body.dataset.labelVerificationCompleteReady || "Security check complete. Ready to check construction.",
-    coordinatesNotSet: document.body.dataset.labelCoordinatesNotSet || "Coordinates not set",
-    reportMinChars: document.body.dataset.labelReportMinChars || "Report must be at least 10 characters.",
-    shareOpenFailed: document.body.dataset.labelShareOpenFailed || "Could not open sharing options.",
-    copyFailedManual: document.body.dataset.labelCopyFailedManual || "Could not copy. Please copy manually.",
-    emailInvalid: document.body.dataset.labelEmailInvalid || "Please enter a valid email address.",
-    securityCheckRequired: document.body.dataset.labelSecurityCheckRequired || "Please complete the security check.",
-    redirectingResearchAccess: document.body.dataset.labelRedirectingResearchAccess || "Redirecting to research access...",
-    joinResearchCta: document.body.dataset.labelJoinResearchCta || "Join Research ➔",
-    resendEnterEmail: document.body.dataset.labelResendEnterEmail || "Enter your email above, then click Resend.",
-    resendFreshSecurity: document.body.dataset.labelResendFreshSecurity || "Please complete a fresh security check before resend.",
-    errorShortUrlBlocked: document.body.dataset.labelErrorShortUrlBlocked || "We could not open this short Google Maps link due to access restrictions. Please open it in Google Maps, copy the full URL, and try again.",
-    errorLocationNotSupported: document.body.dataset.labelErrorLocationNotSupported || "This location is outside supported regions. Please use a location inside supported coverage areas."
-  };
-
-  const supportLabelFallbacks = {
-    emailInvalid: 'Please enter a valid email address.',
-    securityCheckRequired: 'Please complete the security check.',
-    joinResearchCta: 'Join Research ➔',
-    resendEnterEmail: 'Enter your email above, then click Resend.',
-    resendFreshSecurity: 'Please complete a fresh security check before resend.'
-  };
-
-  function getSupportLabel(key) {
-    const value = labels && Object.prototype.hasOwnProperty.call(labels, key) ? labels[key] : null;
-    if (typeof value === 'string' && value.trim()) return value;
-    return supportLabelFallbacks[key] || '';
-  }
-
-  function getJoinResearchTelemetryContext(extra = {}) {
-    const email = (document.getElementById('purchaseEmail')?.value || '').trim().toLowerCase();
-    const domain = email.includes('@') ? email.split('@').pop() : null;
-    return {
-      surface: 'demand_level_page',
-      modal: 'join_research_access_modal',
-      selected_access_level: state.unlock?.plan || 'sim_1_day',
-      email_domain: domain || 'unknown',
-      turnstile_token_present: Boolean(state.unlock?.turnstileToken),
-      frontend_release: window.SENTRY_RELEASE || document.body?.dataset?.frontendRelease || 'unknown',
-      ...extra
-    };
-  }
-
-  function logJoinResearchException(eventName, err, extra = {}) {
-    const access = AccessState?.get ? AccessState.get() : {};
-    const ctx = getJoinResearchTelemetryContext({
-      event: eventName,
-      action: 'open_join_research_modal',
-      app_version: window.SENTRY_RELEASE || document.body?.dataset?.frontendRelease || 'unknown',
-      current_tier: access?.tier || document.body?.dataset?.tier || 'unknown',
-      quota_state: state?.report?.quotaBlocked ? 'blocked' : 'ok',
-      ...extra
-    });
-    console.error(eventName, { message: err?.message || null, stack: err?.stack || null, ...ctx });
-    if (window.Sentry?.captureException) {
-      try {
-        window.Sentry.captureException(err || new Error(eventName), {
-          tags: { surface: ctx.surface, modal: ctx.modal, action: ctx.action },
-          extra: ctx
-        });
-      } catch (_e) {}
-    }
-  }
-
+  function subscribeAccessState(fn) { accessListeners.add(fn); return () => accessListeners.delete(fn); }
+  const AccessState = { get: () => ({ ...accessStateValue }), set: setAccessState, readDomAccess, subscribe: subscribeAccessState };
+  // ── 2. Module-scope state, constants, utilities
+  const state = { coords: { lat: null, lng: null, valid: false, key: null },
+    input: { kind: "empty", original: "", preview: "", error: "", touched: false },
+    hero: { constructionStatus: "idle", demandStatus: "idle", constructionScore: null, demandScore: null },
+    unlock: { plan: "sim_1_day", email: "", step: 1, uiSurface: null, cooldownUntil: 0, submitting: false, resendSubmitting: false },
+    report: { type: "active_construction", note: "", locationRaw: "", locationParsed: null, locationError: null, locationSource: "manual_input", locationSourceLocked: false, uiState: "idle", quotaBlocked: false, submitAttemptId: 0, autoCloseTimer: null },
+    modals: { active: null } };
+  const ARC_LENGTH = 377;
+  const MIN_ANGLE = -82;
+  const MAX_SWEEP = 164;
+  const PIVOT_X = 160;
+  const PIVOT_Y = 180;
+  const DURATION = 800;
+  const VERIFY_TIMEOUT_TEXT = "Verification unavailable. Please check your connection or disable ad blockers and try again.";
+  const SEARCH_CHALLENGE_CODES = new Set(["CHALLENGE_REQUIRED", "INVALID_CHALLENGE"]);
+  let parseAbortController = null;
+  let reportParseAbortController = null;
+  let _checkoutOpSeq = 0;
+  let _resendOpSeq = 0;
+  let resendTimer = null;
+  const $ = (id) => document.getElementById(id);
+  function easeOutBack(t) {
+    const c1 = 1.70158;
+    const c3 = c1 + 1;
+    return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); }
+  function animateGauge(bandEl, needleEl, score) {
+    if (!bandEl || !needleEl) return;
+    const value = Math.max(0, Math.min(100, Number(score) || 0));
+    const targetOffset = ARC_LENGTH - (ARC_LENGTH * value) / 100;
+    const targetAngle = MIN_ANGLE + (MAX_SWEEP * value) / 100;
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    if (reduceMotion) { bandEl.style.strokeDashoffset = String(targetOffset);
+      needleEl.setAttribute("transform", `rotate(${targetAngle} ${PIVOT_X} ${PIVOT_Y})`);
+      return; }
+    const startOffset = Number.parseFloat(bandEl.style.strokeDashoffset || ARC_LENGTH);
+    const currentTransform = needleEl.getAttribute("transform") || `rotate(${MIN_ANGLE} ${PIVOT_X} ${PIVOT_Y})`;
+    const startAngle = Number.parseFloat((currentTransform.match(/rotate\((-?\d+(?:\.\d+)?)/) || [])[1] || MIN_ANGLE);
+    const startedAt = performance.now();
+    function tick(now) {
+      const progress = Math.min(1, (now - startedAt) / DURATION);
+      const eased = easeOutBack(progress);
+      const offset = startOffset + (targetOffset - startOffset) * eased;
+      const angle = startAngle + (targetAngle - startAngle) * eased;
+      bandEl.style.strokeDashoffset = String(offset);
+      needleEl.setAttribute("transform", `rotate(${angle} ${PIVOT_X} ${PIVOT_Y})`);
+      if (progress < 1) requestAnimationFrame(tick); }
+    requestAnimationFrame(tick); }
+  async function apiPost(url, body, options = {}) { let response;
+    try { response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+        body: JSON.stringify(body || {}),
+        signal: options.signal,
+        keepalive: options.keepalive === true });
+    } catch (err) { if (err?.name === "AbortError") throw err;
+      const networkError = new Error("Network error. Please check your connection and try again.");
+      networkError.cause = err;
+      throw networkError; }
+    let data = null;
+    try { data = await response.json();
+    } catch (err) { if (response.ok) return { ok: true, status: response.status, data: null, response }; }
+    if (!response.ok) { const err = new Error(extractApiMessage(data) || `Request failed with HTTP ${response.status}.`);
+      err.status = response.status;
+      err.data = data;
+      err.errorCode = extractErrorCode(data);
+      throw err; }
+    return { ok: true, status: response.status, data, response }; }
+  function notify(message, type = "info") {
+    const text = String(message || "").trim();
+    if (!text) return;
+    const toast = document.createElement("div");
+    toast.className = `toast toast-${type}`;
+    toast.setAttribute("role", "status");
+    toast.textContent = text;
+    document.body.appendChild(toast);
+    requestAnimationFrame(() => toast.classList.add("show"));
+    window.setTimeout(() => { toast.classList.remove("show");
+      window.setTimeout(() => toast.remove(), 250);
+    }, 3200); }
+  function debounce(fn, delay) {
+    let timer = null;
+    return (...args) => { window.clearTimeout(timer);
+      timer = window.setTimeout(() => fn(...args), delay); }; }
+  function logClientException(name, err, ctx = {}) {
+    try { const error = err instanceof Error ? err : new Error(String(err || name));
+      window.Sentry?.captureException?.(error, { tags: { client_event: name }, extra: ctx });
+      console.error(`[DillDrill] ${name}`, error, ctx);
+    } catch (_) { try { console.error(`[DillDrill] ${name}`, err, ctx); } catch (__) {} } }
   function safeLogJoinResearchException(eventName, err, extra = {}) {
-    try {
-      if (typeof logJoinResearchException === 'function') {
-        logJoinResearchException(eventName, err, extra);
-        return;
-      }
-    } catch (_ignored) {}
-
-    // Last-resort logging path: never allow telemetry helpers to break modal UX.
-    try {
-      console.error(eventName, {
-        message: err?.message || null,
-        stack: err?.stack || null,
-        ...extra
-      });
-      if (window.Sentry?.captureException) {
-        window.Sentry.captureException(err || new Error(eventName), {
-          tags: { action: 'open_join_research_modal' },
-          extra: { event: eventName, ...extra }
-        });
-      }
-    } catch (_ignored2) {}
-  }
-
+    try { if (typeof window.logJoinResearchException === "function") {
+        window.logJoinResearchException(eventName, err, extra);
+        return; }
+      logClientException(eventName, err, extra);
+    } catch (logErr) { logClientException("join_research_exception_logger_failed", logErr, { eventName }); } }
+  function captureEvent(name, props = {}) {
+    try { const payload = { ...(props || {}) };
+      const distinctId = window.posthog?.get_distinct_id?.();
+      if (distinctId) payload.posthog_distinct_id = distinctId;
+      window.posthog?.capture?.(name, payload);
+      window.posthog?.flush?.();
+    } catch (err) { logClientException("capture_event_failed", err, { name }); } }
+  async function logFlowEvent(eventName, payload = {}) { try {
+      await fetch("/api/telemetry/client-event", { method: "POST",
+        headers: { "Content-Type": "application/json" },
+        keepalive: true,
+        body: JSON.stringify({ flow_type: "research_access",
+          surface: "demand_level_page",
+          modal_name: "join_research_access_modal",
+          event: eventName,
+          ...(payload || {})
+        }) });
+    } catch (_) {} }
+  function normalizeKey(k) {
+    if (k === null || k === undefined || k === "") return null;
+    const parts = String(k).split(",").map((part) => Number.parseFloat(part));
+    if (parts.length < 2 || parts.some((n) => !Number.isFinite(n))) return null;
+    return parts.slice(0, 2).map((n) => n.toFixed(4)).join(","); }
+  function normalizeInput(raw) {
+    return String(raw || "").replace(/[\u2018\u2019\u201C\u201D]/g, "").replace(/\u00A0/g, " ").trim(); }
+  function validateLatLng(lat, lng) {
+    const parsedLat = Number(lat);
+    const parsedLng = Number(lng);
+    if (!Number.isFinite(parsedLat) || !Number.isFinite(parsedLng)) throw new Error("Coordinates must be numbers.");
+    if (parsedLat < -90 || parsedLat > 90 || parsedLng < -180 || parsedLng > 180) {
+      throw new Error("Coordinates are out of range. Latitude must be between -90 and 90, and longitude between -180 and 180."); }
+    return { lat: parsedLat, lng: parsedLng }; }
+  function classifyLocationInput(raw) {
+    const value = normalizeInput(raw);
+    if (!value) return "empty";
+    if (/^https?:\/\/(maps\.app\.goo\.gl|goo\.gl\/maps)\//i.test(value)) return "google_maps_short_url";
+    if (/^https?:\/\/([^\s/]+\.)?(google\.[^\s/]+|googleusercontent\.com)\/maps/i.test(value)) return "google_maps_url";
+    if (/^https?:\/\/maps\.google\.[^\s]+/i.test(value)) return "google_maps_url";
+    if (/^[-+]?\d+(?:\.\d+)?\s*,\s*[-+]?\d+(?:\.\d+)?$/.test(value)) return "decimal_pair";
+    return "invalid"; }
   function initFrontendSentry() {
-    if (!window.Sentry || window.__DD_SENTRY_INIT_DONE) return;
-    const dsn = document.body?.dataset?.sentryDsn || window.SENTRY_DSN;
-    if (!dsn) return;
-    const release = window.SENTRY_RELEASE || document.body?.dataset?.frontendRelease || 'unknown';
-    const environment = document.body?.dataset?.environment || window.ENVIRONMENT || 'production';
-    try {
-      window.Sentry.init({
-        dsn,
-        release,
-        environment
-      });
+    try { if (window.__DD_SENTRY_INIT_DONE) return;
+      const dsn = document.body?.dataset.sentryDsn;
+      if (!dsn || !window.Sentry?.init) return;
+      window.Sentry.init({ dsn, tracesSampleRate: 0.05, environment: document.body.dataset.env || "production" });
       window.__DD_SENTRY_INIT_DONE = true;
-      // NOTE: If Sentry events do not appear in production, verify CSP connect-src allows https://o*.ingest.sentry.io.
-    } catch (_err) {
-      /* never block app boot on telemetry init */
+    } catch (err) { logClientException("sentry_init_failed", err); } }
+  function getTierDisplayLabel(tier) {
+    const normalized = String(tier || "free").toLowerCase();
+    if (normalized === "simulated_paid") return "Joined";
+    if (normalized === "pass_1_day") return "1 Day Pass";
+    if (normalized === "pass_3_day") return "3 Day Pass";
+    if (normalized === "free") return "Free";
+    return normalized.charAt(0).toUpperCase() + normalized.slice(1).replaceAll("_", " "); }
+  function setButtonLoading(btn, isLoading) {
+    if (!btn) return;
+    btn.disabled = Boolean(isLoading);
+    btn.querySelector(".btn-text")?.classList.toggle("hidden", Boolean(isLoading));
+    btn.querySelector(".btn-spinner")?.classList.toggle("hidden", !isLoading); }
+  function extractErrorCode(data) {
+    return data?.detail?.detail?.error_code || data?.detail?.error_code || data?.error_code || data?.reason_code || data?.detail?.reason_code || null; }
+  function extractApiMessage(data) {
+    return data?.detail?.detail?.message || data?.detail?.message || data?.message || (typeof data?.detail === "string" ? data.detail : ""); }
+  function parseLocationPayload(data, fallbackText) {
+    const normalized = data?.normalized || data;
+    const lat = Number(normalized?.latitude ?? normalized?.lat);
+    const lng = Number(normalized?.longitude ?? normalized?.lng ?? normalized?.lon);
+    const valid = validateLatLng(lat, lng);
+    const display = normalized?.display || fallbackText || `${valid.lat.toFixed(6)}, ${valid.lng.toFixed(6)}`;
+    return { lat: valid.lat, lng: valid.lng, display, inputKind: normalized?.input_kind || null, key: normalizeKey(`${valid.lat},${valid.lng}`) }; }
+  function setText(id, text) {
+    const el = $(id);
+    if (el) el.textContent = text || ""; }
+  function setHidden(id, hidden) {
+    $(id)?.classList.toggle("hidden", Boolean(hidden)); }
+  // ── 3. TurnstileManager factory
+  function TurnstileManager(containerId, opts = {}) {
+    let widgetId;
+    let token = null;
+    let initPromise = null;
+    function container() { return $(containerId); }
+    function statusEl() { return opts.statusElId ? $(opts.statusElId) : null; }
+    function setStatus(message) { const el = statusEl(); if (el) el.textContent = message || ""; }
+    function getSitekey(el) { return el?.dataset.sitekey || (containerId === "turnstileContainer" ? document.body?.dataset.turnstileSitekey : ""); }
+    function waitForTurnstile() {
+      const startedAt = Date.now();
+      let delay = 100;
+      return new Promise((resolve, reject) => { function poll() {
+          if (window.turnstile?.render && window.turnstile?.reset) return resolve(window.turnstile);
+          if (Date.now() - startedAt >= 10000) return reject(new Error("turnstile_load_timeout"));
+          window.setTimeout(poll, delay);
+          delay = Math.min(delay * 2, 1600); }
+        poll(); }); }
+    async function runInit() {
+      const el = container();
+      if (!el) return null;
+      const sitekey = getSitekey(el);
+      if (!sitekey) { setStatus(document.body?.dataset.labelVerificationUnavailableSitekeyMissing || "Verification unavailable: site key missing."); opts.onError?.(); return null; }
+      try { const turnstile = await waitForTurnstile();
+        if (widgetId !== undefined) { turnstile.reset(widgetId); token = null; return widgetId; }
+        widgetId = turnstile.render(el, { sitekey, theme: el.dataset.theme || "auto", callback: (newToken) => { token = newToken || null; setStatus(""); opts.onToken?.(token); }, "expired-callback": () => { token = null; opts.onExpire?.(); }, "error-callback": () => { token = null; opts.onError?.(); } });
+        return widgetId;
+      } catch (err) { setStatus(VERIFY_TIMEOUT_TEXT); opts.onError?.(err); logClientException("turnstile_init_failed", err, { containerId }); return null;
+      } finally { initPromise = null; }
     }
-  }
-
-  initFrontendSentry();
-
-  function logClientException(eventName, err, context = {}) {
-    const payload = {
-      event: eventName,
-      error_name: err?.name || 'Error',
-      error_message: err?.message || 'Unknown client error',
-      ...context
-    };
-    console.error(eventName, payload);
-    if (window.Sentry?.captureException) {
-      window.Sentry.captureException(err || new Error(eventName), {
-        tags: { event: eventName, area: context?.area || 'app_js' },
-        extra: payload
-      });
-    }
-  }
-  async function parseLocationPreview(raw, signal) {
-    try {
-      const parsed = await tryParseLocationInput(raw, signal);
-      return { lat: parsed.lat, lng: parsed.lon, normalizedText: parsed.normalizedText };
-    } catch (err) {
-      if (err?.name === "AbortError") throw err;
-      console.warn(JSON.stringify({
-        event: "parser_error_response",
-        message: err?.message || "Parser error",
+    async function init() { if (initPromise) return initPromise; initPromise = runInit(); return initPromise; }
+    function reset() {
+      const hadWidget = widgetId !== undefined;
+      try { if (hadWidget && window.turnstile?.reset) window.turnstile.reset(widgetId);
+      } catch (err) { widgetId = undefined;
+        logClientException("turnstile_reset_failed", err, { containerId });
+      } finally { token = null;
+        setStatus(""); } }
+    function destroy() {
+      try { if (widgetId !== undefined && window.turnstile?.remove) window.turnstile.remove(widgetId);
+      } catch (err) { logClientException("turnstile_destroy_failed", err, { containerId });
+      } finally { widgetId = undefined;
+        token = null;
+        initPromise = null; } }
+    return { init, reset, getToken: () => token || null, destroy }; }
+  // ── 4. Turnstile instances
+  const heroTurnstile = TurnstileManager("turnstileContainer", { onToken: () => { $("turnstileSlot")?.classList.remove("hidden"); updateButtons(); },
+    onExpire: () => updateButtons(),
+    onError: () => updateButtons() });
+  const unlockTurnstile = TurnstileManager("unlock-turnstile-widget", { statusElId: "unlockTurnstileStatusMsg",
+    onToken: () => syncResendButtonState(),
+    onExpire: () => syncResendButtonState(),
+    onError: () => syncResendButtonState() });
+  const reportTurnstile = TurnstileManager("report-turnstile-widget", { onToken: () => setText("reportError", ""),
+    onExpire: () => {},
+    onError: () => setText("reportError", VERIFY_TIMEOUT_TEXT) });
+  // ── 5. syncAccessUI + updateButtons
+  function syncAccessUI() {
+    const access = AccessState.get();
+    const locked = !access.demandAllowed;
+    const demandBtn = $("demandGoBtn");
+    if (demandBtn) {
+      demandBtn.textContent = locked ? (demandBtn.dataset.labelUnlock || document.body.dataset.labelUnlock || "Unlock") : (demandBtn.dataset.labelGo || document.body.dataset.labelGo || "GO");
+      demandBtn.classList.toggle("unlock-styled", locked); }
+    const supportBtn = $("supportBtn");
+    if (supportBtn) {
+      supportBtn.textContent = locked ? (supportBtn.dataset.labelUnlock || "Unlock") : (supportBtn.dataset.labelActive || document.body.dataset.labelActive || "Available");
+      supportBtn.classList.toggle("accent", locked);
+      supportBtn.classList.toggle("active", !locked);
+      supportBtn.disabled = !locked;
+      supportBtn.setAttribute("aria-disabled", locked ? "false" : "true"); }
+    const tierLabel = getTierDisplayLabel(access.tier);
+    setText("userMenuBtn", tierLabel);
+    const tierBadge = $("userTierBadge");
+    if (tierBadge) { tierBadge.textContent = `${tierBadge.dataset.labelTier || "TIER"}: ${tierLabel}`;
+      tierBadge.dataset.tier = access.tier; }
+    const demandStatus = $("userDemandStatus");
+    if (demandStatus) {
+      demandStatus.textContent = access.demandAllowed ? (demandStatus.dataset.labelUnlocked || document.body.dataset.labelDemandUnlocked || "Available ✓") : (demandStatus.dataset.labelLocked || document.body.dataset.labelDemandLocked || "Locked 🔒");
+      demandStatus.classList.toggle("available", access.demandAllowed);
+      demandStatus.classList.toggle("locked", !access.demandAllowed); }
+    const limitItem = $("userDailyLimitItem");
+    if (limitItem) limitItem.textContent = `${limitItem.dataset.labelDailyUsage || "Daily usage"}: ${access.dailyLimit ?? 3}`;
+    updateButtons(); }
+  function updateButtons() {
+    const hasCoords = state.coords.valid;
+    const busy = state.hero.constructionStatus === "loading" || state.hero.demandStatus === "loading";
+    const mainBtn = $("mainActionBtn");
+    const conBtn = $("constructionGoBtn");
+    const demandBtn = $("demandGoBtn");
+    if (mainBtn) mainBtn.disabled = !hasCoords || busy;
+    if (conBtn) conBtn.disabled = !hasCoords || state.hero.constructionStatus === "loading";
+    if (demandBtn) demandBtn.disabled = !hasCoords || state.hero.demandStatus === "loading"; }
+  // ── 6. Hero: location input, parse preview, fetchConstruction, fetchDemand
+  function setHeroCoords(parsed) {
+    state.coords = { lat: parsed.lat, lng: parsed.lng, valid: true, key: normalizeKey(parsed.key || `${parsed.lat},${parsed.lng}`) };
+    state.input.preview = parsed.display || "";
+    state.input.error = ""; }
+  function clearHeroCoords() {
+    state.coords = { lat: null, lng: null, valid: false, key: null };
+    state.input.preview = "";
+    updateButtons(); }
+  function displayParseError(message) {
+    setHidden("parsedPreview", true);
+    setText("coordError", message);
+    state.input.error = message || "";
+    clearHeroCoords(); }
+  async function parseHeroLocation() { const inputEl = $("locationInput");
+    const raw = normalizeInput(inputEl?.value || "");
+    state.input.original = raw;
+    state.input.touched = true;
+    state.input.kind = classifyLocationInput(raw);
+    if (parseAbortController) parseAbortController.abort();
+    if (state.input.kind === "empty") { setHidden("parsedPreview", true);
+      setText("coordError", "");
+      clearHeroCoords();
+      return; }
+    if (state.input.kind === "invalid") { displayParseError("Please use a Google Maps link or latitude/longitude coordinates.");
+      return; }
+    parseAbortController = new AbortController();
+    setText("coordError", "");
+    const preview = $("parsedPreview");
+    if (preview) {
+      preview.textContent = state.input.kind === "google_maps_short_url" ? (document.body.dataset.labelParsingLink || "Parsing link...") : "Parsing location...";
+      preview.classList.remove("hidden"); }
+    try { const { data } = await apiPost("/api/parse-location", { location_input: raw }, { signal: parseAbortController.signal });
+      const parsed = parseLocationPayload(data, raw);
+      setHeroCoords(parsed);
+      if (preview) { preview.textContent = `${document.body.dataset.labelParsedAs || "Parsed as:"} ${parsed.display}`;
+        preview.classList.remove("hidden"); }
+    } catch (err) { if (err?.name === "AbortError") return;
+      const code = err.errorCode;
+      const fallback = code === "SHORT_URL_RESOLUTION_BLOCKED" ? document.body.dataset.labelErrorShortUrlBlocked : code === "LOCATION_NOT_SUPPORTED" ? document.body.dataset.labelErrorLocationNotSupported : null;
+      displayParseError(fallback || err.message || "Could not read that location input.");
+    } finally { parseAbortController = null;
+      updateButtons(); } }
+  const debouncedParseHeroLocation = debounce(parseHeroLocation, 350);
+  function searchPayload(target) {
+    return { lat: state.coords.lat,
+      lon: state.coords.lng,
+      target,
+      turnstile_token: heroTurnstile.getToken(),
+      coord_key: state.coords.key,
+      location_input: $("locationInput")?.value || "" }; }
+  function resultIsCurrent(result) {
+    const responseKey = normalizeKey(result?.coord_key);
+    const currentKey = normalizeKey(state.coords.key);
+    return !responseKey || !currentKey || responseKey === currentKey; }
+  async function fetchConstruction(options = {}) { if (!state.coords.valid) return null;
+    state.hero.constructionStatus = "loading";
+    updateButtons();
+    setText("constructionMessage", document.body.dataset.labelAnalyzingSignals || "Analyzing signals...");
+    try { const { data } = await apiPost("/api/search", searchPayload("construction"));
+      if (data?.verification_required) { $("turnstileSlot")?.classList.remove("hidden");
+        await heroTurnstile.init();
+        setText("constructionMessage", document.body.dataset.labelVerificationRequired || "Verification required");
+        state.hero.constructionStatus = "idle";
+        return null; }
+      const result = data?.construction;
+      if (!result || !resultIsCurrent(result)) return null;
+      const score = Number(result.score);
+      if (Number.isFinite(score)) { const restored = Number(options.restoredScore);
+        const shouldAnimate = !Number.isFinite(restored) || Math.abs(score - restored) > 2;
+        if (shouldAnimate) animateGauge($("constructionBand"), $("constructionNeedle"), score);
+        state.hero.constructionScore = score; }
+      state.hero.constructionStatus = "ready";
+      setText("constructionMessage", result.message || document.body.dataset.labelReady || "Ready");
+      return result;
+    } catch (err) { if (SEARCH_CHALLENGE_CODES.has(err.errorCode)) {
+        heroTurnstile.reset();
+        $("turnstileSlot")?.classList.remove("hidden");
+        await heroTurnstile.init(); }
+      state.hero.constructionStatus = "error";
+      setText("constructionMessage", err.message || "Could not check construction right now.");
+      logClientException("construction_search_failed", err);
+      return null;
+    } finally { if (state.hero.constructionStatus === "loading") state.hero.constructionStatus = "idle";
+      updateButtons(); } }
+  async function fetchDemand() { const access = AccessState.get();
+    if (!access.demandAllowed || access.tier === "free") { openJoinResearchModal("demand_level_page");
+      return null; }
+    if (!state.coords.valid) return null;
+    state.hero.demandStatus = "loading";
+    updateButtons();
+    setText("demandMessage", document.body.dataset.labelCheckingDemand || "Checking demand...");
+    try { const { data } = await apiPost("/api/search", searchPayload("demand"));
+      if (data?.verification_required) { $("turnstileSlot")?.classList.remove("hidden");
+        await heroTurnstile.init();
+        setText("demandMessage", document.body.dataset.labelVerificationRequired || "Verification required");
+        state.hero.demandStatus = "idle";
+        return null; }
+      const result = data?.demand;
+      if (!result || !resultIsCurrent(result)) return null;
+      const score = Number(result.score);
+      if (Number.isFinite(score)) { animateGauge($("demandBand"), $("demandNeedle"), score);
+        state.hero.demandScore = score; }
+      state.hero.demandStatus = "ready";
+      setText("demandMessage", result.message || document.body.dataset.labelReady || "Ready");
+      return result;
+    } catch (err) { if (SEARCH_CHALLENGE_CODES.has(err.errorCode)) {
+        heroTurnstile.reset();
+        $("turnstileSlot")?.classList.remove("hidden");
+        await heroTurnstile.init(); }
+      state.hero.demandStatus = "error";
+      setText("demandMessage", err.message || "Could not check demand right now.");
+      logClientException("demand_search_failed", err);
+      return null;
+    } finally { if (state.hero.demandStatus === "loading") state.hero.demandStatus = "idle";
+      updateButtons(); } }
+  // ── 7. Modal system: openModal, closeModal, hooks map
+  const hooks = { supportModalLayer: {
+      onOpen: () => unlockTurnstile.init(),
+      onClose: () => { logFlowEvent("join_research_access_modal_closed", { action: "close_join_research_modal", status: "closed", ui_surface: state.unlock.uiSurface, step: `purchaseStep${state.unlock.step}` }); unlockTurnstile.reset(); resetSupportModal(); } },
+    reportModalLayer: { onOpen: () => reportTurnstile.init(),
+      onClose: () => { reportTurnstile.reset(); resetReportModal(); } } };
+  function shouldUseDialogOpen(el) {
+    return el?.tagName === "DIALOG" && !el.classList.contains("bottom-sheet") && !el.classList.contains("sheet-layer"); }
+  function openModal(id, options = {}) {
+    const el = $(id);
+    if (!el) return;
+    if (state.modals.active && state.modals.active !== id) closeModal(state.modals.active, { silent: true });
+    try { if (shouldUseDialogOpen(el)) {
+        if (!el.open) el.showModal();
+      } else { el.classList.add("open");
+        if (el.tagName === "DIALOG" && !el.open && el.classList.contains("bottom-sheet")) el.show?.(); }
+      el.setAttribute("aria-hidden", "false");
+      document.body.style.overflow = "hidden";
+      state.modals.active = id;
+      hooks[id]?.onOpen?.(options);
+      el.dispatchEvent(new CustomEvent("modal:open", { detail: options }));
+    } catch (err) { logClientException("modal_open_failed", err, { id }); } }
+  function closeModal(id, options = {}) {
+    const el = $(id);
+    if (!el) return;
+    try { if (shouldUseDialogOpen(el)) {
+        if (el.open) el.close();
+      } else { el.classList.remove("open");
+        if (el.tagName === "DIALOG" && el.open && el.classList.contains("bottom-sheet")) el.close?.(); }
+      el.setAttribute("aria-hidden", "true");
+      if (state.modals.active === id) state.modals.active = null;
+      if (!state.modals.active) document.body.style.overflow = "";
+      hooks[id]?.onClose?.(options);
+      if (!options.silent) el.dispatchEvent(new CustomEvent("modal:close", { detail: options }));
+    } catch (err) { logClientException("modal_close_failed", err, { id }); } }
+  // ── 8. Modal: Support / Join Research
+  function openJoinResearchModal(surface = "hero_unlock_button") {
+    state.unlock.uiSurface = surface;
+    try { resetSupportModal({ keepSurface: true }); } catch (err) { safeLogJoinResearchException("join_research_modal_reset_failed", err, { surface }); }
+    openModal("supportModalLayer", { surface });
+    logFlowEvent("join_research_access_modal_opened", { action: "open_join_research_modal", status: "opened", ui_surface: surface, step: "purchaseStep1" }); }
+  function showSupportStep(step) {
+    state.unlock.step = step;
+    [1, 2, 3].forEach((n) => setHidden(`purchaseStep${n}`, n !== step));
+    syncResendButtonState(); }
+  function resetSupportModal(options = {}) {
+    state.unlock.plan = "sim_1_day";
+    state.unlock.email = "";
+    state.unlock.step = 1;
+    state.unlock.submitting = false;
+    state.unlock.resendSubmitting = false;
+    if (!options.keepSurface) state.unlock.uiSurface = null;
+    window.clearInterval(resendTimer);
+    resendTimer = null;
+    state.unlock.cooldownUntil = 0;
+    _checkoutOpSeq += 1;
+    _resendOpSeq += 1;
+    showSupportStep(1);
+    const emailEl = $("purchaseEmail");
+    if (emailEl) emailEl.value = "";
+    setText("purchaseEmailError", "");
+    setText("purchaseRedirectError", "");
+    setText("resendMessage", "");
+    const proceedText = $("proceedToPaymentBtn")?.querySelector(".btn-text");
+    if (proceedText) proceedText.textContent = document.body.dataset.labelJoinResearchCta || "Join Research ➔";
+    setButtonLoading($("proceedToPaymentBtn"), false);
+    $("planGrid")?.querySelectorAll("[data-plan]").forEach((card) => { const active = card.dataset.plan === "sim_1_day";
+      card.classList.toggle("active", active);
+      card.setAttribute("aria-checked", active ? "true" : "false"); });
+    syncResendButtonState(); }
+  function isCurrentOperation(type, id) {
+    return type === "checkout" ? id === _checkoutOpSeq : id === _resendOpSeq; }
+  function validEmail(email) {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(email || "").trim()); }
+  function syncResendButtonState() {
+    const btn = $("resendLinkBtn");
+    if (!btn) return;
+    const email = normalizeInput($("purchaseEmail")?.value || state.unlock.email);
+    const cooldownMs = Math.max(0, state.unlock.cooldownUntil - Date.now());
+    const cooldownActive = cooldownMs > 0;
+    btn.disabled = !email || !unlockTurnstile.getToken() || cooldownActive || state.unlock.resendSubmitting;
+    if (cooldownActive) btn.textContent = `Resend Access Link (${Math.ceil(cooldownMs / 1000)}s)`;
+    else btn.textContent = document.body.dataset.labelResendLink || "Resend Access Link";
+    const hint = $("resendTurnstileHint");
+    if (hint) {
+      const hasToken = Boolean(unlockTurnstile.getToken());
+      hint.textContent = hasToken
+        ? "Security check complete. You can resend now."
+        : "Complete a fresh security check to enable resend.";
+    } }
+  function startResendCooldown() {
+    state.unlock.cooldownUntil = Date.now() + 180000;
+    window.clearInterval(resendTimer);
+    resendTimer = window.setInterval(() => { syncResendButtonState();
+      if (Date.now() >= state.unlock.cooldownUntil) { window.clearInterval(resendTimer);
+        resendTimer = null; }
+    }, 1000);
+    syncResendButtonState(); }
+  function saveResumeStateBeforeMagicLink() {
+    try { if (!state.coords.valid) return;
+      localStorage.setItem("dd_resume_state", JSON.stringify({ lat: state.coords.lat,
+        lng: state.coords.lng,
+        text: $("locationInput")?.value || "",
+        constructionScore: state.hero.constructionScore,
+        constructionMessage: $("constructionMessage")?.textContent || ""
       }));
-      throw err;
-    }
-  }
-
-
-  AccessState.readDomAccess();
-  AccessState.subscribe(() => {
+    } catch (err) { logClientException("resume_state_save_failed", err); } }
+  async function submitMagicLink(event) { event?.preventDefault?.();
+    const btn = $("proceedToPaymentBtn");
+    const email = normalizeInput($("purchaseEmail")?.value || "");
+    const token = unlockTurnstile.getToken();
+    setText("purchaseEmailError", "");
+    if (!validEmail(email)) { setText("purchaseEmailError", document.body.dataset.labelEmailInvalid || "Please enter a valid email address."); return; }
+    if (!token) { setText("purchaseEmailError", document.body.dataset.labelSecurityCheckRequired || "Please complete the security check."); return; }
+    const opId = ++_checkoutOpSeq;
+    state.unlock.email = email;
+    state.unlock.submitting = true;
+    setButtonLoading(btn, true);
+    logFlowEvent("join_research_access_email_submit_started", { action: "submit_email", status: "started", ui_surface: state.unlock.uiSurface, step: "purchaseStep1" });
+    saveResumeStateBeforeMagicLink();
+    try { const plan = state.unlock.plan || "sim_1_day";
+      const intentId = sessionStorage.getItem("last_payment_intent_id") || undefined;
+      await apiPost("/api/auth/magic-link", { email, plan, turnstile_token: token, intent_id: intentId });
+      if (!isCurrentOperation("checkout", opId)) return;
+      logFlowEvent("join_research_access_magic_link_succeeded", { action: "request_magic_link", status: "succeeded", ui_surface: state.unlock.uiSurface, step: "purchaseStep3" });
+      setText("resendMessage", `We've sent a secure access link to ${email}. Click it to activate your pass.`);
+      showSupportStep(3);
+    } catch (err) { if (!isCurrentOperation("checkout", opId)) return;
+      unlockTurnstile.reset();
+      await unlockTurnstile.init();
+      setText("purchaseEmailError", "Join Research is temporarily unavailable. Please try again.");
+      logFlowEvent("join_research_access_magic_link_failed", { action: "request_magic_link", status: "failed", error_code: err.errorCode, error_message: err.message, ui_surface: state.unlock.uiSurface, step: "purchaseStep1" });
+      safeLogJoinResearchException("join_research_access_flow_failed", err, { email });
+    } finally { if (isCurrentOperation("checkout", opId)) {
+        state.unlock.submitting = false;
+        setButtonLoading(btn, false);
+        syncResendButtonState(); } } }
+  async function resendMagicLink(event) { event?.preventDefault?.();
+    const email = normalizeInput($("purchaseEmail")?.value || state.unlock.email);
+    const token = unlockTurnstile.getToken();
+    if (!validEmail(email)) { setText("purchaseEmailError", document.body.dataset.labelResendEnterEmail || "Enter your email above, then click Resend."); return; }
+    if (!token) { setText("purchaseEmailError", document.body.dataset.labelResendFreshSecurity || "Please complete a fresh security check before resend."); return; }
+    const opId = ++_resendOpSeq;
+    state.unlock.resendSubmitting = true;
+    syncResendButtonState();
+    try { await apiPost("/api/auth/magic-link", { email, turnstile_token: token });
+      if (!isCurrentOperation("resend", opId)) return;
+      state.unlock.email = email;
+      startResendCooldown();
+      showSupportStep(3);
+      setText("resendMessage", `We've sent a fresh access link to ${email}.`);
+      logFlowEvent("join_research_access_resend_succeeded", { action: "resend_magic_link", status: "succeeded", ui_surface: state.unlock.uiSurface, step: "purchaseStep3" });
+    } catch (err) { if (!isCurrentOperation("resend", opId)) return;
+      unlockTurnstile.reset();
+      await unlockTurnstile.init();
+      setText("purchaseEmailError", "Could not resend right now. Please try again.");
+      logFlowEvent("join_research_access_resend_failed", { action: "resend_magic_link", status: "failed", error_code: err.errorCode, error_message: err.message, ui_surface: state.unlock.uiSurface, step: "purchaseStep1" });
+    } finally { if (isCurrentOperation("resend", opId)) {
+        state.unlock.resendSubmitting = false;
+        syncResendButtonState(); } } }
+  // ── 9. Modal: Report
+  function prefillReportLocation() {
+    const input = $("reportLocationInput");
+    if (!input || state.report.locationSourceLocked) return;
+    const heroText = normalizeInput($("locationInput")?.value || "");
+    if (heroText && state.coords.valid) { input.value = heroText;
+      state.report.locationRaw = heroText;
+      state.report.locationParsed = { lat: state.coords.lat, lng: state.coords.lng };
+      state.report.locationSource = "hero_prefill"; } }
+  function resetReportModal() {
+    window.clearTimeout(state.report.autoCloseTimer);
+    state.report = { type: "active_construction", note: "", locationRaw: "", locationParsed: null, locationError: null, locationSource: "manual_input", locationSourceLocked: false, uiState: "idle", quotaBlocked: false, submitAttemptId: state.report.submitAttemptId + 1, autoCloseTimer: null };
+    setHidden("reportFormState", false);
+    setHidden("reportSuccessState", true);
+    setText("reportError", "");
+    setText("reportLocationError", "");
+    const loc = $("reportLocationInput"); if (loc) loc.value = "";
+    const note = $("reportNote"); if (note) note.value = "";
+    const nearby = $("reportNearbyNow"); if (nearby) nearby.checked = false;
+    setText("reportCharCount", "0/180");
+    $("reportTypeGrid")?.querySelectorAll("[data-report-type]").forEach((pill) => { const active = pill.dataset.reportType === "active_construction";
+      pill.classList.toggle("active", active);
+      pill.setAttribute("aria-checked", active ? "true" : "false"); });
+    setButtonLoading($("reportSubmitBtn"), false);
+    prefillReportLocation(); }
+  async function parseReportLocation() { const raw = normalizeInput($("reportLocationInput")?.value || "");
+    state.report.locationRaw = raw;
+    state.report.locationSourceLocked = true;
+    state.report.locationSource = "manual_input";
+    if (reportParseAbortController) reportParseAbortController.abort();
+    if (!raw) { state.report.locationParsed = null; setText("reportLocationError", ""); return; }
+    reportParseAbortController = new AbortController();
+    try { const { data } = await apiPost("/api/parse-location", { location_input: raw }, { signal: reportParseAbortController.signal });
+      const parsed = parseLocationPayload(data, raw);
+      state.report.locationParsed = { lat: parsed.lat, lng: parsed.lng };
+      state.report.locationError = null;
+      setText("reportLocationError", "");
+    } catch (err) { if (err?.name === "AbortError") return;
+      state.report.locationParsed = null;
+      state.report.locationError = err.message;
+      setText("reportLocationError", err.message || "Could not read that location.");
+    } finally { reportParseAbortController = null; } }
+  const debouncedParseReportLocation = debounce(parseReportLocation, 350);
+  async function submitReport(event) { event?.preventDefault?.();
+    const note = normalizeInput($("reportNote")?.value || "");
+    const parsed = state.report.locationParsed || (state.coords.valid ? { lat: state.coords.lat, lng: state.coords.lng } : null);
+    setText("reportError", "");
+    if (!parsed) { setText("reportError", document.body.dataset.labelCoordinatesNotSet || "Coordinates not set"); return; }
+    if (note.length > 0 && note.length < 10) { setText("reportError", document.body.dataset.labelReportMinChars || "Report must be at least 10 characters."); return; }
+    const token = reportTurnstile.getToken();
+    if (!token) { setText("reportError", document.body.dataset.labelSecurityCheckRequired || "Please complete the security check."); return; }
+    const attemptId = ++state.report.submitAttemptId;
+    setButtonLoading($("reportSubmitBtn"), true);
+    try { const { data } = await apiPost("/api/user-reports", {
+        lat: parsed.lat,
+        lon: parsed.lng,
+        report_kind: state.report.type,
+        note,
+        is_nearby_now: Boolean($("reportNearbyNow")?.checked),
+        location_source: state.report.locationSource,
+        cf_turnstile_token: token });
+      if (attemptId !== state.report.submitAttemptId) return;
+      setHidden("reportFormState", true);
+      setHidden("reportSuccessState", false);
+      const successMsg = $("reportSuccessState")?.querySelector(".success-msg");
+      if (successMsg && data?.message) successMsg.textContent = data.message;
+      captureEvent("user_report_submitted", { status: data?.status || "report_created", report_kind: state.report.type });
+      state.report.autoCloseTimer = window.setTimeout(() => closeModal("reportModalLayer"), 2000);
+    } catch (err) { const code = err.errorCode;
+      if (code === "turnstile_failed" || code === "turnstile_required") { reportTurnstile.reset(); await reportTurnstile.init(); }
+      setText("reportError", err.message || "Could not submit report right now.");
+      captureEvent("user_report_failed", { error_code: code, status: err.status });
+      logClientException("report_submit_failed", err);
+    } finally { if (attemptId === state.report.submitAttemptId) setButtonLoading($("reportSubmitBtn"), false); } }
+  // ── 10. Modal: Share
+  function getShareUrl() {
+    return $("shareUrlBox")?.textContent?.trim() || window.location.href.split("?")[0]; }
+  function defaultShareText() {
+    const senderName = document.body.dataset.userDisplayName || "Someone";
+    return `${senderName} checked a property with DillDrill — and thinks you should too before you commit. See construction activity near any address in seconds:`; }
+  function updateShareCounter() {
+    const text = $("shareText")?.value || "";
+    setText("shareCharCount", `${text.length} / 220`); }
+  async function copyToClipboard(text) { try {
+      await navigator.clipboard.writeText(text);
+      notify("Copied.", "success");
+      captureEvent("share_copied", { surface: state.modals.active });
+      return true;
+    } catch (err) { const msg = document.body.dataset.labelCopyFailedManual || "Could not copy. Please copy manually.";
+      setText("shareError", msg);
+      logClientException("clipboard_copy_failed", err);
+      return false; } }
+  async function copyAll() { const text = normalizeInput($("shareText")?.value || defaultShareText());
+    return copyToClipboard(`${text} ${getShareUrl()}`.trim()); }
+  async function shareNative() { const payload = { title: "🏗️ Check what's being built near this address", text: defaultShareText(), url: getShareUrl() };
+    try { if (navigator.share) await navigator.share(payload);
+      else await copyAll();
+      closeModal("shareModalLayer");
+      notify("Shared.", "success");
+      captureEvent("native_share_completed", { method: navigator.share ? "native" : "clipboard" });
+    } catch (err) { if (err?.name === "AbortError") return;
+      setText("shareError", document.body.dataset.labelShareOpenFailed || "Could not open sharing options.");
+      logClientException("share_native_failed", err); } }
+  function openShareModal() {
+    const textEl = $("shareText");
+    if (textEl && !textEl.value) textEl.value = defaultShareText().slice(0, 220);
+    const urlEl = $("shareUrlBox");
+    if (urlEl && !urlEl.textContent.trim()) urlEl.textContent = window.location.href.split("?")[0];
+    setText("shareError", "");
+    updateShareCounter();
+    openModal("shareModalLayer");
+    captureEvent("share_modal_opened", { surface: "utility_button" }); }
+  // ── 11. Modal: User status
+  function openUserModal() { openModal("userModalLayer"); }
+  // ── 12. Modal: About, Language
+  function openAboutModal() { openModal("aboutModalLayer"); }
+  async function selectLanguage(item) { const lang = item?.dataset.lang;
+    if (!lang) return;
+    const current = document.body.dataset.currentLang || document.documentElement.lang || "en";
+    if (lang === current) { closeModal("langModalLayer"); return; }
+    item.classList.add("is-loading");
+    item.querySelector(".lang-item__check")?.classList.add("hidden");
+    item.querySelector(".lang-item__spinner")?.classList.remove("hidden");
+    try { await apiPost("/api/language", { lang });
+      window.location.reload();
+    } catch (err) { item.classList.remove("is-loading");
+      item.querySelector(".lang-item__check")?.classList.remove("hidden");
+      item.querySelector(".lang-item__spinner")?.classList.add("hidden");
+      setText("langError", err.message || "Could not change language.");
+      notify("Could not change language. Please try again.", "error"); } }
+  // ── 13. DOMContentLoaded init
+  function insertMagicBanner() {
+    if ($("magicSuccessBanner")) return;
+    const form = $("coordForm");
+    const banner = document.createElement("div");
+    banner.id = "magicSuccessBanner";
+    banner.className = "success-banner";
+    banner.textContent = "✅ Research Access active. Your report is ready.";
+    form?.parentNode?.insertBefore(banner, form); }
+  function stripQueryParams() {
+    try { window.history.replaceState({}, "", window.location.pathname); } catch (_) {} }
+  function handleMagicErrorLanding(params) {
+    const error = params.get("error");
+    if (!error) return false;
+    if (error === "invalid_link") { setText("coordError", "This access link has expired or has already been used. Request a new one from the Join Research modal.");
+    } else if (error === "system_error") { setText("coordError", "Something went wrong activating your access. Please try the link again or request a new one.");
+      logClientException("magic_link_error_landing", null, { code: params.get("code") }); }
+    stripQueryParams();
+    return true; }
+  function restoreAfterMagicSuccess() {
+    const params = new URLSearchParams(window.location.search);
+    if (handleMagicErrorLanding(params)) return;
+    const magicSuccess = params.get("magic_success") === "1";
+    const resumeRaw = localStorage.getItem("dd_resume_state");
+    if (!magicSuccess) return;
+    if (!resumeRaw) { stripQueryParams(); insertMagicBanner(); return; }
+    let resume = null;
+    try { resume = JSON.parse(resumeRaw); } catch (err) { stripQueryParams(); insertMagicBanner(); return; }
+    if (Number.isFinite(Number(resume?.lat)) && Number.isFinite(Number(resume?.lng))) { const lat = Number(resume.lat);
+      const lng = Number(resume.lng);
+      state.coords = { lat, lng, valid: true, key: normalizeKey(`${lat},${lng}`) };
+      const input = $("locationInput");
+      if (input) input.value = resume.text || "";
+      const restoredScore = Number(resume.constructionScore);
+      if (Number.isFinite(restoredScore)) { state.hero.constructionScore = restoredScore;
+        state.hero.constructionStatus = "ready";
+        animateGauge($("constructionBand"), $("constructionNeedle"), restoredScore);
+        setText("constructionMessage", resume.constructionMessage || "");
+        fetchConstruction({ restoredScore });
+      } else { fetchConstruction(); } }
+    localStorage.removeItem("dd_resume_state");
+    stripQueryParams();
+    insertMagicBanner();
+    syncAccessUI();
+    updateButtons(); }
+  function bindModalCloseControls() {
+    document.addEventListener("click", (event) => { const closeBtn = event.target.closest?.("[data-close]");
+      if (closeBtn) { event.preventDefault();
+        closeModal(closeBtn.dataset.close); } });
+    ["supportModalLayer", "reportModalLayer", "shareModalLayer", "userModalLayer", "aboutModalLayer", "langModalLayer"].forEach((id) => { const el = $(id);
+      el?.addEventListener("cancel", (event) => { event.preventDefault(); closeModal(id); });
+      el?.addEventListener("click", (event) => { if (event.target === el) closeModal(id); }); });
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      const active = state.modals.active;
+      if (!active) return;
+      const el = $(active);
+      // Native <dialog> elements already fire cancel on Escape;
+      // prevent double-close for those.
+      if (el?.tagName === "DIALOG" && !el.classList.contains("bottom-sheet")) return;
+      event.preventDefault();
+      closeModal(active);
+    }); }
+  function bindEvents() {
+    $("locationInput")?.addEventListener("input", debouncedParseHeroLocation);
+    $("coordForm")?.addEventListener("submit", (event) => { event.preventDefault(); fetchConstruction(); });
+    $("mainActionBtn")?.addEventListener("click", (event) => { event.preventDefault(); fetchConstruction(); });
+    $("constructionGoBtn")?.addEventListener("click", (event) => { event.preventDefault(); fetchConstruction(); });
+    $("demandGoBtn")?.addEventListener("click", (event) => { event.preventDefault(); fetchDemand(); });
+    $("supportBtn")?.addEventListener("click", (event) => { event.preventDefault(); if (!AccessState.get().demandAllowed) openJoinResearchModal("hero_unlock_button"); });
+    $("userUpgradeBtn")?.addEventListener("click", (event) => { event.preventDefault(); openJoinResearchModal("user_access_modal"); });
+    $("userMenuBtn")?.addEventListener("click", openUserModal);
+    $("userMenuBtn")?.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openUserModal(); } });
+    $("reportBtn")?.addEventListener("click", (event) => { event.preventDefault(); resetReportModal(); openModal("reportModalLayer"); });
+    $("shareBtn")?.addEventListener("click", (event) => { event.preventDefault(); openShareModal(); });
+    $("aboutBtn")?.addEventListener("click", (event) => { event.preventDefault(); openAboutModal(); });
+    $("langOpenBtn")?.addEventListener("click", (event) => { event.preventDefault(); openModal("langModalLayer"); });
+    $("proceedToPaymentBtn")?.addEventListener("click", submitMagicLink);
+    $("resendLinkBtn")?.addEventListener("click", resendMagicLink);
+    $("cancelPaymentBtn")?.addEventListener("click", (event) => { event.preventDefault(); closeModal("supportModalLayer"); });
+    $("purchaseEmail")?.addEventListener("input", () => { state.unlock.email = normalizeInput($("purchaseEmail")?.value || ""); syncResendButtonState(); });
+    $("planGrid")?.addEventListener("click", (event) => { const card = event.target.closest?.("[data-plan]");
+      if (!card) return;
+      if (card.disabled || card.classList.contains("plan-card-disabled")) {
+        logFlowEvent("disabled_access_level_clicked", { action: "disabled_access_level_clicked", status: "blocked", ui_surface: state.unlock.uiSurface, step: "purchaseStep1", error_code: "disabled_not_available_in_simulated_flow", error_message: "72_hour_preview" });
+        return; }
+      state.unlock.plan = card.dataset.plan || "sim_1_day";
+      $("planGrid")?.querySelectorAll("[data-plan]").forEach((el) => { const active = el === card;
+        el.classList.toggle("active", active);
+        el.setAttribute("aria-checked", active ? "true" : "false"); }); });
+    $("reportLocationInput")?.addEventListener("input", debouncedParseReportLocation);
+    $("reportTypeGrid")?.addEventListener("click", (event) => { const pill = event.target.closest?.("[data-report-type]");
+      if (!pill) return;
+      state.report.type = pill.dataset.reportType || "active_construction";
+      $("reportTypeGrid")?.querySelectorAll("[data-report-type]").forEach((el) => { const active = el === pill;
+        el.classList.toggle("active", active);
+        el.setAttribute("aria-checked", active ? "true" : "false"); }); });
+    $("reportNote")?.addEventListener("input", () => { const text = $("reportNote")?.value || ""; state.report.note = text; setText("reportCharCount", `${text.length}/180`); });
+    $("reportSubmitBtn")?.addEventListener("click", submitReport);
+    $("shareText")?.addEventListener("input", updateShareCounter);
+    $("nativeShareBtn")?.addEventListener("click", (event) => { event.preventDefault(); shareNative(); });
+    $("copyLinkBtn")?.addEventListener("click", (event) => { event.preventDefault(); copyToClipboard(getShareUrl()); });
+    $("copyAllBtn")?.addEventListener("click", (event) => { event.preventDefault(); copyAll(); });
+    $("langList")?.addEventListener("click", (event) => { const item = event.target.closest?.(".lang-item"); if (item) selectLanguage(item); }); }
+  function initialGaugeRender() {
+    animateGauge($("constructionBand"), $("constructionNeedle"), state.hero.constructionScore || 0);
+    animateGauge($("demandBand"), $("demandNeedle"), state.hero.demandScore || 0); }
+  function init() {
+    initFrontendSentry();
+    AccessState.subscribe(syncAccessUI);
+    AccessState.readDomAccess();
+    bindModalCloseControls();
+    bindEvents();
+    restoreAfterMagicSuccess();
+    initialGaugeRender();
+    heroTurnstile.init();
     syncAccessUI();
     updateButtons();
-  });
-
-  function syncAccessUI() {
-    const demandAllowed = AccessState.get().demandAllowed;
-    if (els.demBtn) {
-      els.demBtn.textContent = demandAllowed ? labels.demandGo : labels.demandUnlock;
-      els.demBtn.classList.toggle("unlock-styled", !demandAllowed);
-    }
-    if (els.demMsg && state.demand.status === "idle") {
-      els.demMsg.textContent = demandAllowed ? labels.demandReady : labels.demandLocked;
-    }
-    const supportBtn = document.getElementById("supportBtn");
-    if (supportBtn) {
-      const paidLabel = supportBtn.dataset.labelActive || document.body.dataset.labelActive || supportBtn.textContent.trim();
-      const unlockLabel = supportBtn.dataset.labelUnlock || document.body.dataset.labelUnlock || supportBtn.textContent.trim();
-      supportBtn.textContent = demandAllowed ? paidLabel : unlockLabel;
-      supportBtn.classList.toggle("accent", !demandAllowed);
-      supportBtn.classList.toggle("active", demandAllowed);
-      supportBtn.disabled = demandAllowed;
-      supportBtn.setAttribute("aria-disabled", demandAllowed ? "true" : "false");
-    }
-  }
-
-  // Success redirect handling: force a server round-trip so template tier data is refreshed.
-  const urlParams = new URLSearchParams(window.location.search);
-  const magicSuccessJustLanded = urlParams.get("magic_success") === "1";
-
-  function normalizeInput(raw) {
-    return (raw || "")
-      .replace(/[\u2018\u2019]/g, "'")
-      .replace(/[\u201C\u201D]/g, "\"")
-      .replace(/\u00A0/g, " ")
-      .trim();
-  }
-
-  function validateLatLng(lat, lng) {
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) throw new Error("Invalid coordinates.");
-    if (lat < -90 || lat > 90) throw new Error("Latitude must be between -90 and 90.");
-    if (lng < -180 || lng > 180) throw new Error("Longitude must be between -180 and 180.");
-  }
-
-  function classifyLocationInput(raw) {
-    if (!raw || !raw.trim()) return "empty";
-    if (raw.length > 2048) return "invalid";
-    if (/[\u0000-\u001F\u007F]/.test(raw)) return "invalid";
-    if (/^https?:\/\//i.test(raw)) {
-      try {
-        const url = new URL(raw);
-        const host = url.hostname.toLowerCase();
-        if (host === "maps.app.goo.gl") return "google_maps_short_url";
-        if (host === "goo.gl" && (url.pathname === "/maps" || url.pathname.startsWith("/maps/"))) return "google_maps_short_url";
-        if (host === "g.page" && url.pathname && url.pathname !== "/") return "google_maps_short_url";
-        if ((host === "google.com" || host.endsWith(".google.com")) && url.pathname.includes("/maps")) return "google_maps_url";
-        if (host === "maps.google.com") return "google_maps_url";
-        return "invalid";
-      } catch {
-        return "invalid";
-      }
-    }
-    if (/^[+-]?\d+(?:\.\d+)?\s*,\s*[+-]?\d+(?:\.\d+)?$/.test(raw)) return "decimal_pair";
-    if (/^[+-]?\d+(?:\.\d+)?\s+[+-]?\d+(?:\.\d+)?$/.test(raw)) return "decimal_pair";
-    if (/[NSEW]/i.test(raw) && /°/.test(raw)) return "degree_pair";
-    return "invalid";
-  }
-
-  function parseDecimalPair(raw) {
-    if (/^\d+,\d+\s+\d+,\d+$/.test(raw)) {
-      throw new Error("Locale decimal commas are not supported. Use decimal point.");
-    }
-    const parts = raw.split(/[,\s]+/).filter(Boolean);
-    if (parts.length !== 2) throw new Error("Enter exactly two decimal values.");
-    let lat = Number(parts[0]);
-    let lng = Number(parts[1]);
-    let note = "";
-    if (Math.abs(lat) > 90 && Math.abs(lat) <= 180 && Math.abs(lng) <= 90) {
-      [lat, lng] = [lng, lat];
-      note = "Parsed as longitude, latitude input. Normalized to latitude, longitude.";
-    }
-    validateLatLng(lat, lng);
-    return { lat, lng, normalizedText: `${lat.toFixed(6)}, ${lng.toFixed(6)}`, note };
-  }
-
-  function parseDmsToken(token) {
-    const m = token.match(/(\d{1,3})\D+(\d{1,2})\D+(\d{1,2}(?:\.\d+)?)\D*([NSEW])/i);
-    if (!m) throw new Error("Invalid degree format.");
-    const deg = Number(m[1]);
-    const min = Number(m[2]);
-    const sec = Number(m[3]);
-    const hemi = m[4].toUpperCase();
-    if (min >= 60 || sec >= 60) throw new Error("Degree format minutes/seconds out of range.");
-    let value = deg + (min / 60) + (sec / 3600);
-    if (hemi === "S" || hemi === "W") value *= -1;
-    return { value, hemi };
-  }
-
-  function parseDegreePair(raw) {
-    const tokens = raw.match(/\d{1,3}[^NSEW]*[NSEW]/gi) || [];
-    if (tokens.length !== 2) throw new Error("Degree format must include latitude and longitude with hemisphere markers.");
-    const first = parseDmsToken(tokens[0]);
-    const second = parseDmsToken(tokens[1]);
-    const lat = ["N", "S"].includes(first.hemi) ? first.value : second.value;
-    const lng = ["E", "W"].includes(first.hemi) ? first.value : second.value;
-    if (!["N", "S"].includes(first.hemi) && !["N", "S"].includes(second.hemi)) {
-      throw new Error("Missing latitude hemisphere marker.");
-    }
-    if (!["E", "W"].includes(first.hemi) && !["E", "W"].includes(second.hemi)) {
-      throw new Error("Missing longitude hemisphere marker.");
-    }
-    validateLatLng(lat, lng);
-    return { lat, lng, normalizedText: `${lat.toFixed(6)}, ${lng.toFixed(6)}` };
-  }
-
-  function extractPair(raw) {
-    const m = raw.match(/([+-]?\d+(?:\.\d+)?)\s*,\s*([+-]?\d+(?:\.\d+)?)/);
-    if (!m) return null;
-    const lat = Number(m[1]);
-    const lng = Number(m[2]);
-    validateLatLng(lat, lng);
-    return [lat, lng];
-  }
-
-  function parseGoogleMapsLongUrl(raw) {
-    const url = new URL(raw);
-    const rawUrl = decodeURIComponent(raw);
-    for (const key of ["q", "ll", "query", "center", "destination", "origin", "saddr", "daddr"]) {
-      const pair = extractPair(url.searchParams.get(key) || "");
-      if (pair) return { lat: pair[0], lng: pair[1], normalizedText: `${pair[0].toFixed(6)}, ${pair[1].toFixed(6)}`, sourceKind: `query_${key}` };
-    }
-    const place = rawUrl.match(/!3d([+-]?\d+(?:\.\d+)?)!4d([+-]?\d+(?:\.\d+)?)/);
-    if (place) {
-      const lat = Number(place[1]);
-      const lng = Number(place[2]);
-      validateLatLng(lat, lng);
-      return { lat, lng, normalizedText: `${lat.toFixed(6)}, ${lng.toFixed(6)}`, sourceKind: "place_3d4d" };
-    }
-    const placeReverse = rawUrl.match(/!2d([+-]?\d+(?:\.\d+)?)!3d([+-]?\d+(?:\.\d+)?)/);
-    if (placeReverse) {
-      const lng = Number(placeReverse[1]);
-      const lat = Number(placeReverse[2]);
-      validateLatLng(lat, lng);
-      return { lat, lng, normalizedText: `${lat.toFixed(6)}, ${lng.toFixed(6)}`, sourceKind: "place_2d3d" };
-    }
-    const vp = rawUrl.match(/@([+-]?\d+(?:\.\d+)?),([+-]?\d+(?:\.\d+)?)/);
-    if (vp) {
-      const lat = Number(vp[1]);
-      const lng = Number(vp[2]);
-      validateLatLng(lat, lng);
-      return { lat, lng, normalizedText: `${lat.toFixed(6)}, ${lng.toFixed(6)}`, sourceKind: "viewport_center" };
-    }
-    throw new Error(
-      "Could not extract coordinates from this Google Maps URL. " +
-      "If you pasted a short link, wait for it to expand first, or copy the full Google Maps URL from your browser."
-    );
-  }
-
-  function buildSubmitPayload() {
-    const raw = state.input.original || "";
-    const hasVisibleInput = raw.trim().length > 0;
-    const parsed = state.input.parsed;
-    return {
-      location_input: hasVisibleInput ? raw : null,
-      input_kind_hint: state.input.kind,
-      client_parsed_lat: hasVisibleInput && parsed ? parsed.lat : null,
-      client_parsed_lng: hasVisibleInput && parsed ? parsed.lng : null,
-      turnstile_token: state.verification.token
-    };
-  }
-
-  function getApiErrorCode(payload) {
-    if (!payload || typeof payload !== "object") return "";
-    if (typeof payload.error === "string") return payload.error;
-    if (payload.detail && typeof payload.detail === "object" && typeof payload.detail.error === "string") {
-      return payload.detail.error;
-    }
-    return "";
-  }
-
-  function ensureTurnstileScript() {
-    if (window.turnstile) return;
-    const existing = document.querySelector('script[data-turnstile-script="1"]');
-    if (existing) return;
-    const script = document.createElement("script");
-    script.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
-    script.async = true;
-    script.defer = true;
-    script.dataset.turnstileScript = "1";
-    document.head.appendChild(script);
-  }
-
-  // 2. COORDINATE PARSING & HARD RESET
-  function updateLocationInputState() {
-    clearTimeout(state.debounce);
-    if (state.requests.parsePreview) {
-      state.requests.parsePreview.abort();
-      state.requests.parsePreview = null;
-    }
-    state.debounce = setTimeout(async () => {
-      const raw = normalizeInput(els.location.value);
-      const kind = classifyLocationInput(raw);
-      let parsed = null;
-      let error = "";
-      let preview = "";
-      let parseController = null;
-      try {
-        if (kind === "decimal_pair") parsed = parseDecimalPair(raw);
-        else if (kind === "degree_pair") parsed = parseDegreePair(raw);
-        else if (kind === "google_maps_url") parsed = parseGoogleMapsLongUrl(raw);
-        else if (kind === "google_maps_short_url") {
-          parseController = new AbortController();
-          state.requests.parsePreview = parseController;
-          preview = labels.parsingLink;
-          state.input = { kind, original: raw, preview, parsed: null, error: "", touched: state.input.touched };
-          els.preview.textContent = preview;
-          els.preview.classList.toggle("hidden", !preview);
-          els.err.textContent = "";
-          updateButtons();
-          parsed = await parseLocationPreview(raw, parseController.signal);
-        }
-        else if (kind === "invalid") error = "Unsupported input. Use coordinates or Google Maps link.";
-      } catch (e) {
-        if (e?.name === "AbortError") return;
-        error = e.message || "Invalid location input.";
-      } finally {
-        if (state.requests.parsePreview === parseController) {
-          state.requests.parsePreview = null;
-        }
-      }
-
-      const valid = Boolean(parsed);
-      const lat = parsed ? parsed.lat : null;
-      const lng = parsed ? parsed.lng : null;
-      const newKey = parsed ? `${lat.toFixed(4)},${lng.toFixed(4)}` : null;
-      if (parsed) {
-        preview = parsed.note ? `${parsed.note} ${labels.parsedAs} ${parsed.normalizedText}` : `${labels.parsedAs} ${parsed.normalizedText}`;
-      }
-
-      // Hard Reset: If coordinates change, invalidate ALL previous data to prevent ghost states
-      if (state.coords.key && state.coords.key !== newKey) {
-        if (state.requests.construction) state.requests.construction.abort();
-        if (state.requests.demand) state.requests.demand.abort();
-        
-        state.construction = { status: "idle", coordKey: null, score: null };
-        state.demand = { status: "idle", coordKey: null, score: null };
-        state.verification = { required: false, passed: false, token: null, widgetId: null, renderAttempts: 0 }; 
-        
-        animateGauge(els.conBand, els.conNeedle, null);
-        animateGauge(els.demBand, els.demNeedle, null);
-        els.conMsg.textContent = labels.coordinatesChanged;
-        const access = AccessState.get();
-        els.demMsg.textContent = access.demandAllowed ? labels.demandReady : labels.demandLocked;
-      }
-
-      state.coords = { lat, lng, valid: Boolean(parsed), key: newKey };
-      state.input = { kind, original: raw, preview, parsed, error, touched: state.input.touched };
-      if (parsed) {
-        if (window.ModalSystem) window.ModalSystem.setCoords(lat, lng);
-      } else {
-        if (window.ModalSystem) window.ModalSystem.clearCoords();
-      }
-      els.preview.textContent = preview;
-      els.preview.classList.toggle("hidden", !preview);
-      const showError = state.input.touched || document.activeElement !== els.location;
-      els.err.textContent = showError ? error : "";
-      updateButtons();
-    }, 180);
-  }
-
-  function updateButtons() {
-    const valid = state.coords.valid || state.input.kind === "google_maps_short_url";
-    const conLoading = state.construction.status === "loading";
-    const demLoading = state.demand.status === "loading";
-
-    els.mainBtn.disabled = !valid || conLoading || demLoading;
-    els.conBtn.disabled = !valid || conLoading;
-    els.demBtn.disabled = !valid || demLoading;
-
-    if (state.verification.required && !state.verification.passed) {
-      els.mainBtn.textContent = labels.completeVerification;
-      els.conBtn.textContent = labels.verify;
-    } else {
-      els.mainBtn.textContent = labels.checkConstruction;
-      els.conBtn.textContent = labels.constructionGo;
-    }
-
-    const access = AccessState.get();
-    els.demBtn.textContent = access.demandAllowed ? labels.demandGo : labels.demandUnlock;
-  }
-
-  // 3. SVG ANIMATION MATH
-  function animateGauge(bandEl, needleEl, score) {
-    const ARC_LENGTH = 377;
-    const MIN_ANGLE = -82;
-    const MAX_SWEEP = 164;
-    const PIVOT_X = 160;
-    const PIVOT_Y = 180;
-    const DURATION = 800;
-
-    const clampedScore = score === null ? 0 : Math.max(0, Math.min(100, score));
-    const targetAngle = score === null
-      ? MIN_ANGLE
-      : MIN_ANGLE + (clampedScore / 100) * MAX_SWEEP;
-    const targetOffset = score === null
-      ? ARC_LENGTH
-      : ARC_LENGTH - (ARC_LENGTH * (clampedScore / 100));
-
-    // Read current positions
-    const currentTransform = needleEl.getAttribute("transform") || `rotate(${MIN_ANGLE} ${PIVOT_X} ${PIVOT_Y})`;
-    const match = currentTransform.match(/rotate\(([-\d.]+)/);
-    const startAngle = match ? parseFloat(match[1]) : MIN_ANGLE;
-    const currentDash = bandEl.style.strokeDashoffset;
-    const startOffset = currentDash ? parseFloat(currentDash) : ARC_LENGTH;
-
-    if (needleEl._rafId) cancelAnimationFrame(needleEl._rafId);
-    if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
-      const startTime = performance.now();
-      function easeOutBack(t) {
-        const c1 = 1.70158, c3 = c1 + 1;
-        return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
-      }
-
-      function tick(now) {
-        const timeElapsed = now - startTime;
-        let t = timeElapsed / DURATION;
-        if (t > 1) t = 1;
-
-        const eased = easeOutBack(t);
-        const nextAngle = startAngle + (targetAngle - startAngle) * eased;
-        const nextOffset = startOffset + (targetOffset - startOffset) * eased;
-
-        needleEl.setAttribute("transform", `rotate(${nextAngle} ${PIVOT_X} ${PIVOT_Y})`);
-        bandEl.style.strokeDashoffset = nextOffset;
-
-        if (t < 1) {
-          needleEl._rafId = requestAnimationFrame(tick);
-        }
-      }
-      needleEl._rafId = requestAnimationFrame(tick);
-    } else {
-      // Reduced motion fallback
-      needleEl.setAttribute("transform", `rotate(${targetAngle} ${PIVOT_X} ${PIVOT_Y})`);
-      bandEl.style.strokeDashoffset = targetOffset;
-    }
-  }
-
-  // 4. API CALLS WITH ABORT CONTROLLER
-  async function fetchConstruction(event) {
-    if (event) {
-      event.preventDefault();
-      event.stopPropagation();
-    }
-
-    if (!(state.coords.valid || state.input.kind === "google_maps_short_url")) {
-      state.input.touched = true;
-      els.err.textContent = "Enter coordinates or a Google Maps URL to generate a report.";
-      return;
-    }
-    
-    // Turnstile is required for /api/search
-    if (!state.verification.token) {
-      state.verification.required = true;
-      els.conMsg.textContent = labels.verificationRequired;
-      els.turnstileSlot.scrollIntoView({ behavior: "smooth", block: "center" });
-      updateButtons();
-      return;
-    }
-
-    if (state.requests.construction) state.requests.construction.abort();
-    state.requests.construction = new AbortController();
-    
-    state.construction.status = "loading";
-    els.conMsg.textContent = labels.analyzingSignals;
-    updateButtons();
-
-    try {
-      const res = await fetch("/api/search", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ...buildSubmitPayload(),
-          lat: state.coords.lat,
-          lon: state.coords.lng,
-          target: 'construction'
-        }),
-        signal: state.requests.construction.signal
-      });
-      
-      let data;
-      if (!res.ok) {
-        data = await res.json().catch(() => ({}));
-        const errorCode = getApiErrorCode(data);
-        if (errorCode === "CHALLENGE_REQUIRED" || errorCode === "INVALID_CHALLENGE") {
-          state.verification.required = true;
-          state.verification.passed = false;
-          state.verification.token = null;
-          state.construction.status = "blocked";
-          els.conMsg.textContent = labels.verificationRequired;
-          renderTurnstile();
-          updateButtons();
-          return;
-        }
-        const backendMessage = data?.message || data?.detail?.message || data?.detail?.detail?.message;
-        state.construction.status = "idle";
-        if (res.status === 429 && state.modals.active) {
-          els.conMsg.textContent = "Construction check paused while modal is open.";
-          return;
-        }
-        els.conMsg.textContent = backendMessage || "Failed to check construction.";
-        return;
-      } else {
-        data = await res.json();
-      }
-
-      const construction = data.construction || data;
-      console.log("SERVER KEY:", construction.coord_key, "| CLIENT KEY:", state.coords.key);
-      if (normalizeKey(construction.coord_key || state.coords.key) !== normalizeKey(state.coords.key)) return; // Stale
-
-      if (data.verification_required) {
-        state.verification.required = true;
-        state.construction.status = "blocked";
-        els.conMsg.textContent = labels.verificationRequired;
-        renderTurnstile();
-        updateButtons();
-        return;
-      }
-
-      const resolvedScore = Number(
-        construction.score ?? construction.construction_score ?? data.construction_score
-      );
-      if (Number.isFinite(resolvedScore)) {
-        const score = resolvedScore;
-        state.construction = { status: "ready", score: score, coordKey: construction.coord_key || state.coords.key };
-        console.log("Triggering animateGauge with score:", score);
-        animateGauge(els.conBand, els.conNeedle, score);
-        els.conMsg.textContent = construction.message || data.message || "Construction activity estimate";
-      } else {
-        state.construction.status = "idle";
-        els.conMsg.textContent = labels.constructionComingSoon;
-        logClientException("construction_score_missing", new Error("Missing numeric construction score"), {
-          feature: "construction_report",
-          ui_state: "coming_soon_after_valid_check",
-          has_valid_coordinates: true,
-          score_source: construction.score_source || data.score_source || "missing_or_not_used"
-        });
-      }
-
-    } catch (e) {
-      if (e.name !== "AbortError") {
-        logClientException(
-          'construction_fetch_error',
-          e,
-          { area: 'construction_fetch', coord_key: state.coords.key }
-        );
-        state.construction.status = "idle";
-        els.conMsg.textContent = "Failed to check construction.";
-      }
-    } finally {
-      updateButtons();
-    }
-  }
-
-  async function fetchDemand() {
-    if (!state.coords.valid) {
-      state.input.touched = true;
-      els.err.textContent = "Enter coordinates or a Google Maps URL to generate a report.";
-      return;
-    }
-
-    if (!AccessState.get().demandAllowed) {
-      if (window.ModalSystem?.openJoinResearchModal) {
-        ModalSystem.openJoinResearchModal('demand_level_page');
-      } else if (window.ModalSystem) {
-        ModalSystem.open("supportModalLayer");
-      }
-      return;
-    }
-
-        if (state.requests.demand) state.requests.demand.abort();
-    state.requests.demand = new AbortController();
-    
-    state.demand.status = "loading";
-    els.demMsg.textContent = labels.checkingDemand;
-    updateButtons();
-
-    try {
-      const res = await fetch("/api/search", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ lat: state.coords.lat, lon: state.coords.lng, target: "demand" }),
-        signal: state.requests.demand.signal
-      });
-      
-      let data;
-      if (!res.ok) {
-        data = await res.json().catch(() => ({}));
-        const errorCode = getApiErrorCode(data);
-        if (errorCode === "CHALLENGE_REQUIRED" || errorCode === "INVALID_CHALLENGE") {
-          state.verification.required = true;
-          state.verification.passed = false;
-          state.verification.token = null;
-          state.demand.status = "blocked";
-          els.demMsg.textContent = labels.verificationRequired;
-          renderTurnstile();
-          updateButtons();
-          return;
-        }
-        const backendMessage = data?.message || data?.detail?.message || data?.detail?.detail?.message;
-        state.demand.status = "idle";
-        if (res.status === 429 && state.modals.active) {
-          els.demMsg.textContent = "Demand check paused while modal is open.";
-          return;
-        }
-        els.demMsg.textContent = backendMessage || "Failed to check demand.";
-        return;
-      } else {
-        data = await res.json();
-      }
-
-      const demand = data.demand || data;
-      console.log("SERVER KEY:", demand.coord_key, "| CLIENT KEY:", state.coords.key);
-      if (normalizeKey(demand.coord_key || state.coords.key) !== normalizeKey(state.coords.key)) return; // Stale
-
-      const score = demand.score !== undefined ? demand.score : 65;
-      state.demand = { status: "ready", score: score, coordKey: demand.coord_key || state.coords.key };
-      console.log("Triggering animateGauge with score:", score);
-      animateGauge(els.demBand, els.demNeedle, score);
-      els.demMsg.textContent = (demand && demand.message) || data.message || "Demand analyzed";
-
-    } catch (e) {
-      if (e.name !== "AbortError") {
-        logClientException(
-          'demand_fetch_error',
-          e,
-          { area: 'demand_fetch', coord_key: state.coords.key }
-        );
-        state.demand.status = "idle";
-        els.demMsg.textContent = "Failed to check demand.";
-      }
-    } finally {
-      updateButtons();
-    }
-  }
-
-  function safeTurnstileDebug(payload) {
-    try {
-      if (window && window.localStorage && window.localStorage.getItem('dd_turnstile_debug') === '1') {
-        console.info("[turnstile] init", payload);
-      }
-    } catch (_err) { /* silent by design */ }
-  }
-
-  function renderTurnstile() {
-    els.turnstileSlot.classList.remove("hidden");
-    ensureTurnstileScript();
-
-    const sitekey = (document.body.dataset.turnstileSitekey || "").trim();
-    const unlockSafeTurnstileDebug = window.safeTurnstileDebug || safeTurnstileDebug || (() => {});
-    unlockSafeTurnstileDebug({
-      hostname: window.location.hostname,
-      origin: window.location.origin,
-      hasSiteKey: Boolean(sitekey),
-      source: "hero_search"
-    });
-    if (!sitekey || ["none", "null", "undefined"].includes(sitekey.toLowerCase())) {
-      console.error("Turnstile site key is missing or invalid.");
-      els.conMsg.textContent = labels.verificationUnavailableSitekeyMissing;
-      return;
-    }
-    
-    // If turnstile isn't loaded yet, try again in 100ms
-    if (!window.turnstile) {
-      state.verification.renderAttempts = (state.verification.renderAttempts || 0) + 1;
-      if (state.verification.renderAttempts > 50) {
-        console.error("Turnstile script failed to load after multiple attempts.");
-        els.conMsg.textContent = labels.verificationUnableToLoad;
-        return;
-      }
-      els.conMsg.textContent = labels.verificationLoadingChallenge;
-      setTimeout(renderTurnstile, 100);
-      return;
-    }
-    state.verification.renderAttempts = 0;
-
-    // If already rendered and container not empty, don't re-render
-    if (state.verification.widgetId && els.turnstileContainer.innerHTML !== "") return;
-    
-    // Clear container just in case
-    els.turnstileContainer.innerHTML = "";
-    
-    try {
-      state.verification.widgetId = window.turnstile.render('#turnstileContainer', {
-        sitekey,
-        theme: 'dark',
-        callback: (token) => {
-          console.log("Turnstile verified");
-          state.verification.passed = true;
-          state.verification.token = token;
-          state.verification.required = false;
-          els.conMsg.textContent = labels.verificationCompleteReady;
-          updateButtons();
-        },
-        'error-callback': (err) => {
-          console.error("Turnstile Error:", err);
-          state.verification.passed = false;
-          state.verification.token = null;
-          state.verification.widgetId = null;
-          els.conMsg.textContent = labels.verificationFailedRefresh;
-        },
-        'expired-callback': () => {
-          state.verification.passed = false;
-          state.verification.token = null;
-          state.verification.widgetId = null;
-          els.conMsg.textContent = 'Security check expired. Please verify again.';
-          renderTurnstile(); // Re-render if expired
-        }
-      });
-    } catch (err) {
-      console.error("Turnstile render failed:", err);
-      state.verification.widgetId = null;
-      els.conMsg.textContent = labels.verificationUnableToRender;
-    }
-  }
-
-  async function restoreAfterMagicSuccessIfNeeded() {
-    if (!magicSuccessJustLanded) return;
-
-    const ssrTier = document.body.dataset.tier || "";
-    const isSsrPaid = ssrTier === "simulated_paid" ||
-                      ssrTier === "pass_1_day" ||
-                      ssrTier === "pass_3_day";
-    if (isSsrPaid) {
-      updateAccessState(true, ssrTier);
-    }
-    window.history.replaceState({}, document.title, window.location.pathname);
-
-    const inputCard = document.querySelector(".input-card");
-    const coordForm = document.getElementById("coordForm");
-    if (inputCard && coordForm && !document.getElementById("magicSuccessBanner")) {
-      const banner = document.createElement("div");
-      banner.id = "magicSuccessBanner";
-      banner.className = "parsed-preview";
-      banner.setAttribute("role", "status");
-      banner.setAttribute("aria-live", "polite");
-      banner.textContent = "✅ Research Access active. Your report is ready.";
-      inputCard.insertBefore(banner, coordForm);
-    }
-
-    const rawResumeState = localStorage.getItem("dd_resume_state");
-    if (rawResumeState) {
-      try {
-        const parsedResume = JSON.parse(rawResumeState);
-        const lat = Number(parsedResume?.lat);
-        const lng = Number(parsedResume?.lng);
-        const text = typeof parsedResume?.text === "string" ? parsedResume.text : "";
-        if (Number.isFinite(lat) && Number.isFinite(lng)) {
-          const normalizedCoordsText = `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
-          if (els.location) els.location.value = text;
-          state.coords = { lat, lng, valid: true, key: `${lat.toFixed(4)},${lng.toFixed(4)}` };
-          state.input = {
-            kind: classifyLocationInput(text) || "decimal_pair",
-            original: text,
-            preview: `${labels.parsedAs} ${normalizedCoordsText}`,
-            parsed: { lat, lng, normalizedText: normalizedCoordsText },
-            error: "",
-            touched: true
-          };
-          if (window.ModalSystem) window.ModalSystem.setCoords(lat, lng);
-          els.preview.textContent = state.input.preview;
-          els.preview.classList.toggle("hidden", !state.input.preview);
-          els.err.textContent = "";
-          updateButtons();
-          localStorage.removeItem("dd_resume_state");
-          await fetchConstruction();
-        }
-      } catch (err) {
-        console.warn("Failed to restore dd_resume_state", err);
-      }
-    }
-
-  }
-
-
-  // Event Listeners Binding
-  els.location.addEventListener("input", updateLocationInputState);
-  els.location.addEventListener("blur", () => {
-    state.input.touched = true;
-    updateLocationInputState();
-  });
-  
-  document.getElementById("coordForm").addEventListener("submit", (e) => { e.preventDefault(); fetchConstruction(); });
-  els.conBtn.addEventListener("click", (event) => fetchConstruction(event));
-  els.demBtn.addEventListener("click", fetchDemand);
-  
-  animateGauge(els.conBand, els.conNeedle, null);
-  animateGauge(els.demBand, els.demNeedle, null);
-
-  // Render hero Turnstile on page load (required for /api/search).
-  state.verification.required = true;
-  renderTurnstile();
-  syncAccessUI();
-  updateButtons();
-  void restoreAfterMagicSuccessIfNeeded();
-});
-
-
-/**
- * ==========================================
- * UNIFIED MODAL SYSTEM
- * Merged implementation with best practices
- * ==========================================
- */
-
-const ModalSystem = (function() {
-  'use strict';
-
-  // ==========================================
-  // STATE MANAGEMENT
-  // ==========================================
-  const state = {
-    coords: {
-      lat: null,
-      lng: null,
-      valid: false,
-      key: null
-    },
-    report: {
-      type: 'active_construction',
-      note: '',
-      locationRaw: '',
-      locationParsed: null,
-      locationError: null,
-      locationSource: 'manual_input',
-      locationSourceLocked: false,
-      uiState: 'idle',
-      quotaBlocked: false,
-      submitAttemptId: 0,
-      autoCloseTimer: null,
-      turnstileToken: null
-    },
-    unlock: {
-      plan: 'sim_1_day',
-      email: ''
-    },
-    language: {
-      current: document.body.dataset.currentLang || document.documentElement.lang || 'en',
-      selected: document.body.dataset.currentLang || document.documentElement.lang || 'en'
-    },
-    modals: {
-      active: null,
-      history: []
-    }
-  };
-
-  // ==========================================
-  // UTILITY FUNCTIONS
-  // ==========================================
-  
-  const utils = {
-    newErrorId(prefix = 'ERR') {
-      const stamp = Date.now().toString(36).toUpperCase();
-      const rand = Math.random().toString(36).slice(2, 8).toUpperCase();
-      return `${prefix}-${stamp}-${rand}`;
-    },
-    /**
-     * Validate email format
-     */
-    isValidEmail(email) {
-      return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-    },
-
-    /**
-     * Debounce function calls
-     */
-    debounce(fn, delay = 300) {
-      let timeout;
-      return (...args) => {
-        clearTimeout(timeout);
-        timeout = setTimeout(() => fn(...args), delay);
-      };
-    },
-
-    /**
-     * Format coordinates for display
-     */
-    formatCoords(lat, lng) {
-      return `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
-    },
-
-    /**
-     * Show temporary feedback on button
-     */
-    showButtonFeedback(btn, text, duration = 2000) {
-      const originalText = btn.querySelector('.btn-text')?.textContent || btn.textContent;
-      const textSpan = btn.querySelector('.btn-text') || btn;
-      textSpan.textContent = text;
-      setTimeout(() => {
-        textSpan.textContent = originalText;
-      }, duration);
-    },
-
-    /**
-     * Toggle loading state on button
-     */
-    setButtonLoading(btn, isLoading) {
-      const text = btn.querySelector('.btn-text');
-      const spinner = btn.querySelector('.btn-spinner');
-      btn.disabled = isLoading;
-      if (text) text.classList.toggle('hidden', isLoading);
-      if (spinner) spinner.classList.toggle('hidden', !isLoading);
-    },
-
-    /**
-     * API POST helper with error handling
-     */
-    async apiPost(url, body, options = {}) {
-      let response;
-      const clientErrorId = utils.newErrorId('CLIENT');
-      const timeoutMs = Number(options?.timeoutMs) > 0 ? Number(options.timeoutMs) : 20000;
-      const controller = new AbortController();
-      const timeoutHandle = window.setTimeout(() => controller.abort(), timeoutMs);
-
-      try {
-        response = await fetch(url, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'same-origin',
-          body: JSON.stringify(body),
-          signal: controller.signal
-        });
-      } catch (networkErr) {
-        if (networkErr?.name === 'AbortError') {
-          const err = new Error(`Request timed out after ${timeoutMs / 1000}s. Error ID: ${clientErrorId}`);
-          err.code = 'REQUEST_TIMEOUT';
-          err.errorId = clientErrorId;
-          err.cause = networkErr;
-          throw err;
-        }
-        const err = new Error(`Network request failed. Error ID: ${clientErrorId}`);
-        err.code = 'NETWORK_REQUEST_FAILED';
-        err.errorId = clientErrorId;
-        err.cause = networkErr;
-        throw err;
-      } finally {
-        window.clearTimeout(timeoutHandle);
-      }
-
-      const data = await response.json().catch(() => ({}));
-      
-      if (!response.ok) {
-        let errMsg = data.message || 'Request failed';
-        let errCode = 'REQUEST_FAILED';
-        let errId = clientErrorId;
-        if (data.detail) {
-          if (typeof data.detail === 'string') {
-            errMsg = data.detail;
-          } else if (Array.isArray(data.detail) && data.detail.length > 0 && data.detail[0].msg) {
-            errMsg = data.detail[0].msg;
-          } else if (typeof data.detail === 'object') {
-            errMsg = data.detail.message || data.detail.detail || data.detail.error || JSON.stringify(data.detail);
-            errCode = data.detail.error || errCode;
-            errId = data.detail.error_id || errId;
-          }
-        }
-        const err = new Error(errMsg);
-        err.status = response.status;
-        err.code = errCode;
-        err.errorId = errId;
-        err.payload = data;
-        throw err;
-      }
-      
-      return data;
-    },
-
-    notify(message, type = 'info') {
-      const toast = document.createElement('div');
-      toast.className = `dd-toast dd-toast--${type}`;
-      toast.setAttribute('role', 'status');
-      toast.setAttribute('aria-live', 'polite');
-      toast.textContent = message;
-      Object.assign(toast.style, {
-        position: 'fixed',
-        top: '16px',
-        left: '50%',
-        transform: 'translateX(-50%)',
-        zIndex: '9999',
-        maxWidth: 'min(92vw, 560px)',
-        background: type === 'error' ? 'rgba(120, 16, 16, 0.96)' : 'rgba(10, 25, 47, 0.96)',
-        color: '#ecf2ff',
-        border: type === 'error' ? '1px solid rgba(255, 124, 124, 0.45)' : '1px solid rgba(112, 169, 255, 0.35)',
-        borderRadius: '12px',
-        padding: '12px 16px',
-        boxShadow: '0 10px 30px rgba(0, 0, 0, 0.35)',
-        fontSize: '15px',
-        fontWeight: '600',
-        opacity: '0',
-        transition: 'opacity 220ms ease'
-      });
-      document.body.appendChild(toast);
-      requestAnimationFrame(() => {
-        toast.style.opacity = '1';
-      });
-      window.setTimeout(() => {
-        toast.style.opacity = '0';
-        window.setTimeout(() => toast.remove(), 240);
-      }, 3000);
-    }
-  };
-
-  // ==========================================
-  // CORE MODAL FUNCTIONALITY
-  // ==========================================
-  
-  const core = {
-    isDialogElement(modal) {
-      return typeof HTMLDialogElement !== 'undefined' && modal instanceof HTMLDialogElement;
-    },
-
-    /**
-     * Initialize modal system
-     */
-    init() {
-      this.bindGlobalEvents();
-      this.upgradeToNativeDialogs();
-    },
-
-    /**
-     * Upgrade div-based modals to native <dialog> elements for better accessibility
-     * Falls back to class-based approach for older browsers
-     */
-    upgradeToNativeDialogs() {
-      document.querySelectorAll('.modal-layer').forEach(modal => {
-        // If browser supports <dialog>, ensure proper method usage
-        if (typeof HTMLDialogElement !== 'undefined') {
-          modal.addEventListener('click', (e) => {
-            if (e.target === modal && modal.classList.contains('native')) {
-              this.close(modal.id);
-            }
-          });
-        }
-      });
-    },
-
-    /**
-     * Open a modal by ID
-     */
-    open(modalId, options = {}) {
-      const modal = document.getElementById(modalId);
-      if (!modal) {
-        console.warn(`Modal #${modalId} not found`);
-        return null;
-      }
-
-      // Close currently active modal if exists (unless stacking is enabled)
-      if (state.modals.active && !options.stack) {
-        this.close(state.modals.active, { silent: true });
-      }
-
-      try {
-        // Show modal using native dialog API or fallback
-        if (this.isDialogElement(modal) && !modal.classList.contains('bottom-sheet')) {
-          if (!modal.open) {
-            modal.showModal();
-          }
-        } else {
-          modal.classList.add('open');
-        }
-      } catch (err) {
-        console.error('modal_open_failed', { modal_id: modalId, error: err?.message });
-        if (window.Sentry?.captureException) { try { window.Sentry.captureException(err); } catch(e) {} }
-        return null;
-      }
-      
-      modal.setAttribute('aria-hidden', 'false');
-      document.body.style.overflow = 'hidden';
-      
-      // Track active modal
-      state.modals.active = modalId;
-      if (!options.silent) {
-        state.modals.history.push(modalId);
-      }
-
-      // Focus management
-      this.trapFocus(modal);
-      
-      // Trigger open callback if exists
-      const event = new CustomEvent('modal:open', { detail: { modalId, options } });
-      modal.dispatchEvent(event);
-
-      // Initialize Turnstile widget when report modal opens
-      if (modalId === 'reportModalLayer' && window._initReportTurnstile) {
-        window._initReportTurnstile();
-      }
-      if (modalId === 'supportModalLayer' && window._initUnlockTurnstile) {
-        window._initUnlockTurnstile();
-      }
-
-      return modal;
-    },
-
-    /**
-     * Close a modal by ID
-     */
-    close(modalId, options = {}) {
-      const modal = document.getElementById(modalId || state.modals.active);
-      if (!modal) return null;
-
-      try {
-        // Use native close or fallback
-        if (this.isDialogElement(modal) && !modal.classList.contains('bottom-sheet')) {
-          if (modal.open) {
-            modal.close();
-          }
-        } else {
-          modal.classList.remove('open');
-        }
-      } catch (err) {
-        console.error('modal_close_failed', { modal_id: modal.id, error: err?.message });
-        if (window.Sentry?.captureException) { try { window.Sentry.captureException(err); } catch(e) {} }
-        return null;
-      }
-      
-      modal.setAttribute('aria-hidden', 'true');
-      document.body.style.overflow = '';
-
-      // Update state
-      if (modal.id === 'reportModalLayer' && window._resetReportTurnstile) {
-        window._resetReportTurnstile();
-      }
-      if (modal.id === 'supportModalLayer' && window._resetUnlockTurnstile) {
-        window._resetUnlockTurnstile();
-      }
-
-      if (state.modals.active === modal.id) {
-        state.modals.active = null;
-      }
-      
-      if (!options.silent) {
-        state.modals.history = state.modals.history.filter(id => id !== modal.id);
-      }
-
-      // Return focus to trigger element if stored
-      if (modal.triggerElement) {
-        modal.triggerElement.focus();
-        delete modal.triggerElement;
-      }
-
-      // Trigger close callback
-      const event = new CustomEvent('modal:close', { detail: { modalId: modal.id, options } });
-      modal.dispatchEvent(event);
-
-      return modal;
-    },
-
-    /**
-     * Close all open modals
-     */
-    closeAll() {
-      document.querySelectorAll('.modal-layer.open, dialog[open]').forEach(modal => {
-        this.close(modal.id, { silent: true });
-      });
-      state.modals.history = [];
-    },
-
-    /**
-     * Trap focus within modal for accessibility
-     */
-    trapFocus(modal) {
-      if (modal.dataset.focusTrapBound === 'true') return;
-      modal.dataset.focusTrapBound = 'true';
-
-      const focusableElements = modal.querySelectorAll(
-        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
-      );
-      
-      if (focusableElements.length === 0) return;
-      
-      const firstFocusable = focusableElements[0];
-      const lastFocusable = focusableElements[focusableElements.length - 1];
-
-      // Focus first element after animation
-      setTimeout(() => {
-        const primaryAction = modal.querySelector('.modal-primary');
-        (primaryAction || firstFocusable).focus();
-      }, 100);
-
-      // Handle tab cycling
-      modal.addEventListener('keydown', (e) => {
-        if (e.key !== 'Tab') return;
-
-        if (e.shiftKey && document.activeElement === firstFocusable) {
-          e.preventDefault();
-          lastFocusable.focus();
-        } else if (!e.shiftKey && document.activeElement === lastFocusable) {
-          e.preventDefault();
-          firstFocusable.focus();
-        }
-      });
-    },
-
-    /**
-     * Bind global modal events
-     */
-    bindGlobalEvents() {
-      // Close buttons
-      document.querySelectorAll('[data-close]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const modalId = btn.dataset.close;
-          this.close(modalId);
-        });
-      });
-
-      // Click outside to close (for dialogs with backdrops)
-      window.closeModal = (modalId) => this.close(modalId);
-
-      // Click outside to close (for legacy non-dialog modals)
-      document.querySelectorAll('.modal-layer').forEach(layer => {
-        layer.addEventListener('click', (e) => {
-          if (e.target === layer && !layer.classList.contains('bottom-sheet')) {
-            this.close(layer.id);
-          }
-        });
-      });
-
-      // Escape key to close
-      document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && state.modals.active) {
-          this.close(state.modals.active);
-        }
-      });
-
-      // Store trigger element for focus return
-      document.querySelectorAll('[data-open-modal]').forEach(btn => {
-        btn.addEventListener('click', () => {
-          const modalId = btn.dataset.openModal;
-          const modal = document.getElementById(modalId);
-          if (modal) {
-            modal.triggerElement = btn;
-          }
-        });
-      });
-
-      window.addEventListener('app:notify', (event) => {
-        const detail = event?.detail || {};
-        if (!detail.message) return;
-        utils.notify(detail.message, detail.type || 'info');
-      });
-    }
-  };
-
-  // ==========================================
-  // MODAL-SPECIFIC LOGIC
-  // ==========================================
-  
-  const modals = {
-    /**
-     * 1. User Access Modal
-     */
-    user: {
-      init() {
-        const btn = document.getElementById('userMenuBtn');
-        const upgradeBtn = document.getElementById('userUpgradeBtn');
-        
-        btn?.addEventListener('click', () => {
-          core.open('userModalLayer');
-        });
-
-        upgradeBtn?.addEventListener('click', () => {
-          core.close('userModalLayer');
-          modals.support.openJoinResearchModal('user_access_modal');
-        });
-      },
-
-      updateStatus(tier, demandAllowed, dailyLimit = 3) {
-        const access = { tier, demandAllowed, dailyLimit };
-        
-        const menuBtn = document.getElementById('userMenuBtn');
-        if (menuBtn) {
-          menuBtn.textContent = getTierDisplayLabel(access.tier);
-        }
-
-        const badge = document.getElementById('userTierBadge');
-
-        if (badge) {
-          const tierSuffix = badge.dataset.labelTier || "TIER";
-          const tierLabel = getTierDisplayLabel(access.tier);
-          badge.textContent = `${tierLabel} ${tierSuffix}`;
-          badge.dataset.tier = access.tier;
-        }
-
-        const demandStatus = document.getElementById('userDemandStatus');
-        if (demandStatus) {
-          const unlockedLabel = demandStatus.dataset.labelUnlocked || document.body.dataset.labelDemandUnlocked || demandStatus.textContent.trim();
-          const lockedLabel = demandStatus.dataset.labelLocked || document.body.dataset.labelDemandLocked || demandStatus.textContent.trim();
-          demandStatus.textContent = access.demandAllowed ? unlockedLabel : lockedLabel;
-          demandStatus.classList.toggle('available', access.demandAllowed);
-          demandStatus.classList.toggle('locked', !access.demandAllowed);
-        }
-
-        const dailyLimitItem = document.getElementById('userDailyLimitItem');
-        if (dailyLimitItem) {
-          const usageLabel = dailyLimitItem.dataset.labelDailyUsage || 'Daily usage';
-          const resolvedDailyLimit = Number.isFinite(access.dailyLimit) ? access.dailyLimit : 3;
-          dailyLimitItem.textContent = `${usageLabel}: ${resolvedDailyLimit}/day`;
-        }
-
-        const upgradeBtn = document.getElementById('userUpgradeBtn');
-        if (upgradeBtn) {
-          upgradeBtn.closest('.modal-footer')?.classList.toggle('hidden', access.demandAllowed);
-        }
-
-        const supportBtn = document.getElementById('supportBtn');
-        if (supportBtn) {
-          const paidLabel = supportBtn.dataset.labelActive || document.body.dataset.labelActive || supportBtn.textContent.trim();
-          const unlockLabel = supportBtn.dataset.labelUnlock || document.body.dataset.labelUnlock || supportBtn.textContent.trim();
-          supportBtn.textContent = access.demandAllowed ? paidLabel : unlockLabel;
-          supportBtn.classList.toggle('accent', !access.demandAllowed);
-          supportBtn.classList.toggle('active', access.demandAllowed);
-          supportBtn.disabled = access.demandAllowed;
-          supportBtn.setAttribute('aria-disabled', access.demandAllowed ? 'true' : 'false');
-        }
-      }
-    },
-
-    /**
-     * 2. Report Modal
-     */
-    report: {
-      formatTrackedError(err, phase = 'REPORT_FLOW_FAILED') {
-        const errorId = err?.errorId || utils.newErrorId('REPORT');
-        const errorCode = err?.code || phase;
-        const message = err?.message || 'Report flow failed.';
-        return `${message} (Code: ${errorCode}, Error ID: ${errorId})`;
-      },
-
-      init() {
-        const btn = document.getElementById('reportBtn');
-        const submitBtn = document.getElementById('reportSubmitBtn');
-        const typeGrid = document.getElementById('reportTypeGrid');
-        const noteField = document.getElementById('reportNote');
-        const locationInput = document.getElementById('reportLocationInput');
-        const charCount = document.getElementById('reportCharCount');
-
-        this.updateSubmitButton();
-
-        // Open handler
-        btn?.addEventListener('click', () => {
-          this.reset();
-          this.initializeLocation();
-          const opened = core.open('reportModalLayer');
-          if (!opened) {
-            this.showError(this.formatTrackedError(new Error('Could not open report modal. Please refresh and try again.'), 'REPORT_MODAL_OPEN_FAILED'));
-            return;
-          }
-          this.captureEvent('submit_report_modal_opened', {
-            hero_input_prefilled: state.report.locationSource === 'hero_prefill',
-            has_prefilled_location: state.report.locationParsed !== null
-          });
-        });
-
-        // Report type selection
-        typeGrid?.querySelectorAll('[data-report-type]').forEach(chip => {
-          chip.addEventListener('click', () => {
-            typeGrid.querySelectorAll('[data-report-type]').forEach(el => {
-              el.classList.remove('active');
-              el.setAttribute('aria-checked', 'false');
-            });
-            chip.classList.add('active');
-            chip.setAttribute('aria-checked', 'true');
-            state.report.type = chip.dataset.reportType;
-          });
-        });
-
-        // Character count
-        noteField?.addEventListener('input', (e) => {
-          const len = e.target.value.length;
-          charCount.textContent = `${len}/180`;
-          state.report.note = e.target.value;
-        });
-        locationInput?.addEventListener('input', (e) => {
-          state.report.locationRaw = e.target.value;
-          state.report.locationParsed = null;
-          state.report.locationError = null;
-          if (!state.report.locationSourceLocked) {
-            state.report.locationSource = 'manual_input';
-            state.report.locationSourceLocked = true;
-          }
-          this.renderLocationError();
-        });
-        locationInput?.addEventListener('blur', async () => {
-          await this.validateLocationOnBlur();
-        });
-
-        // Submit handler
-        submitBtn?.addEventListener('click', async () => {
-          this.captureEvent('report_submit_clicked', { source: 'submit_report_modal' });
-          await this.submit();
-        });
-      },
-      setUiState(nextState, meta = {}) {
-        state.report.uiState = nextState;
-        this.updateSubmitButton();
-        this.captureEvent(`report_submit_state_${nextState}`, {
-          source: 'submit_report_modal',
-          ...meta
-        });
-      },
-
-      updateSubmitButton() {
-        const submitBtn = document.getElementById('reportSubmitBtn');
-        if (submitBtn) {
-          submitBtn.disabled = !state.report.turnstileToken || state.report.uiState === 'submitting' || state.report.quotaBlocked;
-        }
-      },
-
-      captureEvent(name, props = {}) {
-        if (!window.posthog?.capture) return;
-        const distinctId = typeof window.posthog.get_distinct_id === 'function'
-          ? window.posthog.get_distinct_id()
-          : undefined;
-        const email = (state.unlock?.email || '').trim().toLowerCase() || undefined;
-        window.posthog.capture(name, {
-          ...props,
-          ...(distinctId ? { posthog_distinct_id: distinctId } : {}),
-          ...(email ? { email } : {})
-        });
-        window.posthog.flush?.();
-      },
-      renderLocationError() {
-        const el = document.getElementById('reportLocationError');
-        if (el) el.textContent = state.report.locationError || '';
-      },
-      initializeLocation() {
-        const heroRaw = (document.getElementById('locationInput')?.value || '').trim();
-        state.report.locationRaw = heroRaw;
-        state.report.locationParsed = state.coords.valid ? { lat: state.coords.lat, lon: state.coords.lng } : null;
-        state.report.locationError = null;
-        state.report.locationSource = heroRaw ? 'hero_prefill' : 'manual_input';
-        state.report.locationSourceLocked = false;
-        const input = document.getElementById('reportLocationInput');
-        if (input) input.value = heroRaw;
-        this.renderLocationError();
-      },
-      async validateLocationOnBlur() {
-        const raw = (state.report.locationRaw || '').trim();
-        if (!raw) {
-          state.report.locationParsed = null;
-          state.report.locationError = null;
-          this.renderLocationError();
-          return;
-        }
-        try {
-          const parsed = await tryParseLocationInput(raw);
-          state.report.locationParsed = { lat: parsed.lat, lon: parsed.lon };
-          state.report.locationError = null;
-        } catch {
-          state.report.locationParsed = null;
-          state.report.locationError = 'Invalid location. Paste coordinates or a full Google Maps link.';
-        }
-        this.renderLocationError();
-      },
-
-      async submit() {
-        if (window.posthog) {
-          posthog.capture("user_report_submit_clicked", {
-            report_type: state.report.type,
-            nearby_now: Boolean(document.getElementById('reportNearbyNow')?.checked),
-            ui_surface: "submit_report_modal",
-          });
-        }
-        const btn = document.getElementById('reportSubmitBtn');
-        const errorEl = document.getElementById('reportError');
-        const formState = document.getElementById('reportFormState');
-        const successState = document.getElementById('reportSuccessState');
-        if (!btn || !errorEl || !formState || !successState) {
-          const err = new Error('Report form is temporarily unavailable.');
-          err.code = 'REPORT_MODAL_MISSING_ELEMENTS';
-          err.errorId = utils.newErrorId('REPORT');
-          console.error('Report modal is missing required elements.', { errorId: err.errorId });
-          this.showError(this.formatTrackedError(err, 'REPORT_MODAL_MISSING_ELEMENTS'));
-          return;
-        }
-
-        if (state.report.uiState === 'submitting' || state.report.uiState === 'validating') {
-          this.captureEvent('report_submit_duplicate_blocked', { source: 'submit_report_modal' });
-          return;
-        }
-        this.setUiState('validating');
-
-        if (!(state.report.locationRaw || '').trim()) {
-          this.setUiState('error', { reason: 'empty_location' });
-          state.report.locationError = 'Please enter coordinates or a Google Maps link.';
-          this.renderLocationError();
-          this.captureEvent('report_validation_failed', { reason: 'empty_location', source: 'submit_report_modal' });
-          document.getElementById('reportLocationInput')?.focus();
-          return;
-        }
-        const rawLocation = (state.report.locationRaw || '').trim();
-        if (/^(https?:\/\/)?(maps\.app\.goo\.gl|goo\.gl\/maps)\//i.test(rawLocation)) {
-          this.setUiState('error', { reason: 'short_maps_link' });
-          state.report.locationError = "Short share links aren't supported. Please paste the full Google Maps URL or enter coordinates directly.";
-          this.renderLocationError();
-          this.captureEvent('report_validation_failed', { reason: 'short_maps_link', source: 'submit_report_modal' });
-          document.getElementById('reportLocationInput')?.focus();
-          return;
-        }
-        if (!state.report.locationParsed) {
-          await this.validateLocationOnBlur();
-        }
-        if (!state.report.locationParsed) {
-          this.setUiState('error', { reason: 'invalid_location' });
-          state.report.locationError = 'Invalid location. Paste coordinates or a full Google Maps link.';
-          this.renderLocationError();
-          this.captureEvent('report_validation_failed', { reason: 'invalid_location', source: 'submit_report_modal' });
-          document.getElementById('reportLocationInput')?.focus();
-          return;
-        }
-        if (!state.report.type) {
-          this.setUiState('error', { reason: 'missing_report_type' });
-          errorEl.textContent = 'Please select a report type.';
-          this.captureEvent('report_validation_failed', { reason: 'missing_report_type', source: 'submit_report_modal' });
-          return;
-        }
-
-        const note = (state.report.note || '').trim();
-        if (note.length > 180) {
-          this.setUiState('error', { reason: 'notes_too_long' });
-          errorEl.textContent = 'Notes are too long. Please shorten them and try again.';
-          this.captureEvent('report_validation_failed', { reason: 'notes_too_long', source: 'submit_report_modal' });
-          return;
-        }
-
-        this.setUiState('submitting');
-        errorEl.textContent = '';
-        utils.setButtonLoading(btn, true);
-        const currentAttemptId = ++state.report.submitAttemptId;
-
-        try {
-          this.captureEvent('report_submit_sent', { source: 'submit_report_modal' });
-          const payload = await utils.apiPost('/api/user-reports', {
-            lat: state.report.locationParsed.lat,
-            lon: state.report.locationParsed.lon,
-            report_kind: state.report.type,
-            is_nearby_now: Boolean(document.getElementById('reportNearbyNow')?.checked),
-            note,
-            location_source: state.report.locationSource,
-            cf_turnstile_token: state.report.turnstileToken
-          });
-          if (currentAttemptId !== state.report.submitAttemptId || state.modals.active !== 'reportModalLayer') {
-            return;
-          }
-          if (!payload?.ok || payload?.status !== 'report_created') {
-            const status = payload?.status || 'server_error';
-            throw Object.assign(new Error(payload?.message || 'Report submit failed'), { payload, status: payload?.http_status });
-          }
-          this.captureEvent('report_submit_api_success', { status: payload.status, source: 'submit_report_modal' });
-          this.setUiState('success');
-
-          // Show success state
-          formState.classList.add('hidden');
-          successState.classList.remove('hidden');
-          const successText = successState.querySelector('[data-report-success-message]');
-          if (successText) successText.textContent = payload.message || 'Report submitted. Thanks for helping others avoid noisy surprises.';
-          if (window._resetReportTurnstile) window._resetReportTurnstile();
-
-          // Reset after delay
-          state.report.autoCloseTimer = setTimeout(() => {
-            core.close('reportModalLayer');
-            this.captureEvent('report_modal_closed_after_success', { source: 'submit_report_modal' });
-            this.reset();
-          }, 2000);
-
-        } catch (err) {
-          const reasonCode = err?.payload?.detail?.reason_code || err?.payload?.reason_code;
-          const apiCode = (err?.payload?.code || err?.payload?.detail?.code || '').toString().toUpperCase();
-          const status = reasonCode || err?.payload?.status || (err?.status ? 'http_error' : 'network_error');
-          this.setUiState('error', { status });
-          const is429 = Number(err?.status) === 429;
-          const isTurnstileError = reasonCode === 'turnstile_failed' || reasonCode === 'turnstile_required' || apiCode === 'TURNSTILE_FAILED';
-          const isExpected429 = is429 && (reasonCode === 'daily_report_quota_exceeded' || reasonCode === 'user_report_rate_limited');
-          if (is429 && (reasonCode === 'daily_report_quota_exceeded' || reasonCode === 'user_report_rate_limited')) {
-            state.report.quotaBlocked = reasonCode === 'daily_report_quota_exceeded';
-            if (window.posthog?.capture) {
-              window.posthog.capture('report_submit_blocked', {
-                reason_code: reasonCode,
-                source: 'submit_report_modal',
-                http_status: 429,
-                request_id: err?.payload?.request_id || err?.errorId || null,
-              });
-            }
-          } else {
-            state.report.quotaBlocked = false;
-          }
-          if (isTurnstileError && window._resetReportTurnstile) window._resetReportTurnstile();
-          if (!is429 && window.posthog?.capture) {
-            window.posthog.capture('report_submit_failed', {
-              error_code: status,
-              reason_code: reasonCode || (apiCode === 'TURNSTILE_FAILED' ? 'turnstile_failed' : undefined),
-              source: 'submit_report_modal',
-              request_id: err?.payload?.request_id || err?.errorId || null,
-            });
-          }
-          // Safe exception logging — does not depend on outer-scope logClientException
-          try {
-            if (!isExpected429 && window.Sentry?.captureException) {
-              window.Sentry.captureException(err, {
-                tags: { event: 'report_submit_failed', area: 'submit_report_modal' },
-                extra: { code: err?.code, errorId: err?.errorId, payload: err?.payload, status }
-              });
-            }
-          } catch(sentryErr) { /* never let Sentry crash the handler */ }
-          console.error('report_submit_failed', { status, code: err?.code, errorId: err?.errorId });
-          const statusToMsg = {
-            invalid_location: 'Please enter valid coordinates or a full Google Maps link.',
-            notes_too_long: 'Notes are too long. Please shorten them and try again.',
-            duplicate_report: 'This location was recently reported. Thanks for the heads up anyway.',
-            quota_exceeded: "You've reached your report limit for now. Try again later.",
-            daily_report_quota_exceeded: 'Daily report limit reached. Please try again tomorrow.',
-            user_report_rate_limited: 'Too many report attempts. Please wait a moment and try again.',
-            unauthorized: 'Your session may have expired. Please refresh and try again.',
-            turnstile_required: 'Please complete the verification challenge and try again.',
-            turnstile_failed: 'Verification failed. Please complete the human check again and resubmit.',
-          };
-          const fallbackMessage = "We couldn't submit your report. Please try again in a moment.";
-          const apiMessage = typeof err?.payload?.message === 'string' ? err.payload.message : '';
-          const errMessage = typeof err?.message === 'string' ? err.message : '';
-          errorEl.textContent = statusToMsg[status] || (apiCode === 'TURNSTILE_FAILED' ? statusToMsg.turnstile_failed : '') || apiMessage || errMessage || fallbackMessage;
-        } finally {
-          utils.setButtonLoading(btn, false);
-          // Only clear uiState — token and button state are managed by Turnstile callbacks
-          if (state.report.uiState !== 'success') {
-            state.report.uiState = 'idle';
-          }
-        }
-      },
-
-      reset() {
-        if (state.report.autoCloseTimer) {
-          clearTimeout(state.report.autoCloseTimer);
-          state.report.autoCloseTimer = null;
-        }
-        document.getElementById('reportFormState')?.classList.remove('hidden');
-        document.getElementById('reportSuccessState')?.classList.add('hidden');
-        const note = document.getElementById('reportNote');
-        if (note) note.value = '';
-        const nearby = document.getElementById('reportNearbyNow');
-        if (nearby) nearby.checked = false;
-        const charCount = document.getElementById('reportCharCount');
-        if (charCount) charCount.textContent = '0/180';
-        const errorEl = document.getElementById('reportError');
-        if (errorEl) errorEl.textContent = '';
-        state.report.note = '';
-        state.report.locationSourceLocked = false;
-        state.report.uiState = 'idle';
-        state.report.quotaBlocked = false;
-        
-        // Reset to first option
-        const firstType = document.querySelector('[data-report-type="active_construction"]');
-        if (firstType) {
-          firstType.click();
-        }
-
-        if (window._resetReportTurnstile) {
-          window._resetReportTurnstile();
-        } else {
-          state.report.turnstileToken = null;
-          this.updateSubmitButton();
-        }
-      },
-
-      showError(msg) {
-        const errorEl = document.getElementById('reportError');
-        if (errorEl) {
-          errorEl.textContent = msg;
-          return;
-        }
-        utils.notify(msg, 'error');
-        console.error(msg);
-      }
-    },
-
-    /**
-     * 3. Share Modal
-     */
-    share: {
-      init() {
-        const btn = document.getElementById('shareBtn');
-        const nativeBtn = document.getElementById('nativeShareBtn');
-        const copyLinkBtn = document.getElementById('copyLinkBtn');
-        const copyAllBtn = document.getElementById('copyAllBtn');
-        const textarea = document.getElementById('shareText');
-        const counter = document.getElementById('shareCharCount');
-
-        btn?.addEventListener('click', () => {
-          const errorEl = document.getElementById('shareError');
-          if (errorEl) errorEl.textContent = '';
-          this.updateCharCount();
-          core.open('shareModalLayer');
-        });
-
-        nativeBtn?.addEventListener('click', () => {
-          this.captureEvent('share_modal_share_now_clicked', { source: 'share_modal' });
-          this.shareNative();
-        });
-        copyLinkBtn?.addEventListener('click', () => this.copyLink());
-        copyAllBtn?.addEventListener('click', () => {
-          this.captureEvent('share_modal_copy_text_link_clicked', { source: 'share_modal' });
-          this.copyAll();
-        });
-
-        if (textarea && counter) {
-          textarea.addEventListener('input', () => this.updateCharCount());
-          this.updateCharCount();
-        }
-      },
-
-
-      captureEvent(name, props = {}) {
-        if (!window.posthog?.capture) return;
-        const distinctId = typeof window.posthog.get_distinct_id === 'function'
-          ? window.posthog.get_distinct_id()
-          : undefined;
-        const email = (state.unlock?.email || '').trim().toLowerCase() || undefined;
-        window.posthog.capture(name, {
-          ...props,
-          ...(distinctId ? { posthog_distinct_id: distinctId } : {}),
-          ...(email ? { email } : {})
-        });
-        window.posthog.flush?.();
-      },
-      updateCharCount() {
-        const textarea = document.getElementById('shareText');
-        const counter = document.getElementById('shareCharCount');
-        if (!textarea || !counter) return;
-        counter.textContent = `${textarea.value.length} / 220`;
-      },
-
-      getShareData() {
-        return {
-          text: document.getElementById('shareText').value.trim(),
-          url: document.getElementById('shareUrlBox').textContent.trim()
-        };
-      },
-
-      getSenderName() {
-        const nameFromData = document.body?.dataset?.userDisplayName;
-        if (nameFromData && nameFromData.trim()) return nameFromData.trim();
-        return 'Someone';
-      },
-
-      getNativeShareData() {
-        const { url } = this.getShareData();
-        const senderName = this.getSenderName();
-        return {
-          title: "🏗️ Check what's being built near this address",
-          text: `${senderName} checked a property with DillDrill — and thinks you should too before you commit. See construction activity near any address in seconds:`,
-          url
-        };
-      },
-
-      async shareNative() {
-        const data = this.getNativeShareData();
-        const errorEl = document.getElementById('shareError');
-
-        if (errorEl) errorEl.textContent = '';
-        
-        if (navigator.share) {
-          try {
-            await navigator.share(data);
-            core.close('shareModalLayer');
-            this.showFeedback('Thanks for sharing!');
-          } catch (err) {
-            if (err.name !== 'AbortError') {
-              logClientException('share_native_failed', err, { area: 'share_modal', source: 'share_modal' });
-              if (errorEl) errorEl.textContent = labels.shareOpenFailed;
-            }
-          }
-        } else {
-          await this.copyAll();
-        }
-      },
-
-      async copyLink() {
-        const { url } = this.getShareData();
-        await this.copyToClipboard(url, 'Link copied!');
-      },
-
-      async copyAll() {
-        const { text, url } = this.getShareData();
-        const content = text ? `${text} ${url}` : url;
-        await this.copyToClipboard(content, 'Copied to clipboard!');
-      },
-
-      async copyToClipboard(content, successMsg) {
-        const errorEl = document.getElementById('shareError');
-
-        if (errorEl) errorEl.textContent = '';
-        
-        try {
-          await navigator.clipboard.writeText(content);
-          core.close('shareModalLayer');
-          this.showFeedback(successMsg);
-        } catch (err) {
-          if (errorEl) errorEl.textContent = labels.copyFailedManual;
-        }
-      },
-
-      showFeedback(msg) {
-        // Dispatch custom event for toast notification
-        window.dispatchEvent(new CustomEvent('app:notify', { 
-          detail: { message: msg, type: 'success' } 
-        }));
-      }
-    },
-
-    /**
-     * 4. Support/Purchase Modal
-     */
-    support: {
-      _resendTimer: null,
-      _tokenWatcher: null,
-      _turnstilePrewarmTriggered: false,
-      _lastDisabledPlanEventAt: 0,
-      _checkoutOpSeq: 0,
-      _resendOpSeq: 0,
-
-      safeLogJoinResearchException(eventName, err, extra = {}) {
-        try {
-          if (typeof logJoinResearchException === 'function') {
-            logJoinResearchException(eventName, err, extra);
-          }
-        } catch (_telemetryErr) {
-          // Telemetry failure must never block UI
-        }
-      },
-
-      formatJoinModalErrorMessage(reason, errorId) {
-        const base = 'Join Research is temporarily unavailable.';
-        const reasonMap = {
-          reset_failed: 'We could not reset the modal state.',
-          native_open_failed: 'We could not open the native dialog.',
-          fallback_open_failed: 'We could not open the fallback modal.',
-          missing_modal: 'The Join Research modal is missing from this page.'
-        };
-        const reasonDetail = reasonMap[reason] || 'An unexpected modal error occurred.';
-        return `${base} ${reasonDetail} Please refresh and try again. Error ID: ${errorId}`;
-      },
-
-      isCurrentOperation(opType, opId) {
-        if (opType === 'checkout') return this._checkoutOpSeq === opId;
-        if (opType === 'resend') return this._resendOpSeq === opId;
-        return false;
-      },
-
-      openJoinResearchModal(surface = 'hero_unlock_button') {
-        state.unlock.uiSurface = surface;
-
-        try {
-          this.reset();
-        } catch (err) {
-          const errorId = utils.newErrorId('JOIN_MODAL_RESET');
-          this.safeLogJoinResearchException('join_research_modal_reset_failed', err, {
-            errorId,
-            surface,
-            message: err?.message || null,
-            stack: err?.stack || null
-          });
-        }
-
-        let openedModal = null;
-        try {
-          openedModal = core.open('supportModalLayer');
-          if (openedModal) {
-            this.logFlowEvent('join_research_access_modal_opened', {
-              ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
-              status: 'opened'
-            });
-            if (window._initUnlockTurnstile) window._initUnlockTurnstile();
-            return true;
-          }
-        } catch (err) {
-          const errorId = utils.newErrorId('JOIN_MODAL_NATIVE_OPEN');
-          this.safeLogJoinResearchException('join_research_modal_native_open_threw', err, {
-            errorId,
-            surface,
-            message: err?.message || null,
-            stack: err?.stack || null
-          });
-        }
-
-        const fallbackModal = document.getElementById('supportModalLayer');
-        if (!fallbackModal) {
-          const errorId = utils.newErrorId('JOIN_MODAL_MISSING');
-          const detailedMessage = this.formatJoinModalErrorMessage('missing_modal', errorId);
-          console.error('join_research_modal_open_failed_missing_modal', {
-            errorId,
-            surface
-          });
-          utils.notify(detailedMessage, 'error');
-          return false;
-        }
-
-        try {
-          fallbackModal.classList.add('open');
-          fallbackModal.setAttribute('aria-hidden', 'false');
-          document.body.style.overflow = 'hidden';
-          state.modals.active = 'supportModalLayer';
-          this.logFlowEvent('join_research_access_modal_opened', {
-            ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
-            status: 'opened'
-          });
-          if (window._initUnlockTurnstile) window._initUnlockTurnstile();
-          return true;
-        } catch (err) {
-          const errorId = utils.newErrorId('JOIN_MODAL_FALLBACK_OPEN');
-          const detailedMessage = this.formatJoinModalErrorMessage('fallback_open_failed', errorId);
-          this.safeLogJoinResearchException('join_research_modal_fallback_open_failed', err, {
-            errorId,
-            surface,
-            message: err?.message || null,
-            stack: err?.stack || null
-          });
-          utils.notify(detailedMessage, 'error');
-          return false;
-        }
-      },
-
-      emitAnalyticsEvent(eventName, payload) {
-        window.dispatchEvent(new CustomEvent('analytics:event', {
-          detail: { event_name: eventName, ...payload }
-        }));
-      },
-
-      async logFlowEvent(eventName, payload = {}) {
-        try {
-          await fetch('/api/telemetry/client-event', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            credentials: 'same-origin',
-            keepalive: true,
-            body: JSON.stringify({
-              event: eventName,
-              flow_type: 'simulated_paid',
-              surface: 'demand_level_page',
-              modal_name: 'join_research_access_modal',
-              ...payload
-            })
-          });
-        } catch (err) {
-          console.warn('join_research_flow_log_failed', {
-            event: eventName,
-            message: err?.message || null
-          });
-        }
-      },
-
-      clearPendingCheckoutContext() {
-        sessionStorage.removeItem('last_payment_intent_id');
-        sessionStorage.removeItem('pending_checkout_email');
-        sessionStorage.removeItem('pending_checkout_started_at');
-      },
-
-      init() {
-        // Check for success redirect parameter on page load 
-        const urlParams = new URLSearchParams(window.location.search);
-        const paymentState = urlParams.get('payment');
-
-        const btn = document.getElementById('supportBtn');
-        const proceedBtn = document.getElementById('proceedToPaymentBtn');
-        const cancelBtn = document.getElementById('cancelPaymentBtn');
-        const resendBtn = document.getElementById('resendLinkBtn');
-        const planGrid = document.getElementById('planGrid');
-
-        btn?.addEventListener('click', () => {
-          const surface = AccessState.get().demandAllowed ? 'hero_unlock_button' : 'demand_level_page';
-          this.logFlowEvent('join_research_access_join_clicked', {
-            ui_surface: surface,
-            status: 'clicked'
-          });
-          this.openJoinResearchModal(surface);
-        });
-
-        const supportModal = document.getElementById('supportModalLayer');
-        supportModal?.addEventListener('modal:close', () => {
-          console.info('join_research_access_modal_closed', {
-            ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
-            active_step: document.querySelector('#supportModalLayer .purchase-step:not(.hidden)')?.id || null
-          });
-          this.emitAnalyticsEvent('join_research_access_modal_closed', {
-            ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
-            active_step: document.querySelector('#supportModalLayer .purchase-step:not(.hidden)')?.id || null
-          });
-          this.logFlowEvent('join_research_access_modal_closed', {
-            ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
-            step: document.querySelector('#supportModalLayer .purchase-step:not(.hidden)')?.id || null,
-            status: 'closed'
-          });
-          this.reset();
-        });
-
-        // Plan selection
-        planGrid?.addEventListener('pointerdown', (event) => {
-          const disabledCard = event.target?.closest?.('.plan-card:disabled');
-          if (!disabledCard) return;
-          const now = Date.now();
-          if (now - this._lastDisabledPlanEventAt < 250) return;
-          this._lastDisabledPlanEventAt = now;
-          this.emitAnalyticsEvent('disabled_access_level_clicked', {
-            ui_surface: 'demand_level_page',
-            access_level: '72_hour_preview',
-            reason: 'disabled_not_available_in_simulated_flow'
-          });
-        });
-
-        planGrid?.querySelectorAll('[data-plan]').forEach(card => {
-          card.addEventListener('click', () => {
-            if (card.disabled || card.getAttribute('aria-disabled') === 'true') {
-              return;
-            }
-            planGrid.querySelectorAll('[data-plan]').forEach(el => {
-              el.classList.remove('active');
-              el.setAttribute('aria-checked', 'false');
-            });
-            card.classList.add('active');
-            card.setAttribute('aria-checked', 'true');
-            state.unlock.plan = card.dataset.plan;
-          });
-        });
-
-        proceedBtn?.addEventListener('click', () => this.proceedToPayment());
-        cancelBtn?.addEventListener('click', () => this.reset());
-        resendBtn?.addEventListener('click', () => this.resendLink());
-        this.resumeResendCooldown();
-        this.syncResendButtonState();
-        if (!this._tokenWatcher) {
-          this._tokenWatcher = setInterval(() => this.syncResendButtonState(), 1000);
-        }
-        document.addEventListener('visibilitychange', () => {
-          if (document.hidden) return;
-          const msLeft = state.unlock.resendCooldownUntil - Date.now();
-          if (msLeft > 0 && msLeft <= 5000 && !this._turnstilePrewarmTriggered && window.turnstile && state.unlock.turnstileWidgetId !== null) {
-            turnstile.reset(state.unlock.turnstileWidgetId);
-            this._turnstilePrewarmTriggered = true;
-          }
-          this.syncResendButtonState();
-        });
-
-        const pendingIntentId = sessionStorage.getItem('last_payment_intent_id');
-        const pendingEmail = sessionStorage.getItem('pending_checkout_email');
-        if (paymentState === 'cancel') {
-          this.clearPendingCheckoutContext();
-          sessionStorage.removeItem('resend_cooldown_until');
-          return;
-        }
-        if ((paymentState === 'success' || pendingIntentId) && pendingEmail) {
-          const emailInput = document.getElementById('purchaseEmail');
-          if (emailInput) emailInput.value = pendingEmail;
-          
-          if (paymentState === 'success') {
-            // If payment succeeded (including test account), show "Check Email" screen (Step 3)
-            this.showStep(3);
-            const msg = document.getElementById('resendMessage');
-            if (msg) msg.textContent = `Check ${pendingEmail} for your access link. It should arrive shortly.`;
-          } else {
-            // If we just have a pending intent but no success param yet, keep Step 1 open
-            this.showStep(1);
-          }
-          
-          core.open('supportModalLayer');
-          const existingCooldown = Number(sessionStorage.getItem('resend_cooldown_until') || '0');
-          if (existingCooldown <= Date.now()) {
-            this.startResendCooldown(180);
-          }
-        }
-      },
-
-      syncResendButtonState() {
-        const resendBtn = document.getElementById('resendLinkBtn');
-        const hintEl = document.getElementById('resendTurnstileHint');
-        if (!resendBtn) return;
-
-        const baseText = resendBtn.dataset.baseText || resendBtn.textContent.trim() || 'Resend Access Link';
-        resendBtn.dataset.baseText = baseText;
-
-        const msLeft = state.unlock.resendCooldownUntil - Date.now();
-        if (msLeft > 0) return;
-
-        const token = state.unlock.turnstileToken;
-        const hasFreshToken = !!token && token !== state.unlock.lastTurnstileToken;
-        resendBtn.disabled = !hasFreshToken;
-        resendBtn.textContent = baseText;
-        if (hintEl) {
-          hintEl.textContent = hasFreshToken
-            ? 'Security check complete. You can resend now.'
-            : 'Complete a fresh security check to enable resend.';
-        }
-      },
-
-      startResendCooldown(seconds = 180) {
-        const resendBtn = document.getElementById('resendLinkBtn');
-        if (!resendBtn) return;
-        this._turnstilePrewarmTriggered = false;
-
-        const baseText = resendBtn.dataset.baseText || resendBtn.textContent.trim() || 'Resend Access Link';
-        resendBtn.dataset.baseText = baseText;
-        const cooldownUntil = Date.now() + (seconds * 1000);
-        state.unlock.resendCooldownUntil = cooldownUntil;
-        sessionStorage.setItem('resend_cooldown_until', String(cooldownUntil));
-
-        if (this._resendTimer) clearInterval(this._resendTimer);
-
-        const tick = () => {
-          const msLeft = state.unlock.resendCooldownUntil - Date.now();
-          if (msLeft <= 0) {
-            state.unlock.resendCooldownUntil = 0;
-            sessionStorage.removeItem('resend_cooldown_until');
-            if (this._resendTimer) {
-              clearInterval(this._resendTimer);
-              this._resendTimer = null;
-            }
-            this.syncResendButtonState();
-            return;
-          }
-          const secondsLeft = Math.ceil(msLeft / 1000);
-          if (secondsLeft <= 5 && !this._turnstilePrewarmTriggered && window.turnstile && state.unlock.turnstileWidgetId !== null) {
-            turnstile.reset(state.unlock.turnstileWidgetId);
-            this._turnstilePrewarmTriggered = true;
-          }
-          resendBtn.disabled = true;
-          resendBtn.textContent = `Resend Access Link (${secondsLeft}s)`;
-        };
-
-        tick();
-        this._resendTimer = setInterval(tick, 1000);
-      },
-
-      resumeResendCooldown() {
-        const stored = Number(sessionStorage.getItem('resend_cooldown_until') || '0');
-        if (stored > Date.now()) {
-          const secondsLeft = Math.ceil((stored - Date.now()) / 1000);
-          this.startResendCooldown(secondsLeft);
-        }
-      },
-
-      handleSuccessfulLogin() {
-        window.location.replace(`${window.location.pathname}?activated=1`);
-      },
-
-      formatSupportError(err, fallback = 'Research access setup failed. Please try again.') {
-        const rawMessage = (err?.message || '').trim();
-        const message = rawMessage || fallback;
-        const errorId = err?.errorId || err?.payload?.error_id || err?.payload?.detail?.error_id;
-        if (!errorId || /error id/i.test(message)) return message;
-        return `${message} (Error ID: ${errorId})`;
-      },
-
-      async proceedToPayment() {
-        const emailInput = document.getElementById('purchaseEmail');
-        const errorEl = document.getElementById('purchaseEmailError');
-        const proceedBtn = document.getElementById('proceedToPaymentBtn');
-        const email = emailInput.value.trim().toLowerCase(); // Always lower-case! 
-        if (state.unlock.checkoutSubmitting) {
-          console.warn("DEBUG: proceedToPayment() already submitting");
-          return;
-        }
-        const checkoutOpId = ++this._checkoutOpSeq;
-        let watchdogTimer = null;
-        this.logFlowEvent('join_research_access_email_submit_started', {
-          ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
-          status: 'started',
-          step: 'purchaseStep1'
-        });
-        
-        // Turnstile token extraction
-        const turnstileToken = state.unlock.turnstileToken;
-
-        if (!utils.isValidEmail(email)) {
-          console.warn("DEBUG: Invalid email entered:", email);
-          errorEl.textContent = getSupportLabel('emailInvalid');
-          return;
-        }
-        if (!turnstileToken) {
-          console.warn("DEBUG: Turnstile token missing");
-          errorEl.textContent = getSupportLabel('securityCheckRequired');
-          return;
-        }
-
-        errorEl.textContent = '';
-        state.unlock.email = email;
-        state.unlock.checkoutSubmitting = true;
-        if (proceedBtn) {
-          utils.setButtonLoading(proceedBtn, true);
-          const btnText = proceedBtn.querySelector('.btn-text');
-          if (btnText) btnText.textContent = 'Redirecting to research access...';
-        }
-        this.showStep(2); // Show processing spinner 
-        watchdogTimer = window.setTimeout(() => {
-          if (!this.isCurrentOperation('checkout', checkoutOpId) || !state.unlock.checkoutSubmitting) return;
-          safeLogJoinResearchException(
-            'join_research_checkout_watchdog_timeout',
-            new Error('Checkout watchdog timeout'),
-            { checkoutOpId, ui_surface: state.unlock.uiSurface || 'hero_unlock_button' }
-          );
-          state.unlock.checkoutSubmitting = false;
-          this.showStep(1);
-          errorEl.textContent = 'Research access request timed out. Please try again.';
-          if (proceedBtn) {
-            utils.setButtonLoading(proceedBtn, false);
-            const btnText = proceedBtn.querySelector('.btn-text');
-            if (btnText) btnText.textContent = 'Join Research ➔';
-          }
-        }, 30000);
-
-        try {
-          const plan = 'sim_1_day';
-          state.unlock.plan = plan;
-          const currentLocationText = document.getElementById('locationInput')?.value?.trim() || '';
-          localStorage.setItem('dd_resume_state', JSON.stringify({
-            lat: state.coords.lat,
-            lng: state.coords.lng,
-            text: currentLocationText
-          }));
-          this.logFlowEvent('join_research_access_unlock_intent_started', {
-            ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
-            status: 'request_started',
-            step: 'purchaseStep2'
-          });
-          const data = await utils.apiPost('/api/billing/unlock-intent', {
-            email,
-            plan,
-            turnstile_token: turnstileToken,
-            ui_surface: state.unlock.uiSurface || 'hero_unlock_button'
-          });
-
-          if (!data || data.ok !== true) {
-            const message = data?.message || 'Research access is currently unavailable. Please try again later.';
-            throw new Error(message);
-          }
-
-          if (data.intent_id) {
-            sessionStorage.setItem('last_payment_intent_id', data.intent_id);
-          }
-
-          if (data.ok === true && data.status === 'intent_created') {
-            this.logFlowEvent('join_research_access_unlock_intent_succeeded', {
-              ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
-              status: 'intent_created',
-              step: 'purchaseStep3'
-            });
-            if (!this.isCurrentOperation('checkout', checkoutOpId)) return;
-            // The DB intent was created, but the email timed out/failed.
-            state.unlock.checkoutSubmitting = false;
-
-            if (proceedBtn) {
-              utils.setButtonLoading(proceedBtn, false);
-              const btnText = proceedBtn.querySelector('.btn-text');
-              if (btnText) btnText.textContent = 'Join Research ➔';
-            }
-
-            this.showStep(3);
-            const resendMsg = document.getElementById('resendMessage');
-            if (resendMsg) {
-              resendMsg.textContent = `Request saved for ${email}. Check your inbox shortly, then use Resend Access Link if needed.`;
-            }
-            if (errorEl) errorEl.textContent = '';
-            this.syncResendButtonState();
-            if (window._initUnlockTurnstile) window._initUnlockTurnstile();
-            return; // Stop execution so we DO NOT redirect
-          }
-
-          sessionStorage.setItem('pending_checkout_email', email);
-          sessionStorage.setItem('pending_checkout_started_at', String(Date.now()));
-          state.unlock.lastTurnstileToken = turnstileToken;
-
-          if (data.ok === true && data.status === 'magic_link_sent') {
-            this.logFlowEvent('join_research_access_magic_link_succeeded', {
-              ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
-              status: 'magic_link_sent',
-              step: 'purchaseStep3'
-            });
-            if (!this.isCurrentOperation('checkout', checkoutOpId)) return;
-            state.unlock.checkoutSubmitting = false;
-            if (proceedBtn) {
-              utils.setButtonLoading(proceedBtn, false);
-              const btnText = proceedBtn.querySelector('.btn-text');
-              if (btnText) btnText.textContent = 'Join Research ➔';
-            }
-            this.showStep(3);
-            const resendMsg = document.getElementById('resendMessage');
-            if (resendMsg) {
-              resendMsg.textContent = `Check ${email} for your access link.`;
-            }
-            this.syncResendButtonState();
-            if (window._resetUnlockTurnstile) window._resetUnlockTurnstile();
-            return;
-          }
-          if (data.checkout_url) {
-            window.location.href = data.checkout_url;
-            return;
-          }
-          throw new Error(data?.message || 'Research access is currently unavailable. Please try again later.');
-        } catch (err) {
-          this.logFlowEvent('join_research_access_flow_failed', {
-            ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
-            status: 'failed',
-            error_code: err?.code || 'JOIN_RESEARCH_FLOW_FAILED',
-            error_message: err?.message || 'Unknown error',
-          });
-          if (!this.isCurrentOperation('checkout', checkoutOpId)) return;
-          safeLogJoinResearchException('join_research_access_submit_failed', err, { ui_surface: state.unlock.uiSurface || 'hero_unlock_button' });
-          state.unlock.checkoutSubmitting = false;
-          if (proceedBtn) {
-            utils.setButtonLoading(proceedBtn, false);
-            const btnText = proceedBtn.querySelector('.btn-text');
-            if (btnText) btnText.textContent = 'Join Research ➔';
-          }
-          this.showStep(1);
-          errorEl.textContent = err?.message || this.formatSupportError(err);
-          // Reset Turnstile on failure 
-          if (window._resetUnlockTurnstile) window._resetUnlockTurnstile();
-          this.syncResendButtonState();
-        } finally {
-          if (watchdogTimer) {
-            window.clearTimeout(watchdogTimer);
-          }
-        }
-      },
-
-      async resendLink() {
-        const emailInput = document.getElementById('purchaseEmail');
-        const errorEl = document.getElementById('purchaseEmailError');
-        const email = emailInput.value.trim().toLowerCase();
-        const turnstileToken = state.unlock.turnstileToken;
-
-        if (state.unlock.resendSubmitting) {
-          console.warn("DEBUG: resendLink() already submitting");
-          return;
-        }
-        const resendOpId = ++this._resendOpSeq;
-        this.logFlowEvent('join_research_access_magic_link_requested', {
-          ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
-          status: 'resend_started',
-          step: 'purchaseStep3'
-        });
-        if (!utils.isValidEmail(email)) {
-          errorEl.textContent = getSupportLabel('resendEnterEmail');
-          emailInput.focus();
-          return;
-        }
-        if (!turnstileToken || turnstileToken === state.unlock.lastTurnstileToken) {
-          errorEl.textContent = getSupportLabel('resendFreshSecurity');
-          if (window._resetUnlockTurnstile) window._resetUnlockTurnstile();
-          this.syncResendButtonState();
-          return;
-        }
-
-        state.unlock.resendSubmitting = true;
-        const resendBtnEl = document.getElementById('resendLinkBtn');
-        if (resendBtnEl) utils.setButtonLoading(resendBtnEl, true);
-        errorEl.textContent = '';
-
-        try {
-          await utils.apiPost('/api/auth/magic-link', {
-            email,
-            turnstile_token: turnstileToken,
-            intent_id: sessionStorage.getItem('last_payment_intent_id') || null
-          });
-          
-          if (!this.isCurrentOperation('resend', resendOpId)) return;
-          this.showStep(3); // Show Success Check-Email screen 
-          document.getElementById('resendMessage').textContent = 
-            `If ${email} has an active pass, we've sent a new access link.`;
-          state.unlock.lastTurnstileToken = turnstileToken;
-          this.logFlowEvent('join_research_access_magic_link_succeeded', {
-            ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
-            status: 'resend_succeeded',
-            step: 'purchaseStep3'
-          });
-          if (window._resetUnlockTurnstile) window._resetUnlockTurnstile();
-          this.startResendCooldown(180);
-        } catch (err) {
-          if (!this.isCurrentOperation('resend', resendOpId)) return;
-          this.logFlowEvent('join_research_access_flow_failed', {
-            ui_surface: state.unlock.uiSurface || 'hero_unlock_button',
-            status: 'resend_failed',
-            error_code: err?.code || 'JOIN_RESEARCH_RESEND_FAILED',
-            error_message: err?.message || 'Could not resend link.',
-            step: 'purchaseStep3'
-          });
-          safeLogJoinResearchException(
-            'join_research_resend_failed',
-            err,
-            { ui_surface: state.unlock.uiSurface || 'hero_unlock_button' }
-          );
-          errorEl.textContent = err.message || 'Could not resend link.';
-          if (window._resetUnlockTurnstile) window._resetUnlockTurnstile();
-        } finally {
-          if (this.isCurrentOperation('resend', resendOpId)) {
-            state.unlock.resendSubmitting = false;
-          }
-          if (resendBtnEl) utils.setButtonLoading(resendBtnEl, false);
-        }
-      },
-
-      showStep(stepNumber) {
-        document.querySelectorAll('#supportModalLayer .purchase-step').forEach((el, idx) => {
-          el.classList.toggle('hidden', idx + 1 !== stepNumber);
-        });
-      },
-
-      reset() {
-        this.showStep(1);
-        this._checkoutOpSeq += 1;
-        this._resendOpSeq += 1;
-        state.unlock.checkoutSubmitting = false;
-        state.unlock.resendSubmitting = false;
-        state.unlock.plan = 'sim_1_day';
-        state.unlock.uiSurface = 'hero_unlock_button';
-        state.unlock.lastTurnstileToken = null;
-        if (window._resetUnlockTurnstile) window._resetUnlockTurnstile();
-        const planGrid = document.getElementById('planGrid');
-        planGrid?.querySelectorAll('[data-plan]').forEach(card => {
-          const isDefault = card.dataset.plan === 'sim_1_day';
-          card.classList.toggle('active', isDefault);
-          card.setAttribute('aria-checked', isDefault ? 'true' : 'false');
-        });
-        const emailInput = document.getElementById('purchaseEmail');
-        if (emailInput) emailInput.value = '';
-        const errorEl = document.getElementById('purchaseEmailError');
-        if (errorEl) errorEl.textContent = '';
-        this.syncResendButtonState();
-        const proceedBtn = document.getElementById('proceedToPaymentBtn');
-        if (proceedBtn) {
-          utils.setButtonLoading(proceedBtn, false);
-          const btnText = proceedBtn.querySelector('.btn-text');
-          if (btnText) btnText.textContent = getSupportLabel('joinResearchCta');
-        }
-      }
-    },
-
-    /**
-     * 5. About Modal
-     */
-    about: {
-      init() {
-        const btn = document.getElementById('aboutBtn');
-        btn?.addEventListener('click', () => {
-          core.open('aboutModalLayer');
-        });
-      }
-    },
-
-    /**
-     * 6. Language Selection Modal (Bottom Sheet)
-     */
-    language: {
-      init() {
-        const btn = document.getElementById('langOpenBtn');
-        const list = document.getElementById('langList');
-
-        btn?.addEventListener('click', () => {
-          core.open('langModalLayer');
-        });
-
-        // Language selection - One-click save
-        list?.querySelectorAll('.lang-item').forEach(item => {
-          item.addEventListener('click', () => {
-            const langCode = item.dataset.lang;
-            if (langCode === state.language.current) {
-              core.close('langModalLayer');
-              return;
-            }
-            this.save(langCode, item);
-          });
-        });
-
-        // Swipe to dismiss for bottom sheet
-        this.initSwipeToDismiss();
-      },
-
-      async save(langCode, itemEl) {
-        const errorEl = document.getElementById('langError');
-        const checkEl = itemEl.querySelector('.lang-item__check');
-        const spinnerEl = itemEl.querySelector('.lang-item__spinner');
-
-        if (errorEl) errorEl.textContent = '';
-        itemEl.classList.add('is-loading');
-        checkEl?.classList.add('hidden');
-        spinnerEl?.classList.remove('hidden');
-
-        try {
-          await utils.apiPost('/api/language', { lang: langCode });
-          
-          state.language.current = langCode;
-          document.cookie = `dd_lang=${langCode}; path=/; max-age=31536000; SameSite=Lax`;
-          window.location.reload();
-
-        } catch (err) {
-          itemEl.classList.remove('is-loading');
-          spinnerEl?.classList.add('hidden');
-          if (itemEl.classList.contains('active')) {
-            checkEl?.classList.remove('hidden');
-          }
-          if (errorEl) errorEl.textContent = err.message || 'Could not save language preference.';
-        }
-      },
-
-      initSwipeToDismiss() {
-        const modal = document.getElementById('langModalLayer');
-        if (!modal) return;
-
-        let startY = 0;
-        let currentY = 0;
-        let isDragging = false;
-
-        const handle = modal.querySelector('.modal-handle') || modal.querySelector('.modal');
-
-        handle?.addEventListener('touchstart', (e) => {
-          startY = e.touches[0].clientY;
-          isDragging = true;
-          modal.style.transition = 'none';
-        }, { passive: true });
-
-        document.addEventListener('touchmove', (e) => {
-          if (!isDragging) return;
-          currentY = e.touches[0].clientY;
-          const delta = currentY - startY;
-          
-          if (delta > 0) {
-            modal.style.transform = `translateY(${delta}px)`;
-          }
-        }, { passive: true });
-
-        document.addEventListener('touchend', () => {
-          if (!isDragging) return;
-          isDragging = false;
-          modal.style.transition = '';
-          
-          const delta = currentY - startY;
-          if (delta > 100) {
-            core.close('langModalLayer');
-            modal.style.transform = '';
-          } else {
-            modal.style.transform = '';
-          }
-        });
-      }
-    }
-  };
-
-  // ==========================================
-  // REPORT MODAL TURNSTILE — EXPLICIT RENDER
-  // Renders the widget once Turnstile is ready,
-  // using programmatic callbacks (no data-callback
-  // attributes on the div — avoids CSP inline issues
-  // and works with a single non-explicit script tag).
-  // ==========================================
-  let _reportWidgetId = null;
-
-  function _renderReportTurnstile() {
-    const container = document.getElementById('report-turnstile-widget');
-    if (!container) return;
-    const sitekey = (container.dataset.sitekey || '').trim();
-    if (!sitekey) {
-      console.warn('[Turnstile] report widget: sitekey missing');
-      return;
-    }
-    // Already rendered — don't double-render
-    if (_reportWidgetId !== null) return;
-    _reportWidgetId = window.turnstile.render(container, {
-      sitekey,
-      theme: container.dataset.theme || 'dark',
-      callback: function(token) {
-        state.report.turnstileToken = token;
-        modals.report.updateSubmitButton();
-        if (window.posthog?.capture) {
-          window.posthog.capture('turnstile_widget_solved', { ui_surface: 'submit_report_modal' });
-        }
-      },
-      'error-callback': function() {
-        state.report.turnstileToken = null;
-        logClientException(
-          'report_turnstile_error',
-          new Error('Report Turnstile widget error'),
-          { area: 'submit_report_modal' }
-        );
-        modals.report.updateSubmitButton();
-        modals.report.showError('Verification failed. Please refresh and try again.');
-        if (window.posthog?.capture) {
-          window.posthog.capture('turnstile_widget_error', { ui_surface: 'submit_report_modal' });
-        }
-      },
-      'expired-callback': function() {
-        state.report.turnstileToken = null;
-        modals.report.updateSubmitButton();
-        modals.report.showError('Verification expired. Please complete the challenge again.');
-        if (window.turnstile && _reportWidgetId !== null) {
-          try { window.turnstile.reset(_reportWidgetId); } catch (e) {}
-        }
-        if (window.posthog?.capture) {
-          window.posthog.capture('turnstile_widget_expired', { ui_surface: 'submit_report_modal' });
-        }
-      }
-    });
-  }
-
-  function _resetReportTurnstile() {
-    if (window._reportTurnstilePollInterval) {
-      clearInterval(window._reportTurnstilePollInterval);
-      window._reportTurnstilePollInterval = null;
-    }
-    if (window.turnstile && _reportWidgetId !== null) {
-      try { window.turnstile.reset(_reportWidgetId); } catch(e) {}
-    }
-    state.report.turnstileToken = null;
-    modals.report.updateSubmitButton();
-  }
-
-  // Called whenever the report modal opens — render or reset
-  window._initReportTurnstile = function() {
-    if (!window.turnstile) {
-      const statusEl = document.getElementById('reportError');
-      if (statusEl) statusEl.textContent = 'Loading verification…';
-      // Script not loaded yet; retry until ready
-      let attempts = 0;
-      const maxAttempts = 100;
-      if (window._reportTurnstilePollInterval) clearInterval(window._reportTurnstilePollInterval);
-      window._reportTurnstilePollInterval = setInterval(() => {
-        attempts += 1;
-        if (window.turnstile) {
-          clearInterval(window._reportTurnstilePollInterval);
-          window._reportTurnstilePollInterval = null;
-          if (statusEl && statusEl.textContent === 'Loading verification…') statusEl.textContent = '';
-          _renderReportTurnstile();
-          return;
-        }
-        if (attempts >= maxAttempts) {
-          clearInterval(window._reportTurnstilePollInterval);
-          window._reportTurnstilePollInterval = null;
-          if (statusEl) statusEl.textContent = 'Verification unavailable. Please check your connection or disable ad blockers and try again.';
-          state.report.turnstileToken = null;
-          modals.report.updateSubmitButton();
-        }
-      }, 100);
-      return;
-    }
-    if (_reportWidgetId !== null) {
-      // Widget already rendered — just reset it for a fresh token
-      _resetReportTurnstile();
-    } else {
-      _renderReportTurnstile();
-    }
-  };
-
-  window._resetReportTurnstile = _resetReportTurnstile;
-
-  window._initUnlockTurnstile = function() {
-    const container = document.getElementById('unlock-turnstile-widget');
-    const unlockSafeTurnstileDebug = window.safeTurnstileDebug || safeTurnstileDebug || (() => {});
-    unlockSafeTurnstileDebug({
-      hostname: window.location.hostname,
-      origin: window.location.origin,
-      hasSiteKey: Boolean(container && container.dataset && container.dataset.sitekey),
-      source: "join_research_access_modal"
-    });
-    const statusEl = document.getElementById('unlockTurnstileStatusMsg');
-    if (!container) return;
-    const sitekey = (container.dataset.sitekey || '').trim();
-    if (!sitekey) return;
-    if (!window.turnstile) {
-      if (statusEl) {
-        statusEl.textContent = 'Loading verification…';
-        statusEl.dataset.turnstileStatus = 'loading';
-      }
-      let attempts = 0;
-      const maxAttempts = 100;
-      if (window._unlockTurnstilePollInterval) clearInterval(window._unlockTurnstilePollInterval);
-      window._unlockTurnstilePollInterval = setInterval(() => {
-        attempts += 1;
-        if (window.turnstile) {
-          clearInterval(window._unlockTurnstilePollInterval);
-          window._unlockTurnstilePollInterval = null;
-          if (statusEl) {
-            statusEl.textContent = '';
-            statusEl.dataset.turnstileStatus = 'idle';
-          }
-          window._initUnlockTurnstile();
-          return;
-        }
-        if (attempts >= maxAttempts) {
-          clearInterval(window._unlockTurnstilePollInterval);
-          window._unlockTurnstilePollInterval = null;
-          state.unlock.turnstileToken = null;
-          safeLogJoinResearchException(
-            'join_research_turnstile_script_load_failed',
-            new Error('Unlock Turnstile script did not load after max poll attempts'),
-            { widget: 'unlock', attempts }
-          );
-          if (statusEl) {
-            statusEl.textContent = 'Verification unavailable. Please check your connection or disable ad blockers and try again.';
-            statusEl.dataset.turnstileStatus = 'unavailable';
-          }
-          modals.support.syncResendButtonState();
-        }
-      }, 100);
-      return;
-    }
-    if (state.unlock.turnstileWidgetId !== null) {
-      window._resetUnlockTurnstile();
-      return;
-    }
-    state.unlock.turnstileWidgetId = window.turnstile.render(container, {
-      sitekey,
-      theme: container.dataset.theme || 'dark',
-      callback: function(token) {
-        state.unlock.turnstileToken = token;
-        if (statusEl) { statusEl.textContent = ''; statusEl.dataset.turnstileStatus = 'idle'; }
-        modals.support.syncResendButtonState();
-      },
-      'error-callback': function() {
-        state.unlock.turnstileToken = null;
-        safeLogJoinResearchException(
-          'join_research_turnstile_error',
-          new Error('Unlock Turnstile widget error'),
-          { widget: 'unlock', ui_surface: state.unlock.uiSurface || 'hero_unlock_button' }
-        );
-        if (statusEl) { statusEl.textContent = 'Verification failed. Please refresh and try again.'; statusEl.dataset.turnstileStatus = 'error'; }
-        modals.support.syncResendButtonState();
-      },
-      'expired-callback': function() {
-        state.unlock.turnstileToken = null;
-        if (statusEl) { statusEl.textContent = 'Verification expired. Please complete the challenge again.'; statusEl.dataset.turnstileStatus = 'expired'; }
-        if (window.turnstile && state.unlock.turnstileWidgetId !== null) {
-          try { window.turnstile.reset(state.unlock.turnstileWidgetId); } catch (e) {}
-        }
-        modals.support.syncResendButtonState();
-      }
-    });
-  };
-
-  window._resetUnlockTurnstile = function() {
-    if (window._unlockTurnstilePollInterval) {
-      clearInterval(window._unlockTurnstilePollInterval);
-      window._unlockTurnstilePollInterval = null;
-    }
-    if (window.turnstile && state.unlock.turnstileWidgetId !== null) {
-      try { window.turnstile.reset(state.unlock.turnstileWidgetId); } catch (e) {}
-    }
-    state.unlock.turnstileToken = null;
-    const statusEl = document.getElementById('unlockTurnstileStatusMsg');
-    if (statusEl) { statusEl.textContent = ''; statusEl.dataset.turnstileStatus = 'idle'; }
-    modals.support.syncResendButtonState();
-  };
-
-  // ==========================================
-  // PUBLIC API
-  // ==========================================
-  
-  return {
-    init() {
-      core.init();
-      Object.values(modals).forEach(m => m.init());
-      const access = AccessState.get();
-      modals.user.updateStatus(access.tier, access.demandAllowed, access.dailyLimit);
-      AccessState.subscribe((nextAccess) => {
-        modals.user.updateStatus(nextAccess.tier, nextAccess.demandAllowed, nextAccess.dailyLimit);
-      });
-    },
-    
-    // Expose specific methods for external use
-    open: core.open.bind(core),
-    close: core.close.bind(core),
-    closeAll: core.closeAll.bind(core),
-    
-    // State setters
-    setCoords(lat, lng) {
-      state.coords.lat = lat;
-      state.coords.lng = lng;
-      state.coords.valid = true;
-      state.coords.key = `${lat.toFixed(4)},${lng.toFixed(4)}`;
-      if (state.modals.active === 'reportModalLayer') {
-        modals.report.initializeLocation();
-      }
-    },
-    
-    clearCoords() {
-      state.coords.lat = null;
-      state.coords.lng = null;
-      state.coords.valid = false;
-      state.coords.key = null;
-      if (state.modals.active === 'reportModalLayer') {
-        modals.report.initializeLocation();
-      }
-    },
-    
-    updateAccess(tier, demandAllowed, dailyLimit = null) {
-      updateAccessState(Boolean(demandAllowed), tier, dailyLimit);
-    },
-
-    notify(message, type = 'info') {
-      utils.notify(message, type);
-    },
-
-    openJoinResearchModal(surface = 'hero_unlock_button') {
-      return modals.support.openJoinResearchModal(surface);
-    }
-  };
+    window.App = { AccessState, state, openModal, closeModal, openJoinResearchModal, fetchConstruction, fetchDemand, parseHeroLocation, heroTurnstile, unlockTurnstile, reportTurnstile, notify, captureEvent, logFlowEvent, logClientException }; }
+  if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init, { once: true });
+  else init();
 })();
-
-// ==========================================
-// INITIALIZATION
-// ==========================================
-
-// Auto-initialize when DOM is ready
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', () => ModalSystem.init());
-} else {
-  ModalSystem.init();
-}
-
-// Expose globally for debugging and external access
-window.ModalSystem = ModalSystem;
