@@ -112,10 +112,27 @@
     return (...args) => { window.clearTimeout(timer);
       timer = window.setTimeout(() => fn(...args), delay); }; }
   function logClientException(name, err, ctx = {}) {
-    try { const error = err instanceof Error ? err : new Error(String(err || name));
-      window.Sentry?.captureException?.(error, { tags: { client_event: name }, extra: ctx });
-      console.error(`[DillDrill] ${name}`, error, ctx);
-    } catch (_) { try { console.error(`[DillDrill] ${name}`, err, ctx); } catch (__) {} } }
+    try {
+      const error = err instanceof Error ? err : new Error(String(err || name));
+      const payload = {
+        client_event: name,
+        message: error.message,
+        stack: error.stack?.split("\n").slice(0, 6).join(" | ") || null,
+        tier: document.body?.dataset.tier || "unknown",
+        path: window.location.pathname,
+        ...ctx
+      };
+      console.error(JSON.stringify({ level: "error", event: name, ...payload }));
+      window.Sentry?.captureException?.(error, {
+        tags: { client_event: name, tier: payload.tier },
+        extra: payload
+      });
+      window.posthog?.capture?.("client_exception", payload);
+      window.posthog?.flush?.();
+    } catch (_) {
+      try { console.error("[DillDrill] logClientException itself threw", name); } catch (__) {}
+    }
+  }
   function safeLogJoinResearchException(eventName, err, extra = {}) {
     try { if (typeof window.logJoinResearchException === "function") {
         window.logJoinResearchException(eventName, err, extra);
@@ -224,7 +241,20 @@
         if (widgetId !== undefined) { turnstile.reset(widgetId); token = null; return widgetId; }
         widgetId = turnstile.render(el, { sitekey, theme: el.dataset.theme || "auto", callback: (newToken) => { token = newToken || null; setStatus(""); opts.onToken?.(token); }, "expired-callback": () => { token = null; opts.onExpire?.(); }, "error-callback": () => { token = null; opts.onError?.(); } });
         return widgetId;
-      } catch (err) { setStatus(VERIFY_TIMEOUT_TEXT); opts.onError?.(err); logClientException("turnstile_init_failed", err, { containerId }); return null;
+      } catch (err) { setStatus(VERIFY_TIMEOUT_TEXT); opts.onError?.(err);
+        logClientException("turnstile_init_failed", err, {
+          containerId,
+          tier: document.body?.dataset.tier || "unknown",
+          timed_out: err?.message === "turnstile_load_timeout"
+        });
+        try {
+          window.posthog?.capture?.("turnstile_init_failed", {
+            containerId,
+            timed_out: err?.message === "turnstile_load_timeout"
+          });
+          window.posthog?.flush?.();
+        } catch (_) {}
+        return null;
       } finally { initPromise = null; }
     }
     async function init() { if (initPromise) return initPromise; initPromise = runInit(); return initPromise; }
@@ -330,6 +360,22 @@
     } catch (err) { if (err?.name === "AbortError") return;
       const code = err.errorCode;
       const fallback = code === "SHORT_URL_RESOLUTION_BLOCKED" ? document.body.dataset.labelErrorShortUrlBlocked : code === "LOCATION_NOT_SUPPORTED" ? document.body.dataset.labelErrorLocationNotSupported : null;
+      if (err?.name !== "AbortError") {
+        try {
+          console.warn(JSON.stringify({
+            level: "warn",
+            event: "location_parse_failed",
+            error_code: code || null,
+            input_kind: state.input.kind,
+            input_length: (raw || "").length
+          }));
+          window.posthog?.capture?.("location_parse_failed", {
+            error_code: code || null,
+            input_kind: state.input.kind
+          });
+          window.posthog?.flush?.();
+        } catch (_) {}
+      }
       displayParseError(fallback || err.message || "Could not read that location input.");
     } finally { parseAbortController = null;
       updateButtons(); } }
@@ -371,7 +417,20 @@
         await heroTurnstile.init(); }
       state.hero.constructionStatus = "error";
       setText("constructionMessage", err.message || "Could not check construction right now.");
-      logClientException("construction_search_failed", err);
+      logClientException("construction_search_failed", err, {
+        error_code: err.errorCode || null,
+        http_status: err.status || null,
+        coord_key: state.coords.key,
+        tier: AccessState.get().tier
+      });
+      try {
+        window.posthog?.capture?.("construction_search_failed", {
+          error_code: err.errorCode || null,
+          http_status: err.status || null,
+          tier: AccessState.get().tier
+        });
+        window.posthog?.flush?.();
+      } catch (_) {}
       return null;
     } finally { if (state.hero.constructionStatus === "loading") state.hero.constructionStatus = "idle";
       updateButtons(); } }
@@ -402,7 +461,20 @@
         await heroTurnstile.init(); }
       state.hero.demandStatus = "error";
       setText("demandMessage", err.message || "Could not check demand right now.");
-      logClientException("demand_search_failed", err);
+      logClientException("demand_search_failed", err, {
+        error_code: err.errorCode || null,
+        http_status: err.status || null,
+        coord_key: state.coords.key,
+        tier: AccessState.get().tier
+      });
+      try {
+        window.posthog?.capture?.("demand_search_failed", {
+          error_code: err.errorCode || null,
+          http_status: err.status || null,
+          tier: AccessState.get().tier
+        });
+        window.posthog?.flush?.();
+      } catch (_) {}
       return null;
     } finally { if (state.hero.demandStatus === "loading") state.hero.demandStatus = "idle";
       updateButtons(); } }
@@ -538,7 +610,27 @@
       await unlockTurnstile.init();
       setText("purchaseEmailError", "Join Research is temporarily unavailable. Please try again.");
       logFlowEvent("join_research_access_magic_link_failed", { action: "request_magic_link", status: "failed", error_code: err.errorCode, error_message: err.message, ui_surface: state.unlock.uiSurface, step: "purchaseStep1" });
-      safeLogJoinResearchException("join_research_access_flow_failed", err, { email });
+      console.error(JSON.stringify({
+        level: "error",
+        event: "join_research_magic_link_failed",
+        error_code: err.errorCode || null,
+        http_status: err.status || null,
+        ui_surface: state.unlock.uiSurface
+      }));
+      safeLogJoinResearchException("join_research_access_flow_failed", err, {
+        email,
+        error_code: err.errorCode || null,
+        http_status: err.status || null,
+        ui_surface: state.unlock.uiSurface
+      });
+      try {
+        window.posthog?.capture?.("join_research_magic_link_failed", {
+          error_code: err.errorCode || null,
+          http_status: err.status || null,
+          ui_surface: state.unlock.uiSurface
+        });
+        window.posthog?.flush?.();
+      } catch (_) {}
     } finally { if (isCurrentOperation("checkout", opId)) {
         state.unlock.submitting = false;
         setButtonLoading(btn, false);
@@ -563,6 +655,17 @@
       await unlockTurnstile.init();
       setText("purchaseEmailError", "Could not resend right now. Please try again.");
       logFlowEvent("join_research_access_resend_failed", { action: "resend_magic_link", status: "failed", error_code: err.errorCode, error_message: err.message, ui_surface: state.unlock.uiSurface, step: "purchaseStep1" });
+      console.error(JSON.stringify({
+        level: "error",
+        event: "join_research_resend_failed",
+        error_code: err.errorCode || null,
+        http_status: err.status || null,
+        ui_surface: state.unlock.uiSurface
+      }));
+      logClientException("join_research_resend_failed", err, {
+        error_code: err.errorCode || null,
+        ui_surface: state.unlock.uiSurface
+      });
     } finally { if (isCurrentOperation("resend", opId)) {
         state.unlock.resendSubmitting = false;
         syncResendButtonState(); } } }
@@ -632,13 +735,68 @@
       setHidden("reportSuccessState", false);
       const successMsg = $("reportSuccessState")?.querySelector(".success-msg");
       if (successMsg && data?.message) successMsg.textContent = data.message;
-      captureEvent("user_report_submitted", { status: data?.status || "report_created", report_kind: state.report.type });
+      const reportStatus = data?.status || "report_created";
+      console.info(JSON.stringify({
+        level: "info",
+        event: "user_report_submitted",
+        status: reportStatus,
+        report_kind: state.report.type,
+        is_duplicate: reportStatus === "duplicate_report",
+        location_source: state.report.locationSource,
+        tier: AccessState.get().tier
+      }));
+      captureEvent("user_report_submitted", {
+        status: reportStatus,
+        report_kind: state.report.type,
+        is_duplicate: reportStatus === "duplicate_report",
+        location_source: state.report.locationSource,
+        tier: AccessState.get().tier
+      });
+      try {
+        window.posthog?.capture?.("user_report_submitted", {
+          status: reportStatus,
+          report_kind: state.report.type,
+          is_duplicate: reportStatus === "duplicate_report",
+          location_source: state.report.locationSource,
+          tier: AccessState.get().tier
+        });
+        window.posthog?.flush?.();
+      } catch (_) {}
       state.report.autoCloseTimer = window.setTimeout(() => closeModal("reportModalLayer"), 2000);
     } catch (err) { const code = err.errorCode;
       if (code === "turnstile_failed" || code === "turnstile_required") { reportTurnstile.reset(); await reportTurnstile.init(); }
       setText("reportError", err.message || "Could not submit report right now.");
-      captureEvent("user_report_failed", { error_code: code, status: err.status });
-      logClientException("report_submit_failed", err);
+      const isExpected429 = err.status === 429 &&
+        (code === "daily_report_quota_exceeded" || code === "user_report_rate_limited");
+      console.error(JSON.stringify({
+        level: "error",
+        event: "report_submit_failed",
+        error_code: code || null,
+        http_status: err.status || null,
+        is_expected_429: isExpected429,
+        tier: AccessState.get().tier
+      }));
+      captureEvent("user_report_failed", {
+        error_code: code || null,
+        http_status: err.status || null,
+        is_expected_429: isExpected429,
+        tier: AccessState.get().tier
+      });
+      try {
+        window.posthog?.capture?.("user_report_failed", {
+          error_code: code || null,
+          http_status: err.status || null,
+          is_expected_429: isExpected429,
+          tier: AccessState.get().tier
+        });
+        window.posthog?.flush?.();
+      } catch (_) {}
+      if (!isExpected429) {
+        logClientException("report_submit_failed", err, {
+          error_code: code || null,
+          http_status: err.status || null
+        });
+      }
     } finally { if (attemptId === state.report.submitAttemptId) setButtonLoading($("reportSubmitBtn"), false); } }
   // ── 10. Modal: Share
   function getShareUrl() {
@@ -712,7 +870,25 @@
     if (!error) return false;
     if (error === "invalid_link") { setText("coordError", "This access link has expired or has already been used. Request a new one from the Join Research modal.");
     } else if (error === "system_error") { setText("coordError", "Something went wrong activating your access. Please try the link again or request a new one.");
-      logClientException("magic_link_error_landing", null, { code: params.get("code") }); }
+      const errorCode = params.get("code");
+      console.error(JSON.stringify({
+        level: "error",
+        event: "magic_link_error_landing",
+        error_param: error,
+        code: errorCode || null,
+        path: window.location.pathname
+      }));
+      logClientException("magic_link_error_landing",
+        new Error(`magic_link_error: ${error}`),
+        { error_param: error, code: errorCode || null }
+      );
+      try {
+        window.posthog?.capture?.("magic_link_error_landing", {
+          error_param: error,
+          code: errorCode || null
+        });
+        window.posthog?.flush?.();
+      } catch (_) {} }
     stripQueryParams();
     return true; }
   function restoreAfterMagicSuccess() {
@@ -740,7 +916,21 @@
     stripQueryParams();
     insertMagicBanner();
     syncAccessUI();
-    updateButtons(); }
+    updateButtons();
+    try {
+      console.info(JSON.stringify({
+        level: "info",
+        event: "magic_link_resume_restored",
+        had_score: Number.isFinite(Number(resume?.constructionScore)),
+        tier: AccessState.get().tier,
+        path: window.location.pathname
+      }));
+      window.posthog?.capture?.("magic_link_resume_restored", {
+        had_score: Number.isFinite(Number(resume?.constructionScore)),
+        tier: AccessState.get().tier
+      });
+      window.posthog?.flush?.();
+    } catch (_) {} }
   function bindModalCloseControls() {
     document.addEventListener("click", (event) => { const closeBtn = event.target.closest?.("[data-close]");
       if (closeBtn) { event.preventDefault();
@@ -805,6 +995,24 @@
     animateGauge($("demandBand"), $("demandNeedle"), state.hero.demandScore || 0); }
   function init() {
     initFrontendSentry();
+    try {
+      const initPayload = {
+        level: "info",
+        event: "app_js_init",
+        tier: document.body?.dataset.tier || "unknown",
+        demand_allowed: document.body?.dataset.demandAllowed || "false",
+        daily_limit: document.body?.dataset.dailyLimit || "3",
+        has_sentry: Boolean(window.Sentry),
+        has_posthog: Boolean(window.posthog),
+        has_turnstile_sitekey: Boolean(document.body?.dataset.turnstileSitekey),
+        path: window.location.pathname,
+        referrer: document.referrer || null,
+        ua: navigator.userAgent.slice(0, 120)
+      };
+      console.info(JSON.stringify(initPayload));
+      window.posthog?.capture?.("app_js_init", initPayload);
+      window.posthog?.flush?.();
+    } catch (_) {}
     AccessState.subscribe(syncAccessUI);
     AccessState.readDomAccess();
     bindModalCloseControls();
