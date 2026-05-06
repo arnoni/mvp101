@@ -2,12 +2,14 @@
 # Implements TSD Section 4.4: Business Logic (High-level)
 
 from fastapi import FastAPI, Request, status, HTTPException
+from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from contextlib import asynccontextmanager
 import os
 import uuid
+import secrets
 import structlog
 
 # Local imports
@@ -39,6 +41,55 @@ from app.services.plan_catalog_service import get_active_plan_prices
 configure_logging()
 logger = structlog.get_logger(__name__)
 _POOLER_WARNING_EMITTED = False
+
+
+def _build_content_security_policy(nonce: str) -> str:
+    """Build the production CSP used by the FastAPI app.
+
+    The hero search page loads PostHog, Sentry Browser, and Cloudflare
+    Turnstile. Keep these hosts in sync with templates/index.html and
+    static/app.js so security headers do not silently block telemetry or
+    verification callbacks.
+    """
+    directives = {
+        "default-src": ["'self'"],
+        "base-uri": ["'self'"],
+        "object-src": ["'none'"],
+        "frame-ancestors": ["'self'"],
+        "form-action": ["'self'"],
+        "script-src": [
+            "'self'",
+            f"'nonce-{nonce}'",
+            "https://browser.sentry-cdn.com",
+            "https://challenges.cloudflare.com",
+            "https://*.i.posthog.com",
+            "https://cdn.tailwindcss.com",
+        ],
+        "connect-src": [
+            "'self'",
+            "https://challenges.cloudflare.com",
+            "https://*.i.posthog.com",
+            "https://*.posthog.com",
+            "https://*.sentry.io",
+            "https://*.ingest.sentry.io",
+        ],
+        "frame-src": ["https://challenges.cloudflare.com"],
+        "img-src": ["'self'", "data:", "blob:", "https:"],
+        "style-src": ["'self'", "'unsafe-inline'"],
+        "font-src": ["'self'", "data:"],
+        "worker-src": ["'self'", "blob:"],
+    }
+    return "; ".join(f"{key} {' '.join(values)}" for key, values in directives.items())
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        request.state.csp_nonce = secrets.token_urlsafe(16)
+        response = await call_next(request)
+        response.headers["Content-Security-Policy"] = _build_content_security_policy(request.state.csp_nonce)
+        if "X-Content-Type-Options" not in response.headers:
+            response.headers["X-Content-Type-Options"] = "nosniff"
+        return response
 
 def build_async_engine() -> AsyncEngine:
     global _POOLER_WARNING_EMITTED
@@ -177,7 +228,8 @@ from app.core.middleware import EntitlementMiddleware
 # LoggingMiddleware is imported above at line 20
 
 # Order of precedence is BOTTOM to TOP for add_middleware in FastAPI
-# For Identity (1st) -> Entitlement (2nd) -> Logging (3rd):
+# For Identity (1st) -> Entitlement (2nd) -> Logging (3rd) -> Security headers (wrap response):
+app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(LoggingMiddleware)
 app.add_middleware(EntitlementMiddleware)
 app.add_middleware(IdentityMiddleware)
@@ -309,8 +361,9 @@ async def root(request: Request, lang: str = "en"):
         "posthog_key": os.environ.get("POSTHOG_PROJECT_API_KEY", ""),
         "posthog_host": os.environ.get("POSTHOG_HOST", "https://us.i.posthog.com"),
 
-         # Frontend observability
-        "sentry_frontend_dsn": settings.SENTRY_FRONTEND_DSN,
+        # Frontend observability  
+        "sentry_frontend_dsn": os.environ.get("SENTRY_FRONTEND_DSN") or settings.SENTRY_DSN or "",
+        "csp_nonce": getattr(request.state, "csp_nonce", ""),
         "sentry_env": settings.ENV,
         "sentry_release": settings.RELEASE or settings.VERSION,
 

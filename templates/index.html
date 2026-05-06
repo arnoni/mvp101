@@ -7,7 +7,16 @@
   <meta name="theme-color" content="#071935">
   <title>DillDrill – Construction & Demand Activity</title>
   <link rel="stylesheet" href="/static/app.css">
-
+  
+  <script nonce="{{ csp_nonce }}">
+    window.__ddTrustedTypesPolicy = null;
+    try {
+      window.__ddTrustedTypesPolicy = window.trustedTypes?.createPolicy("dilldrill", {
+        createHTML: (input) => input,
+        createScript: (input) => input,
+        createScriptURL: (input) => input
+      }) || null;
+    } catch (_) {}
 
   {% if sentry_frontend_dsn %}
   <script>
@@ -90,6 +99,8 @@
   data-label-error-location-not-supported="{{ t.get('error_location_not_supported', 'This location is outside supported regions. Please use a location inside supported coverage areas.') }}"
   data-turnstile-sitekey="{{ turnstile_site_key }}"
   data-turnstile-required="{{ 'true' if initial_turnstile_required else 'false' }}"
+  data-sentry-dsn="{{ sentry_frontend_dsn|default('') }}"
+  data-env="{{ settings.ENV|default('production') }}"
   data-user-display-name="{{ user_display_name|default('') }}"
   data-current-lang="{{ current_lang }}">
   <main class="app" id="app" data-tier="{{ tier|default('free') }}"
@@ -144,12 +155,12 @@
         <div class="parsed-preview hidden" id="parsedPreview" aria-live="polite"></div>
         <div class="inline-error" id="coordError" aria-live="polite"></div>
 
-        <div class="turnstile-slot" id="turnstileSlot">
+        <div class="turnstile-slot{% if not initial_turnstile_required %} hidden{% endif %}" id="turnstileSlot">
           <p class="turnstile-label">{{ t.get('verification_required', 'Verification required') }}</p>
           <div id="turnstileContainer"></div>
         </div>
 
-        <button class="primary-btn" id="mainActionBtn" disabled>{{ t.get('button_search', 'Check Location') }}</button>
+        <button class="primary-btn" id="mainActionBtn" type="button" disabled>{{ t.get('button_search', 'Check Location') }}</button>
       </form>
     </section>
 
@@ -289,7 +300,7 @@
     <!-- 1. USER ACCESS / ACCOUNT STATUS MODAL -->
     <dialog class="modal-layer" id="userModalLayer" aria-labelledby="modal-title">
       <!-- Added a backdrop for click-outside-to-close functionality -->
-      <div class="modal-backdrop" onclick="closeModal('userModalLayer')" aria-hidden="true"></div>
+      <div class="modal-backdrop" data-close="userModalLayer" aria-hidden="true"></div>
 
       <div class="modal-card" role="dialog" aria-modal="true">
         <!-- Header -->
@@ -874,9 +885,9 @@
   </main>
 
   <!-- No frontend Sentry version found in repo; using latest stable 7.x CDN build (7.120.3). -->
-  <script src="https://browser.sentry-cdn.com/7.120.3/bundle.min.js" integrity="sha384-generic-placeholder-replace-with-official-sri" crossorigin="anonymous"></script>
-  <script src="/static/app.js?v=1.2.2"></script>
-  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+  <script nonce="{{ csp_nonce }}" src="https://browser.sentry-cdn.com/7.120.3/bundle.min.js" crossorigin="anonymous"></script>
+  <script nonce="{{ csp_nonce }}" src="/static/app.js?v=1.2.2"></script>
+  <script nonce="{{ csp_nonce }}" src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 </body>
 
 </html>
