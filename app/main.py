@@ -360,8 +360,13 @@ async def root(request: Request, lang: str = "en"):
         "turnstile_site_key": settings.CLOUDFLARE_TURNSTILE_SITE_KEY,
         "posthog_key": os.environ.get("POSTHOG_PROJECT_API_KEY", ""),
         "posthog_host": os.environ.get("POSTHOG_HOST", "https://us.i.posthog.com"),
+
+        # Frontend observability  
         "sentry_frontend_dsn": os.environ.get("SENTRY_FRONTEND_DSN") or settings.SENTRY_DSN or "",
         "csp_nonce": getattr(request.state, "csp_nonce", ""),
+        "sentry_env": settings.ENV,
+        "sentry_release": settings.RELEASE or settings.VERSION,
+
         "settings": settings,
         "t": tdict,
         "t_all": TRANSLATIONS,

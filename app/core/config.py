@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     SMOKE_TURNSTILE_TOKEN: Optional[str] = Field(None, description="Secure bypass token for Turnstile during smoke tests")
     ENV: str = Field("development", description="Application environment (e.g., production, development)")
     SENTRY_DSN: Optional[str] = Field(None, description="Sentry DSN for error reporting")
+    SENTRY_FRONTEND_DSN: Optional[str] = Field(None, description="Sentry Frontend DSN for error reporting")
     RELEASE: Optional[str] = Field(None, description="Application release version for Sentry")
     MAX_MAPBOX_MONTHLY: int = Field(90000, description="Hard cap for Mapbox requests per month (TSD 10)")
     TURNSTILE_PREVIEW_HOSTNAME_SUFFIX: str = Field("-arnonis-projects.vercel.app", description="Suffix for allowed preview Turnstile hostnames")
@@ -171,6 +172,10 @@ class Settings(BaseSettings):
     LEGAL_CONTACT_EMAIL: str = Field("dilldrillteam@gmail.com", description="Contact email shown in legal documents")
     LEGAL_MINIMUM_AGE: str = Field("18", description="Minimum age shown in privacy policy")
 
+    @property
+    def sentry_release(self) -> str:
+        return self.RELEASE or self.VERSION
+        
     @property
     def LEGAL_CONFIG(self) -> Dict[str, str]:
         return {
