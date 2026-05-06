@@ -31,7 +31,7 @@
   // ── 2. Module-scope state, constants, utilities
   const state = { coords: { lat: null, lng: null, valid: false, key: null },
     input: { kind: "empty", original: "", preview: "", error: "", touched: false },
-    hero: { constructionStatus: "idle", demandStatus: "idle", constructionScore: null, demandScore: null },
+    hero: { constructionStatus: "idle", demandStatus: "idle", constructionScore: null, demandScore: null, searchState: "idle", searchRequestInFlight: false, searchAttemptId: 0 },
     unlock: { plan: "sim_1_day", email: "", step: 1, uiSurface: null, cooldownUntil: 0, submitting: false, resendSubmitting: false },
     report: { type: "active_construction", note: "", locationRaw: "", locationParsed: null, locationError: null, locationSource: "manual_input", locationSourceLocked: false, uiState: "idle", quotaBlocked: false, submitAttemptId: 0, autoCloseTimer: null },
     modals: { active: null } };
@@ -182,7 +182,14 @@
   function initFrontendSentry() {
     try { if (window.__DD_SENTRY_INIT_DONE) return;
       const dsn = document.body?.dataset.sentryDsn;
-      if (!dsn || !window.Sentry?.init) return;
+      if (!dsn || !window.Sentry?.init) {
+        const reason = !dsn ? "missing_dsn" : "missing_sdk";
+        const payload = { event: "frontend_sentry_missing", reason, path: window.location.pathname };
+        console.warn(JSON.stringify(payload));
+        window.posthog?.capture?.("frontend_sentry_missing", payload);
+        window.posthog?.flush?.();
+        return;
+      }
       window.Sentry.init({ dsn, tracesSampleRate: 0.05, environment: document.body.dataset.env || "production" });
       window.__DD_SENTRY_INIT_DONE = true;
     } catch (err) { logClientException("sentry_init_failed", err); } }
@@ -239,7 +246,7 @@
       if (!sitekey) { setStatus(document.body?.dataset.labelVerificationUnavailableSitekeyMissing || "Verification unavailable: site key missing."); opts.onError?.(); return null; }
       try { const turnstile = await waitForTurnstile();
         if (widgetId !== undefined) { turnstile.reset(widgetId); token = null; return widgetId; }
-        widgetId = turnstile.render(el, { sitekey, theme: el.dataset.theme || "auto", callback: (newToken) => { token = newToken || null; setStatus(""); opts.onToken?.(token); }, "expired-callback": () => { token = null; opts.onExpire?.(); }, "error-callback": () => { token = null; opts.onError?.(); } });
+        widgetId = turnstile.render(el, { sitekey, theme: el.dataset.theme || "auto", callback: (newToken) => { token = newToken || null; setStatus(""); try { console.info(JSON.stringify({ level: "info", event: "turnstile_token_received", containerId, token_length: token?.length || 0 })); } catch (_) {} opts.onToken?.(token); }, "expired-callback": () => { token = null; opts.onExpire?.(); }, "error-callback": () => { token = null; opts.onError?.(); } });
         return widgetId;
       } catch (err) { setStatus(VERIFY_TIMEOUT_TEXT); opts.onError?.(err);
         logClientException("turnstile_init_failed", err, {
@@ -313,7 +320,7 @@
     updateButtons(); }
   function updateButtons() {
     const hasCoords = state.coords.valid;
-    const busy = state.hero.constructionStatus === "loading" || state.hero.demandStatus === "loading";
+    const busy = state.hero.searchRequestInFlight || state.hero.constructionStatus === "loading" || state.hero.demandStatus === "loading";
     const mainBtn = $("mainActionBtn");
     const conBtn = $("constructionGoBtn");
     const demandBtn = $("demandGoBtn");
@@ -387,28 +394,95 @@
       turnstile_token: heroTurnstile.getToken(),
       coord_key: state.coords.key,
       location_input: $("locationInput")?.value || "" }; }
+  function setSearchState(next) {
+    state.hero.searchState = next;
+    return next; }
+  function isHeroTurnstileRequired() {
+    return document.body?.dataset.turnstileRequired === "true" || Boolean(heroTurnstile.getToken()); }
+  function searchTelemetryProps(extra = {}) {
+    const token = heroTurnstile.getToken();
+    return {
+      source: "hero_search_form",
+      tier: AccessState.get().tier,
+      has_sentry: Boolean(window.__DD_SENTRY_INIT_DONE),
+      has_posthog: Boolean(window.posthog),
+      has_turnstile_sitekey: Boolean(document.body?.dataset.turnstileSitekey),
+      input_type: state.input.kind,
+      parsed_lat: state.coords.lat,
+      parsed_lon: state.coords.lng,
+      has_turnstile_token: Boolean(token),
+      route: "/api/search",
+      search_state: state.hero.searchState,
+      ...extra
+    }; }
+  function logSearchEvent(name, props = {}) {
+    const payload = searchTelemetryProps(props);
+    try { console.info(JSON.stringify({ level: "info", event: name, ...payload })); } catch (_) {}
+    captureEvent(name, payload);
+    return payload; }
+  function blockSearchSubmit(blockReason, message, props = {}) {
+    setSearchState("blocked");
+    if (blockReason !== "request_in_flight") state.hero.constructionStatus = "error";
+    if (message) setText("constructionMessage", message);
+    logSearchEvent("search_submit_blocked", { block_reason: blockReason, ...props });
+    return null; }
   function resultIsCurrent(result) {
     const responseKey = normalizeKey(result?.coord_key);
     const currentKey = normalizeKey(state.coords.key);
     return !responseKey || !currentKey || responseKey === currentKey; }
-  async function fetchConstruction(options = {}) { if (!state.coords.valid) return null;
+  async function fetchConstruction(options = {}) {
+    logSearchEvent("search_submit_clicked", { trigger: options.trigger || "unknown" });
+    if (state.hero.searchRequestInFlight) return blockSearchSubmit("request_in_flight", "A search is already running. Please wait.");
+    if (!state.coords.valid) return blockSearchSubmit("invalid_location", state.input.error || "Please enter a valid location before searching.");
+    const turnstileToken = heroTurnstile.getToken();
+    if (isHeroTurnstileRequired() && !turnstileToken) {
+      $("turnstileSlot")?.classList.remove("hidden");
+      await heroTurnstile.init();
+      return blockSearchSubmit("turnstile_token_missing", document.body.dataset.labelSecurityCheckRequired || "Please complete the security check.");
+    }
+    const attemptId = ++state.hero.searchAttemptId;
+    setSearchState("turnstile_verified");
+    logSearchEvent("search_validation_passed", { attempt_id: attemptId });
+    state.hero.searchRequestInFlight = true;
     state.hero.constructionStatus = "loading";
+    setSearchState("request_started");
     updateButtons();
     setText("constructionMessage", document.body.dataset.labelAnalyzingSignals || "Analyzing signals...");
-    try { const { data } = await apiPost("/api/search", searchPayload("construction"));
+    try {
+      logSearchEvent("search_request_started", { attempt_id: attemptId });
+      const { data } = await apiPost("/api/search", searchPayload("construction"));
+      if (attemptId !== state.hero.searchAttemptId) return null;
       if (data?.verification_required) { $("turnstileSlot")?.classList.remove("hidden");
+        heroTurnstile.reset();
         await heroTurnstile.init();
-        setText("constructionMessage", document.body.dataset.labelVerificationRequired || "Verification required");
         state.hero.constructionStatus = "idle";
+        setSearchState("turnstile_required");
+        setText("constructionMessage", document.body.dataset.labelVerificationRequired || "Verification required");
+        logSearchEvent("search_submit_blocked", { attempt_id: attemptId, block_reason: "verification_required" });
         return null; }
       const result = data?.construction;
-      if (!result || !resultIsCurrent(result)) return null;
+      if (!result) {
+        logSearchEvent("search_ui_render_blocked_no_backend_response", { attempt_id: attemptId, block_reason: "missing_construction_result" });
+        state.hero.constructionStatus = "error";
+        setSearchState("response_missing_result");
+        setText("constructionMessage", "Search completed, but no construction result was returned. Please try again.");
+        return null;
+      }
+      if (!resultIsCurrent(result)) {
+        logSearchEvent("search_ui_render_blocked_no_backend_response", { attempt_id: attemptId, block_reason: "stale_response" });
+        state.hero.constructionStatus = "idle";
+        setSearchState("stale_response");
+        return null;
+      }
+      setSearchState("request_success");
+      logSearchEvent("search_request_succeeded", { attempt_id: attemptId, http_status: 200 });
       const score = Number(result.score);
       if (Number.isFinite(score)) { const restored = Number(options.restoredScore);
         const shouldAnimate = !Number.isFinite(restored) || Math.abs(score - restored) > 2;
         if (shouldAnimate) animateGauge($("constructionBand"), $("constructionNeedle"), score);
         state.hero.constructionScore = score; }
       state.hero.constructionStatus = "ready";
+      setSearchState("render_result");
       setText("constructionMessage", result.message || document.body.dataset.labelReady || "Ready");
       return result;
     } catch (err) { if (SEARCH_CHALLENGE_CODES.has(err.errorCode)) {
@@ -416,24 +490,25 @@
         $("turnstileSlot")?.classList.remove("hidden");
         await heroTurnstile.init(); }
       state.hero.constructionStatus = "error";
+      setSearchState("request_failed");
       setText("constructionMessage", err.message || "Could not check construction right now.");
+      logSearchEvent("search_request_failed", {
+        attempt_id: attemptId,
+        error_code: err.errorCode || null,
+        http_status: err.status || null
+      });
       logClientException("construction_search_failed", err, {
         error_code: err.errorCode || null,
         http_status: err.status || null,
         coord_key: state.coords.key,
         tier: AccessState.get().tier
       });
-      try {
-        window.posthog?.capture?.("construction_search_failed", {
-          error_code: err.errorCode || null,
-          http_status: err.status || null,
-          tier: AccessState.get().tier
-        });
-        window.posthog?.flush?.();
-      } catch (_) {}
       return null;
-    } finally { if (state.hero.constructionStatus === "loading") state.hero.constructionStatus = "idle";
-      updateButtons(); } }
+    } finally {
+      if (attemptId === state.hero.searchAttemptId) state.hero.searchRequestInFlight = false;
+      if (state.hero.constructionStatus === "loading") state.hero.constructionStatus = "idle";
+      updateButtons();
+    } }
   async function fetchDemand() { const access = AccessState.get();
     if (!access.demandAllowed || access.tier === "free") { openJoinResearchModal("demand_level_page");
       return null; }
@@ -951,9 +1026,9 @@
     }); }
   function bindEvents() {
     $("locationInput")?.addEventListener("input", debouncedParseHeroLocation);
-    $("coordForm")?.addEventListener("submit", (event) => { event.preventDefault(); fetchConstruction(); });
-    $("mainActionBtn")?.addEventListener("click", (event) => { event.preventDefault(); fetchConstruction(); });
-    $("constructionGoBtn")?.addEventListener("click", (event) => { event.preventDefault(); fetchConstruction(); });
+    $("coordForm")?.addEventListener("submit", (event) => { event.preventDefault(); fetchConstruction({ trigger: "form_submit" }); });
+    $("mainActionBtn")?.addEventListener("click", (event) => { event.preventDefault(); fetchConstruction({ trigger: "main_button_click" }); });
+    $("constructionGoBtn")?.addEventListener("click", (event) => { event.preventDefault(); fetchConstruction({ trigger: "construction_button_click" }); });
     $("demandGoBtn")?.addEventListener("click", (event) => { event.preventDefault(); fetchDemand(); });
     $("supportBtn")?.addEventListener("click", (event) => { event.preventDefault(); if (!AccessState.get().demandAllowed) openJoinResearchModal("hero_unlock_button"); });
     $("userUpgradeBtn")?.addEventListener("click", (event) => { event.preventDefault(); openJoinResearchModal("user_access_modal"); });
@@ -1002,7 +1077,7 @@
         tier: document.body?.dataset.tier || "unknown",
         demand_allowed: document.body?.dataset.demandAllowed || "false",
         daily_limit: document.body?.dataset.dailyLimit || "3",
-        has_sentry: Boolean(window.Sentry),
+        has_sentry: Boolean(window.__DD_SENTRY_INIT_DONE),
         has_posthog: Boolean(window.posthog),
         has_turnstile_sitekey: Boolean(document.body?.dataset.turnstileSitekey),
         path: window.location.pathname,
@@ -1019,7 +1094,7 @@
     bindEvents();
     restoreAfterMagicSuccess();
     initialGaugeRender();
-    heroTurnstile.init();
+    if (document.body?.dataset.turnstileRequired === "true") heroTurnstile.init();
     syncAccessUI();
     updateButtons();
     window.App = { AccessState, state, openModal, closeModal, openJoinResearchModal, fetchConstruction, fetchDemand, parseHeroLocation, heroTurnstile, unlockTurnstile, reportTurnstile, notify, captureEvent, logFlowEvent, logClientException }; }

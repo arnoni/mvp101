@@ -8,8 +8,16 @@
   <title>DillDrill – Construction & Demand Activity</title>
   <link rel="stylesheet" href="/static/app.css">
 
-  <script>
-    !function(t,e){var o,n,p,r;e.__SV||(window.posthog && window.posthog.__loaded)||(window.posthog=e,e._i=[],e.init=function(i,s,a){function g(t,e){var o=e.split(".");2==o.length&&(t=t[o[0]],e=o[1]),t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}}(p=t.createElement("script")).type="text/javascript",p.crossOrigin="anonymous",p.async=!0,p.src=s.api_host.replace(".i.posthog.com","-assets.i.posthog.com")+"/static/array.js",(r=t.getElementsByTagName("script")[0]).parentNode.insertBefore(p,r);var u=e;for(void 0!==a?u=e[a]=[]:a="posthog",u.people=u.people||[],u.toString=function(t){var e="posthog";return"posthog"!==a&&(e+="."+a),t||(e+=" (stub)"),e},u.people.toString=function(){return u.toString(1)+".people (stub)"},o="Ei Ni init zi Gi Nr Ui Xi Vi capture calculateEventProperties tn register register_once register_for_session unregister unregister_for_session an getFeatureFlag getFeatureFlagPayload getFeatureFlagResult isFeatureEnabled reloadFeatureFlags updateFlags updateEarlyAccessFeatureEnrollment getEarlyAccessFeatures on onFeatureFlags onSurveysLoaded onSessionId getSurveys getActiveMatchingSurveys renderSurvey displaySurvey cancelPendingSurvey canRenderSurvey canRenderSurveyAsync ln identify setPersonProperties group resetGroups setPersonPropertiesForFlags resetPersonPropertiesForFlags setGroupPropertiesForFlags resetGroupPropertiesForFlags reset setIdentity clearIdentity get_distinct_id getGroups get_session_id get_session_replay_url alias set_config startSessionRecording stopSessionRecording sessionRecordingStarted captureException addExceptionStep captureLog startExceptionAutocapture stopExceptionAutocapture loadToolbar get_property getSessionProperty nn Qi createPersonProfile setInternalOrTestUser sn qi cn opt_in_capturing opt_out_capturing has_opted_in_capturing has_opted_out_capturing get_explicit_consent_status is_capturing clear_opt_in_out_capturing Ji debug Fr rn getPageViewId captureTraceFeedback captureTraceMetric Bi".split(" "),n=0;n<o.length;n++)g(u,o[n]);e._i.push([i,s,a])},e.__SV=1)}(document,window.posthog||[]);
+  <script nonce="{{ csp_nonce }}">
+    window.__ddTrustedTypesPolicy = null;
+    try {
+      window.__ddTrustedTypesPolicy = window.trustedTypes?.createPolicy("dilldrill", {
+        createHTML: (input) => input,
+        createScript: (input) => input,
+        createScriptURL: (input) => input
+      }) || null;
+    } catch (_) {}
+    !function(t,e){var o,n,p,r;e.__SV||(window.posthog && window.posthog.__loaded)||(window.posthog=e,e._i=[],e.init=function(i,s,a){function g(t,e){var o=e.split(".");2==o.length&&(t=t[o[0]],e=o[1]),t[e]=function(){t.push([e].concat(Array.prototype.slice.call(arguments,0)))}}(p=t.createElement("script")).type="text/javascript",p.crossOrigin="anonymous",p.async=!0,p.src=window.__ddTrustedTypesPolicy?.createScriptURL(s.api_host.replace(".i.posthog.com","-assets.i.posthog.com")+"/static/array.js")||s.api_host.replace(".i.posthog.com","-assets.i.posthog.com")+"/static/array.js",(r=t.getElementsByTagName("script")[0]).parentNode.insertBefore(p,r);var u=e;for(void 0!==a?u=e[a]=[]:a="posthog",u.people=u.people||[],u.toString=function(t){var e="posthog";return"posthog"!==a&&(e+="."+a),t||(e+=" (stub)"),e},u.people.toString=function(){return u.toString(1)+".people (stub)"},o="Ei Ni init zi Gi Nr Ui Xi Vi capture calculateEventProperties tn register register_once register_for_session unregister unregister_for_session an getFeatureFlag getFeatureFlagPayload getFeatureFlagResult isFeatureEnabled reloadFeatureFlags updateFlags updateEarlyAccessFeatureEnrollment getEarlyAccessFeatures on onFeatureFlags onSurveysLoaded onSessionId getSurveys getActiveMatchingSurveys renderSurvey displaySurvey cancelPendingSurvey canRenderSurvey canRenderSurveyAsync ln identify setPersonProperties group resetGroups setPersonPropertiesForFlags resetPersonPropertiesForFlags setGroupPropertiesForFlags resetGroupPropertiesForFlags reset setIdentity clearIdentity get_distinct_id getGroups get_session_id get_session_replay_url alias set_config startSessionRecording stopSessionRecording sessionRecordingStarted captureException addExceptionStep captureLog startExceptionAutocapture stopExceptionAutocapture loadToolbar get_property getSessionProperty nn Qi createPersonProfile setInternalOrTestUser sn qi cn opt_in_capturing opt_out_capturing has_opted_in_capturing has_opted_out_capturing get_explicit_consent_status is_capturing clear_opt_in_out_capturing Ji debug Fr rn getPageViewId captureTraceFeedback captureTraceMetric Bi".split(" "),n=0;n<o.length;n++)g(u,o[n]);e._i.push([i,s,a])},e.__SV=1)}(document,window.posthog||[]);
     {% if posthog_key %}
     posthog.init('{{ posthog_key }}', {
         api_host: '{{ posthog_host|default("https://us.i.posthog.com") }}',
@@ -63,6 +71,8 @@
   data-label-error-location-not-supported="{{ t.get('error_location_not_supported', 'This location is outside supported regions. Please use a location inside supported coverage areas.') }}"
   data-turnstile-sitekey="{{ turnstile_site_key }}"
   data-turnstile-required="{{ 'true' if initial_turnstile_required else 'false' }}"
+  data-sentry-dsn="{{ sentry_frontend_dsn|default('') }}"
+  data-env="{{ settings.ENV|default('production') }}"
   data-user-display-name="{{ user_display_name|default('') }}"
   data-current-lang="{{ current_lang }}">
   <main class="app" id="app" data-tier="{{ tier|default('free') }}"
@@ -117,12 +127,12 @@
         <div class="parsed-preview hidden" id="parsedPreview" aria-live="polite"></div>
         <div class="inline-error" id="coordError" aria-live="polite"></div>
 
-        <div class="turnstile-slot" id="turnstileSlot">
+        <div class="turnstile-slot{% if not initial_turnstile_required %} hidden{% endif %}" id="turnstileSlot">
           <p class="turnstile-label">{{ t.get('verification_required', 'Verification required') }}</p>
           <div id="turnstileContainer"></div>
         </div>
 
-        <button class="primary-btn" id="mainActionBtn" disabled>{{ t.get('button_search', 'Check Location') }}</button>
+        <button class="primary-btn" id="mainActionBtn" type="button" disabled>{{ t.get('button_search', 'Check Location') }}</button>
       </form>
     </section>
 
@@ -262,7 +272,7 @@
     <!-- 1. USER ACCESS / ACCOUNT STATUS MODAL -->
     <dialog class="modal-layer" id="userModalLayer" aria-labelledby="modal-title">
       <!-- Added a backdrop for click-outside-to-close functionality -->
-      <div class="modal-backdrop" onclick="closeModal('userModalLayer')" aria-hidden="true"></div>
+      <div class="modal-backdrop" data-close="userModalLayer" aria-hidden="true"></div>
 
       <div class="modal-card" role="dialog" aria-modal="true">
         <!-- Header -->
@@ -847,9 +857,9 @@
   </main>
 
   <!-- No frontend Sentry version found in repo; using latest stable 7.x CDN build (7.120.3). -->
-  <script src="https://browser.sentry-cdn.com/7.120.3/bundle.min.js" integrity="sha384-generic-placeholder-replace-with-official-sri" crossorigin="anonymous"></script>
-  <script src="/static/app.js?v=1.2.2"></script>
-  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+  <script nonce="{{ csp_nonce }}" src="https://browser.sentry-cdn.com/7.120.3/bundle.min.js" crossorigin="anonymous"></script>
+  <script nonce="{{ csp_nonce }}" src="/static/app.js?v=1.2.2"></script>
+  <script nonce="{{ csp_nonce }}" src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 </body>
 
 </html>
