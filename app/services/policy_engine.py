@@ -32,6 +32,7 @@ class RequestContext(BaseModel):
     user_id: Optional[str] = None
     entitlement_stale: bool = False
     daily_limit: int = 3
+    user_agent: Optional[str] = None
 
 class PolicyDecision(BaseModel):
     verdict: PolicyVerdict
@@ -145,7 +146,12 @@ class PolicyEngine:
         
         # New Rule: Only challenge if token is missing AND not recently verified
         if not context.turnstile_token and context.paid_tier == TierStatus.FREE:
-            already_ok = await is_turnstile_verified(anon_id=context.anon_id, client_ip=context.client_ip)
+            turnstile_anon_id = context.anon_id if context.anon_id != "unknown_anon" else None
+            already_ok = await is_turnstile_verified(
+                anon_id=turnstile_anon_id,
+                client_ip=context.client_ip,
+                user_agent=context.user_agent,
+            )
             if not already_ok:
                 return PolicyDecision(
                     verdict=PolicyVerdict.CHALLENGE_REQUIRED,
@@ -199,6 +205,7 @@ async def run_gate(
         user_id=user_id,
         entitlement_stale=entitlement_stale,
         daily_limit=daily_limit,
+        user_agent=request.headers.get("user-agent"),
     )
 
     if admin_bypass:
@@ -230,12 +237,20 @@ async def run_gate(
                     error_id=getattr(request.state, "request_id", None),
                 ).model_dump(),
             )
-        ok = await verify_turnstile(token=data_turnstile_token, client_ip=client_ip)
+        ok = await verify_turnstile(
+            token=data_turnstile_token,
+            client_ip=client_ip,
+            anon_id=anon_id if anon_id != "unknown_anon" else None,
+            user_agent=request.headers.get("user-agent"),
+            source=request.url.path if request.url else None,
+            origin=request.headers.get("origin"),
+            hostname=request.url.hostname if request.url else None,
+        )
         if not ok:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=ErrorResponse(
-                    error="INVALID_CHALLENGE",
+                    error="TURNSTILE_INVALID",
                     detail="Verification failed. Please try again.",
                     quota_remaining=decision.quota_remaining,
                     error_id=getattr(request.state, "request_id", None),

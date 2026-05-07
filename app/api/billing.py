@@ -87,6 +87,8 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
     is_valid_turnstile = await verify_turnstile(
         payload.turnstile_token,
         client_ip=get_client_ip(request),
+        anon_id=getattr(request.state, "anon_id", None),
+        user_agent=request.headers.get("user-agent"),
         source="join_research_access_modal",
         origin=request.headers.get("origin"),
         hostname=request.url.hostname,

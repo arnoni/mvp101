@@ -22,7 +22,7 @@ from app.services.analytics import capture, posthog
 from app.services.entitlement_service import EntitlementService, TierStatus
 from app.services.policy_engine import PolicyEngine, RequestContext, PolicyVerdict, PolicyDecision, run_gate
 from app.services.quota_repository import QuotaRepository
-from app.utils.security import verify_turnstile, get_client_ip, protect_mutation
+from app.utils.security import verify_turnstile, verify_turnstile_dependency, get_client_ip, protect_mutation
 from app.services.bucket_engine import BucketEngine
 from app.services.precompute_repo import PrecomputeRepository
 from app.services.demand_service import DemandService
@@ -912,7 +912,15 @@ async def user_report_submit(
             )
             
         client_ip = get_client_ip(request)
-        is_valid = await verify_turnstile(token=data.cf_turnstile_token, client_ip=client_ip)
+        is_valid = await verify_turnstile(
+            token=data.cf_turnstile_token,
+            client_ip=client_ip,
+            anon_id=getattr(request.state, "anon_id", None),
+            user_agent=request.headers.get("user-agent"),
+            source="submit_report_modal",
+            origin=request.headers.get("origin"),
+            hostname=request.url.hostname if request.url else None,
+        )
         
         if not is_valid:
             logger.warning(
@@ -974,7 +982,7 @@ async def user_report_submit(
         success_quota_key, success_quota_limit = await _assert_user_report_success_quota_available(
             request, redis_cli, limit=daily_limit
         )
-        result = await ugc_report_submit(request=request, data=ugc_data, quota_repo=quota_repo, policy_engine=policy_engine)
+        result = await ugc_report_submit(request=request, data=ugc_data, _turnstile_verified=True, quota_repo=quota_repo, policy_engine=policy_engine)
         if not result.get("duplicate", False):
             try:
                 # quota incremented only after successful DB commit
@@ -1117,6 +1125,7 @@ async def telemetry_client_event(request: Request, payload: ClientFlowEventReque
 async def ugc_report_submit(
     request: Request,
     data: UGCReportRequest,
+    _turnstile_verified: bool = Depends(verify_turnstile_dependency),
     quota_repo: QuotaRepository = Depends(get_quota_repo),
     policy_engine: PolicyEngine = Depends(get_policy_engine),
 ):

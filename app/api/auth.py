@@ -238,7 +238,12 @@ async def _resend_magic_link_impl(payload: MagicLinkRequest, request: Request, *
                     level="warning"
                 )
             return generic_response
-        turnstile_ok = await verify_turnstile(payload.turnstile_token, client_ip=ip)
+        turnstile_ok = await verify_turnstile(
+            payload.turnstile_token,
+            client_ip=ip,
+            anon_id=getattr(request.state, "anon_id", None),
+            user_agent=request.headers.get("user-agent"),
+        )
         if not turnstile_ok:
             logger.info("magic_link_turnstile_invalid", email=email, client_ip=ip)
             import sentry_sdk
