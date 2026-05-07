@@ -1,7 +1,55 @@
 import logging
 import sys
+
 import structlog
+
 from app.core.config import settings
+
+SENSITIVE_KEYS = {
+    "authorization",
+    "cookie",
+    "set-cookie",
+    "password",
+    "secret",
+    "token",
+    "api_key",
+    "apikey",
+    "dsn",
+    "poi_dist_m",
+    "poi_lats",
+    "poi_lons",
+    "poi_ids",
+    "distances_user_m",
+    "distance_m",
+    "lat",
+    "lon",
+    "raw_lat",
+    "raw_lon",
+    "user_lat",
+    "user_lon",
+}
+
+
+def scrub_sensitive_fields(logger, method_name, event_dict):
+    """Redact sensitive fields before Structlog emits them to Vercel/stdout."""
+    def scrub(obj):
+        if isinstance(obj, dict):
+            safe = {}
+            for key, value in obj.items():
+                key_text = str(key).lower()
+                if any(sensitive in key_text for sensitive in SENSITIVE_KEYS):
+                    safe[key] = "<redacted>"
+                else:
+                    safe[key] = scrub(value)
+            return safe
+        if isinstance(obj, list):
+            if len(obj) > 5 and all(isinstance(x, (int, float)) for x in obj):
+                return ["<redacted_array>"]
+            return [scrub(x) for x in obj]
+        return obj
+
+    return scrub(event_dict)
+
 
 def configure_logging():
     """
@@ -28,6 +76,7 @@ def configure_logging():
                 structlog.processors.CallsiteParameter.LINENO,
             }
         ),
+        scrub_sensitive_fields,
     ]
 
     if is_local:
