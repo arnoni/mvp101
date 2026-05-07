@@ -98,46 +98,179 @@ def _pass_duration_days(plan_code: str | None) -> int:
     return 1
 
 
-async def _carry_forward_anon_quota_usage(redis, *, anon_id: str | None, user_id: str | None) -> int:
-    if not redis or not anon_id or not user_id:
-        return 0
-    anon_key = KeyBuilder.quota_rolling24h("anon", anon_id)
-    paid_key = KeyBuilder.quota_rolling24h("paid", user_id)
+ANON_QUOTA_CARRY_FORWARD_LUA_SCRIPT = """
+-- Atomically carry anonymous rolling-24h quota usage to the paid identity.
+-- KEYS[1] = anonymous quota counter key
+-- KEYS[2] = paid quota counter key
+-- ARGV[1] = paid quota TTL in seconds
+--
+-- Returns:
+--   0 when the anonymous key does not exist or contains no positive usage
+--   1 when the paid key was overwritten with the anonymous usage
+local anon_key = KEYS[1]
+local paid_key = KEYS[2]
+local ttl_seconds = tonumber(ARGV[1])
+
+if not ttl_seconds or ttl_seconds < 1 then
+  return redis.error_reply('ttl_seconds must be a positive integer')
+end
+
+local anon_raw = redis.call('GET', anon_key)
+if not anon_raw then
+  return 0
+end
+
+local used_count = tonumber(anon_raw)
+if not used_count or used_count <= 0 then
+  return 0
+end
+
+redis.call('SET', paid_key, tostring(used_count), 'EX', ttl_seconds)
+return 1
+"""
+
+ANON_QUOTA_CARRY_FORWARD_SCRIPT_SHA: str | None = None
+ANON_QUOTA_CARRY_FORWARD_SCRIPT_SHA_ATTR = "anon_quota_carry_forward_script_sha"
+
+
+def set_anon_quota_carry_forward_script_sha(script_sha: str | None) -> None:
+    global ANON_QUOTA_CARRY_FORWARD_SCRIPT_SHA
+    ANON_QUOTA_CARRY_FORWARD_SCRIPT_SHA = str(script_sha) if script_sha else None
+
+
+async def load_anon_quota_carry_forward_script(redis_cli) -> str | None:
+    script_load = getattr(redis_cli, "script_load", None)
+    if not redis_cli or not script_load:
+        logger.info(
+            "anon_quota_carry_forward_script_load_skipped",
+            reason="client_does_not_expose_script_load",
+        )
+        return None
+
+    script_sha = str(await script_load(ANON_QUOTA_CARRY_FORWARD_LUA_SCRIPT))
+    set_anon_quota_carry_forward_script_sha(script_sha)
     try:
-        anon_raw = await redis.get(anon_key)
-        used_count = int(anon_raw or 0)
-    except Exception:
-        logger.warning("quota_usage_carry_forward_read_failed", anon_id=anon_id, user_id=user_id)
-        return 0
-    if used_count <= 0:
-        return 0
-    try:
-        paid_raw = await redis.get(paid_key)
-        paid_existing = int(paid_raw or 0)
-    except Exception:
-        paid_existing = 0
-    if paid_existing >= used_count:
-        return 0
-    ttl_seconds = 86400
-    try:
-        anon_ttl = await redis.ttl(anon_key)
-        if isinstance(anon_ttl, int) and anon_ttl > 0:
-            ttl_seconds = anon_ttl
+        setattr(redis_cli, ANON_QUOTA_CARRY_FORWARD_SCRIPT_SHA_ATTR, script_sha)
     except Exception:
         pass
+    logger.info("anon_quota_carry_forward_script_loaded", script_sha=script_sha)
+    return script_sha
+
+
+async def _call_redis_eval(eval_command, script: str, keys: list[str], args: list[int]):
     try:
-        await redis.set(paid_key, used_count, ex=ttl_seconds)
-        logger.info(
-            "quota_usage_carried_forward",
+        # Upstash REST client shape: eval(script, keys, args)
+        return await eval_command(script, keys, args)
+    except TypeError:
+        # redis.asyncio shape: eval(script, numkeys, *keys_and_args)
+        return await eval_command(script, len(keys), *(keys + [str(arg) for arg in args]))
+
+
+async def _call_redis_evalsha(evalsha_command, script_sha: str, keys: list[str], args: list[int]):
+    try:
+        # Upstash REST client shape: evalsha(sha, keys, args)
+        return await evalsha_command(script_sha, keys, args)
+    except TypeError:
+        # redis.asyncio shape: evalsha(sha, numkeys, *keys_and_args)
+        return await evalsha_command(script_sha, len(keys), *(keys + [str(arg) for arg in args]))
+
+
+async def _carry_forward_anon_quota_usage(
+    user_id: str,
+    anon_id: str,
+    redis_cli,
+    ttl_seconds: int = 86400,
+) -> int:
+    if not user_id or not anon_id:
+        return 0
+    if not redis_cli:
+        logger.warning(
+            "anon_quota_carry_forward_redis_unavailable",
             anon_id=anon_id,
             user_id=user_id,
-            used_count=used_count,
-            ttl_seconds=ttl_seconds,
+            reason="redis_client_missing",
         )
-    except Exception:
-        logger.warning("quota_usage_carry_forward_write_failed", anon_id=anon_id, user_id=user_id)
         return 0
-    return used_count
+
+    anon_key = KeyBuilder.quota_rolling24h("anon", anon_id)
+    paid_key = KeyBuilder.quota_rolling24h("paid", user_id)
+    safe_ttl_seconds = max(1, int(ttl_seconds))
+    keys = [anon_key, paid_key]
+    args = [safe_ttl_seconds]
+
+    try:
+        result = None
+        script_sha = (
+            getattr(redis_cli, ANON_QUOTA_CARRY_FORWARD_SCRIPT_SHA_ATTR, None)
+            or ANON_QUOTA_CARRY_FORWARD_SCRIPT_SHA
+        )
+        evalsha_command = getattr(redis_cli, "evalsha", None)
+        if script_sha and evalsha_command:
+            try:
+                result = await _call_redis_evalsha(evalsha_command, str(script_sha), keys, args)
+            except Exception as exc:
+                if "NOSCRIPT" not in str(exc).upper():
+                    raise
+                logger.warning(
+                    "anon_quota_carry_forward_evalsha_noscript",
+                    anon_id=anon_id,
+                    user_id=user_id,
+                    script_sha=str(script_sha),
+                )
+                set_anon_quota_carry_forward_script_sha(None)
+                try:
+                    setattr(redis_cli, ANON_QUOTA_CARRY_FORWARD_SCRIPT_SHA_ATTR, None)
+                except Exception:
+                    pass
+
+        if result is None:
+            eval_command = getattr(redis_cli, "eval", None)
+            if not eval_command:
+                logger.warning(
+                    "anon_quota_carry_forward_redis_unavailable",
+                    anon_id=anon_id,
+                    user_id=user_id,
+                    reason="redis_eval_missing",
+                )
+                return 0
+            result = await _call_redis_eval(eval_command, ANON_QUOTA_CARRY_FORWARD_LUA_SCRIPT, keys, args)
+
+        if result is None:
+            logger.warning(
+                "anon_quota_carry_forward_redis_unavailable",
+                anon_id=anon_id,
+                user_id=user_id,
+                reason="redis_eval_returned_none",
+            )
+            return 0
+
+        result_code = int(result)
+        if result_code not in {0, 1}:
+            raise RuntimeError(f"unexpected carry-forward script result: {result!r}")
+        if result_code == 1:
+            logger.info(
+                "anon_quota_usage_carried_forward",
+                anon_id=anon_id,
+                user_id=user_id,
+                ttl_seconds=safe_ttl_seconds,
+            )
+        return result_code
+    except (ConnectionError, TimeoutError) as exc:
+        logger.warning(
+            "anon_quota_carry_forward_redis_unavailable",
+            anon_id=anon_id,
+            user_id=user_id,
+            error=str(exc),
+        )
+        return 0
+    except Exception as exc:
+        logger.error(
+            "anon_quota_carry_forward_lua_failed",
+            anon_id=anon_id,
+            user_id=user_id,
+            error=str(exc),
+        )
+        return 0
 
 
 async def _fetch_dodo_checkout_status(checkout_id: str) -> dict | None:
@@ -728,11 +861,13 @@ async def magic_landing(
                     )
                     aggregated_success_count = int(success_counter_result.scalar_one() or 0)
                     anon_id = getattr(request.state, "anon_id", None)
-                    carried_forward_credits = await _carry_forward_anon_quota_usage(
-                        redis,
-                        anon_id=getattr(request.state, "anon_id", None),
-                        user_id=user_id,
-                    )
+                    carried_forward_credits = 0
+                    if anon_id:
+                        carried_forward_credits = await _carry_forward_anon_quota_usage(
+                            user_id=user_id,
+                            anon_id=anon_id,
+                            redis_cli=redis,
+                        )
                     if carried_forward_credits > 0:
                         try:
                             await conn.execute(

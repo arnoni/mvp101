@@ -168,6 +168,15 @@ async def lifespan(app: FastAPI):
                  
             app.state.quota_repo = QuotaRepository(app.state.redis)
             await app.state.quota_repo.load_lua_scripts()
+            try:
+                from app.api.auth import load_anon_quota_carry_forward_script
+
+                await load_anon_quota_carry_forward_script(app.state.redis)
+            except Exception as script_err:
+                logger.error(
+                    "anon_quota_carry_forward_script_load_failed",
+                    error=str(script_err),
+                )
             logger.info("Upstash Redis (REST) connected and QuotaRepository ready")
         except Exception as e:
             logger.error(f"Redis initialization failed: {e}")
