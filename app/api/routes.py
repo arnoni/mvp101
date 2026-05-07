@@ -765,15 +765,42 @@ async def _assert_user_report_success_quota_available(request: Request, redis_cl
 
 
 async def _increment_user_report_success_quota(request: Request, redis_cli, *, key: str, limit: int) -> None:
-    used_after = int(await redis_cli.incr(key))
-    if used_after == 1:
-        await redis_cli.expire(key, _seconds_until_utc_midnight())
-    if used_after > int(limit):
-        await redis_cli.decr(key)
-        # Quota increment happens post-persistence by design. If concurrent writes push over the
-        # limit, we compensate the counter and return 429 on this request; the inserted row remains.
-        # This means a ugc_reports row can exist even when quota was DECR-compensated back down.
-        # That's acceptable for MVP: persistence is source-of-truth, while Redis quota is best-effort.
+    quota_repo = getattr(request.app.state, "quota_repo", None)
+    if not getattr(quota_repo, "redis_client", None) or quota_repo.redis_client is not redis_cli:
+        quota_repo = QuotaRepository(redis_cli)
+
+    try:
+        allowed, remaining_after = await quota_repo.check_and_consume(
+            key,
+            int(limit),
+            ttl=_seconds_until_utc_midnight(),
+        )
+    except RuntimeError as exc:
+        logger.error(
+            "user_report_success_quota_redis_failure",
+            request_id=get_req_id(request),
+            quota_type="successful_daily_submission",
+            quota_key_hash=_hash_identifier(key),
+            error=str(exc),
+        )
+        raise
+
+    used_after = max(0, int(limit) - int(remaining_after))
+    if not allowed:
+        retry_after_seconds = _seconds_until_utc_midnight()
+        logger.info(
+            "user_report_submit_blocked",
+            request_id=get_req_id(request),
+            reason_code="daily_report_quota_exceeded",
+            quota_type="successful_daily_submission",
+            quota_key_hash=_hash_identifier(key),
+            quota_limit=int(limit),
+            quota_used=used_after,
+            retry_after_seconds=retry_after_seconds,
+        )
+        # Quota increment happens post-persistence by design. If concurrent writes race, the
+        # atomic Redis script admits only the configured limit; an over-limit persisted row can
+        # still exist, but the client receives 429 and the Redis quota counter is not exceeded.
         raise HTTPException(
             status_code=http_status.HTTP_429_TOO_MANY_REQUESTS,
             detail={
@@ -782,17 +809,18 @@ async def _increment_user_report_success_quota(request: Request, redis_cli, *, k
                 "code": "DAILY_REPORT_QUOTA_EXCEEDED",
                 "reason_code": "daily_report_quota_exceeded",
                 "message": "Daily report limit reached. Please try again tomorrow.",
-                "retry_after_seconds": _seconds_until_utc_midnight(),
+                "retry_after_seconds": retry_after_seconds,
                 "request_id": get_req_id(request),
             },
-            headers={"Retry-After": str(_seconds_until_utc_midnight())},
+            headers={"Retry-After": str(retry_after_seconds)},
         )
+
     logger.info(
         "user_report_success_quota_incremented",
         request_id=get_req_id(request),
         quota_type="successful_daily_submission",
         quota_used_after=used_after,
-        quota_remaining_after=max(0, int(limit) - used_after),
+        quota_remaining_after=max(0, int(remaining_after)),
     )
 
 
@@ -899,6 +927,11 @@ async def user_report_submit(
                 await _increment_user_report_success_quota(
                     request, redis_cli, key=success_quota_key, limit=success_quota_limit
                 )
+            except HTTPException:
+                raise
+            except RuntimeError as quota_exc:
+                logger.error("user_report_success_quota_increment_failed", request_id=request_id, error=str(quota_exc))
+                raise HTTPException(status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE, detail="enforcement unavailable")
             except Exception as quota_exc:
                 logger.warning("user_report_success_quota_increment_failed", request_id=request_id, error=str(quota_exc))
         logger.info(

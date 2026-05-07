@@ -10,7 +10,13 @@ from app.services.entitlement_service import TierStatus
 class DummyQuotaRepo:
     async def get_usage(self, key: str) -> int:
         return 0
-    async def check_and_consume(self, key: str, limit: int):
+    async def check_and_consume(
+        self,
+        key: str,
+        limit: int,
+        ttl: int = 86400,
+        idempotency_key: str | None = None,
+    ):
         return True, limit - 1
 
 class DummyRequest:
