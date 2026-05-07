@@ -15,7 +15,7 @@ import structlog
 # Local imports
 from app.core.config import settings
 from app.core.db import create_asyncpg_engine
-from app.core.observability import init_sentry
+from app.core.observability import get_vercel_context, init_sentry, report_exception
 
 # Configure Sentry as early as possible
 init_sentry(
@@ -85,10 +85,36 @@ def _build_content_security_policy(nonce: str) -> str:
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         request.state.csp_nonce = secrets.token_urlsafe(16)
-        response = await call_next(request)
-        response.headers["Content-Security-Policy"] = _build_content_security_policy(request.state.csp_nonce)
-        if "X-Content-Type-Options" not in response.headers:
-            response.headers["X-Content-Type-Options"] = "nosniff"
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            if not getattr(request.state, "error_reported", False):
+                request.state.error_reported = True
+                report_exception(
+                    exc,
+                    event="security_headers_downstream_failed",
+                    logger=logger,
+                    request_id=getattr(request.state, "request_id", None),
+                    path=request.url.path,
+                    method=request.method,
+                    vercel_id=getattr(request.state, "vercel_id", None),
+                )
+            raise
+        try:
+            response.headers["Content-Security-Policy"] = _build_content_security_policy(request.state.csp_nonce)
+            if "X-Content-Type-Options" not in response.headers:
+                response.headers["X-Content-Type-Options"] = "nosniff"
+        except Exception as exc:
+            report_exception(
+                exc,
+                event="security_headers_apply_failed",
+                logger=logger,
+                request_id=getattr(request.state, "request_id", None),
+                path=request.url.path,
+                method=request.method,
+                vercel_id=getattr(request.state, "vercel_id", None),
+            )
+            raise
         return response
 
 def build_async_engine() -> AsyncEngine:
@@ -110,7 +136,7 @@ def build_async_engine() -> AsyncEngine:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Application startup
-    logger.info(f"Application startup: v{settings.VERSION}")
+    logger.info("application_startup", version=settings.VERSION, vercel=get_vercel_context())
     if settings.SMOKE_TURNSTILE_TOKEN:
         if settings.ENV == "production":
             raise RuntimeError("SMOKE_TURNSTILE_TOKEN must not be set in production")
@@ -132,7 +158,7 @@ async def lifespan(app: FastAPI):
         app.state.poi_service = POIService(app.state.db_engine)
         logger.info("POI Service initialized.")
     except Exception as e:
-        logger.critical(f"Failed to initialize POI Service: {e}")
+        report_exception(e, event="poi_service_init_failed", logger=logger, flush=settings.ENV == "production")
         # Let's ensure app.state.poi_service exists.
         class EmptyPOIService:
              master_list = []
@@ -163,9 +189,10 @@ async def lifespan(app: FastAPI):
             import asyncio
             pong = await asyncio.wait_for(app.state.redis.ping(), timeout=10)
             if pong != "PONG":
-                 # Upstash might return True or "PONG" depending on client
-                 if not pong: raise RuntimeError("Redis ping failed")
-                 
+                # Upstash might return True or "PONG" depending on client
+                if not pong:
+                    raise RuntimeError("Redis ping failed")
+
             app.state.quota_repo = QuotaRepository(app.state.redis)
             await app.state.quota_repo.load_lua_scripts()
             try:
@@ -173,13 +200,15 @@ async def lifespan(app: FastAPI):
 
                 await load_anon_quota_carry_forward_script(app.state.redis)
             except Exception as script_err:
-                logger.error(
-                    "anon_quota_carry_forward_script_load_failed",
-                    error=str(script_err),
+                report_exception(
+                    script_err,
+                    event="anon_quota_carry_forward_script_load_failed",
+                    logger=logger,
+                    flush=settings.ENV == "production",
                 )
             logger.info("Upstash Redis (REST) connected and QuotaRepository ready")
         except Exception as e:
-            logger.error(f"Redis initialization failed: {e}")
+            report_exception(e, event="redis_initialization_failed", logger=logger, flush=settings.ENV == "production")
             app.state.redis = None
     elif settings.ENABLE_REDIS:
         logger.error("ENABLE_REDIS set but UPSTASH_REDIS_REST_URL/TOKEN missing")
@@ -194,7 +223,7 @@ async def lifespan(app: FastAPI):
         app.state.query_history_repo = QueryHistoryRepository(app.state.db_engine, app.state.redis)
         logger.info("MVP102 Services initialized successfully.")
     except Exception as e:
-        logger.critical(f"Failed to init MVP102 services: {e}", exc_info=True)
+        report_exception(e, event="mvp102_services_init_failed", logger=logger, flush=settings.ENV == "production")
 
     logger.info("Lifespan startup complete.")
 
@@ -207,21 +236,23 @@ async def lifespan(app: FastAPI):
         db_engine = getattr(app.state, "db_engine", None)
         if db_engine:
             await db_engine.dispose()
-    except Exception:
-        logger.error(
-            "E_APP_SHUTDOWN_DB_DISPOSE_FAILED failed disposing database engine during shutdown",
-            extra={"event_code": "E_APP_SHUTDOWN_DB_DISPOSE_FAILED"},
-            exc_info=True,
+    except Exception as exc:
+        report_exception(
+            exc,
+            event="E_APP_SHUTDOWN_DB_DISPOSE_FAILED",
+            logger=logger,
+            event_code="E_APP_SHUTDOWN_DB_DISPOSE_FAILED",
         )
     try:
         redis_cli = getattr(app.state, "redis", None)
         if redis_cli:
             await redis_cli.close()
-    except Exception:
-        logger.error(
-            "E_APP_SHUTDOWN_REDIS_CLOSE_FAILED failed closing redis client during shutdown",
-            extra={"event_code": "E_APP_SHUTDOWN_REDIS_CLOSE_FAILED"},
-            exc_info=True,
+    except Exception as exc:
+        report_exception(
+            exc,
+            event="E_APP_SHUTDOWN_REDIS_CLOSE_FAILED",
+            logger=logger,
+            event_code="E_APP_SHUTDOWN_REDIS_CLOSE_FAILED",
         )
 
 
@@ -288,14 +319,34 @@ async def research_access(request: Request):
     return templates.TemplateResponse("legal/research_access.html", {"request": request, "lang": request.cookies.get("dd_lang", "en"), "legal_config": settings.LEGAL_CONFIG})
 
 @app.get("/sw.js", response_class=HTMLResponse)
-async def service_worker():
-    with open(os.path.join(static_dir, "sw.js"), "r", encoding="utf-8") as f:
-        return HTMLResponse(content=f.read(), media_type="application/javascript")
+async def service_worker(request: Request):
+    try:
+        with open(os.path.join(static_dir, "sw.js"), "r", encoding="utf-8") as f:
+            return HTMLResponse(content=f.read(), media_type="application/javascript")
+    except Exception as exc:
+        report_exception(
+            exc,
+            event="service_worker_read_failed",
+            logger=logger,
+            request_id=getattr(request.state, "request_id", None),
+            path=request.url.path,
+        )
+        raise HTTPException(status_code=500, detail="service worker unavailable") from exc
         
 @app.get("/offline.html", response_class=HTMLResponse)
-async def offline():
-    with open(os.path.join(static_dir, "offline.html"), "r", encoding="utf-8") as f:
-        return HTMLResponse(content=f.read())
+async def offline(request: Request):
+    try:
+        with open(os.path.join(static_dir, "offline.html"), "r", encoding="utf-8") as f:
+            return HTMLResponse(content=f.read())
+    except Exception as exc:
+        report_exception(
+            exc,
+            event="offline_page_read_failed",
+            logger=logger,
+            request_id=getattr(request.state, "request_id", None),
+            path=request.url.path,
+        )
+        raise HTTPException(status_code=500, detail="offline page unavailable") from exc
 
 @app.get("/favicon.ico", include_in_schema=False)
 @app.get("/favicon.png", include_in_schema=False)
@@ -321,8 +372,15 @@ async def root(request: Request, lang: str = "en"):
     try:
         quota_repo = getattr(request.app.state, "quota_repo", None)
         using_fallback_quota = not getattr(quota_repo, "redis_client", None)
-    except Exception:
+    except Exception as exc:
         using_fallback_quota = True
+        report_exception(
+            exc,
+            event="root_quota_fallback_detection_failed",
+            logger=logger,
+            request_id=getattr(request.state, "request_id", None),
+            path=request.url.path,
+        )
     
     # Prefer persisted language cookie if no explicit query override
     if not request.query_params.get("lang"):
@@ -345,7 +403,19 @@ async def root(request: Request, lang: str = "en"):
         turnstile_token=None,
         daily_limit=daily_limit,
     )
-    decision = await policy_engine.evaluate(context_eval)
+    try:
+        decision = await policy_engine.evaluate(context_eval)
+    except Exception as exc:
+        report_exception(
+            exc,
+            event="root_policy_evaluate_failed",
+            logger=logger,
+            request_id=getattr(request.state, "request_id", None),
+            anon_id=anon_id,
+            tier=str(tier),
+        )
+        decision = PolicyDecision(verdict=PolicyVerdict.CHALLENGE_REQUIRED, quota_remaining=0, max_results=1)
+        using_fallback_quota = True
     limit = daily_limit
     can_search = decision.verdict != PolicyVerdict.BLOCK
     turnstile_required = decision.verdict == PolicyVerdict.CHALLENGE_REQUIRED
@@ -365,7 +435,17 @@ async def root(request: Request, lang: str = "en"):
         status_text = tdict.get("status_active_many", "You’ve checked {n} places today").replace("{n}", str(checks_today))
         state = "active"
     tier_str = tier_to_client(tier)
-    plan_prices = await get_active_plan_prices(getattr(request.app.state, "db_engine", None))
+    try:
+        plan_prices = await get_active_plan_prices(getattr(request.app.state, "db_engine", None))
+    except Exception as exc:
+        report_exception(
+            exc,
+            event="root_plan_prices_load_failed",
+            logger=logger,
+            request_id=getattr(request.state, "request_id", None),
+            path=request.url.path,
+        )
+        plan_prices = {}
     
     context = {
         "request": request,
@@ -417,8 +497,9 @@ async def db_health():
         async with db_engine.connect() as conn:
             await conn.execute(text("SELECT 1"))
         return {"db": "ok"}
-    except Exception:
-        raise HTTPException(status_code=503, detail="database unavailable")
+    except Exception as exc:
+        report_exception(exc, event="db_health_check_failed", logger=logger, path="/health/db")
+        raise HTTPException(status_code=503, detail="database unavailable") from exc
 
 # --- Global Exception Handler (for unhandled errors) ---
 from fastapi.exceptions import RequestValidationError
@@ -433,12 +514,15 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
         error_id = str(exc.detail.get("error_id") or error_id)
 
     if exc.status_code >= 500:
-        logger.error(
-            "HTTP_EXCEPTION_5XX (ID: %s): status=%s detail=%s url=%s",
-            error_id,
-            exc.status_code,
-            detail_payload,
-            str(request.url),
+        report_exception(
+            exc,
+            event="http_exception_5xx",
+            logger=logger,
+            error_id=error_id,
+            status_code=exc.status_code,
+            detail=detail_payload,
+            url=str(request.url),
+            request_id=getattr(request.state, "request_id", None),
         )
 
     return JSONResponse(
@@ -456,7 +540,13 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     error_id = str(uuid.uuid4())
-    logger.warning(f"VALIDATION_ERROR (ID: {error_id}): {exc.errors()}", extra={"url": str(request.url)})
+    logger.warning(
+        "validation_error",
+        error_id=error_id,
+        errors=exc.errors(),
+        url=str(request.url),
+        request_id=getattr(request.state, "request_id", None),
+    )
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={
@@ -483,22 +573,18 @@ async def global_exception_handler(request: Request, exc: Exception):
         "exception_msg": str(exc)
     }
     
-    # Log with full context and stack trace
-    logger.critical(f"GLOBAL_CRITICAL_FAILURE (ID: {error_id}): {exc}", extra=error_context, exc_info=True)
-    
-    # Integrate with Sentry explicitly for critical unhandled errors
-    try:
-        import sentry_sdk
-        with sentry_sdk.push_scope() as scope:
-            scope.set_tag("error_id", error_id)
-            scope.set_tag("exception_type", type(exc).__name__)
-            for k, v in error_context.items():
-                scope.set_extra(k, v)
-            sentry_sdk.capture_exception(exc)
-            # Ensure the exception is sent immediately
-            sentry_sdk.flush()
-    except Exception as sentry_err:
-        logger.error(f"Failed to report to Sentry: {sentry_err}")
+    if not getattr(request.state, "error_reported", False):
+        report_exception(
+            exc,
+            event="global_critical_failure",
+            logger=logger,
+            flush=settings.ENV == "production",
+            request_id=getattr(request.state, "request_id", None),
+            vercel_id=getattr(request.state, "vercel_id", None),
+            **error_context,
+        )
+    else:
+        logger.critical("global_critical_failure_already_reported", **error_context)
 
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
