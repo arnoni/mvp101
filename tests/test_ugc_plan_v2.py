@@ -3,19 +3,25 @@ import time
 import asyncio
 from fastapi import Request
 from types import SimpleNamespace
+from typing import Optional
 
 from app.services.policy_engine import PolicyEngine, run_gate
 from app.services.entitlement_service import TierStatus
 
 class DummyQuotaRepo:
-    async def get_usage(self, key: str) -> int:
+    async def get_usage(self, key: str, redis_op: Optional[str] = None) -> int:
         return 0
+
+    async def check_available(self, key: str, max_limit: int, redis_op: Optional[str] = None) -> bool:
+        return True
+
     async def check_and_consume(
         self,
         key: str,
         limit: int,
         ttl: int = 86400,
         idempotency_key: str | None = None,
+        redis_op: Optional[str] = None,
     ):
         return True, limit - 1
 

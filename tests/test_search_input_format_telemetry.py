@@ -83,7 +83,7 @@ def test_decimal_input_increments_before_success_response(client, monkeypatch):
 
     response = client.post(
         "/api/search",
-        json={"location_input": "16.0199444 108.2548611", "target": "construction"},
+        json={"location_input": "16.0199444 108.2548611", "target": "construction", "turnstile_token": "test-token"},
     )
     assert response.status_code == 200
     assert len(calls) == 1
@@ -101,7 +101,7 @@ def test_google_short_link_increments_with_recognized_not_resolved(client, monke
 
     response = client.post(
         "/api/search",
-        json={"location_input": "https://maps.app.goo.gl/QEWSpGGS7iLZomR98", "target": "construction"},
+        json={"location_input": "https://maps.app.goo.gl/QEWSpGGS7iLZomR98", "target": "construction", "turnstile_token": "test-token"},
     )
     assert response.status_code == 422
     assert len(calls) == 1
@@ -124,7 +124,7 @@ def test_over_quota_path_still_increments(client, monkeypatch):
 
     response = client.post(
         "/api/search",
-        json={"location_input": "16.0199444 108.2548611", "target": "construction"},
+        json={"location_input": "16.0199444 108.2548611", "target": "construction", "turnstile_token": "test-token"},
     )
     assert response.status_code == 429
     assert len(calls) == 1
@@ -144,7 +144,7 @@ def test_turnstile_failed_path_still_increments(client, monkeypatch):
 
     response = client.post(
         "/api/search",
-        json={"location_input": "16.0199444 108.2548611", "target": "construction"},
+        json={"location_input": "16.0199444 108.2548611", "target": "construction", "turnstile_token": "test-token"},
     )
     assert response.status_code == 403
     assert len(calls) == 1
@@ -160,7 +160,7 @@ def test_invalid_input_still_increments(client, monkeypatch):
 
     response = client.post(
         "/api/search",
-        json={"location_input": "23 Phước Trường 10, An Hải, Sơn Trà, Đà Nẵng", "target": "construction"},
+        json={"location_input": "23 Phước Trường 10, An Hải, Sơn Trà, Đà Nẵng", "target": "construction", "turnstile_token": "test-token"},
     )
     assert response.status_code == 422
     assert len(calls) == 1
@@ -175,7 +175,7 @@ def test_telemetry_failure_is_fail_open(client, monkeypatch, caplog):
 
     response = client.post(
         "/api/search",
-        json={"location_input": "16.0199444 108.2548611", "target": "construction"},
+        json={"location_input": "16.0199444 108.2548611", "target": "construction", "turnstile_token": "test-token"},
     )
     assert response.status_code == 200
     assert "input_format_stats_increment_failed" in caplog.text
@@ -192,7 +192,7 @@ def test_no_raw_input_sent_to_aggregate_increment(client, monkeypatch):
     raw_value = "please check this place 16.0199444 108.2548611 thanks"
     response = client.post(
         "/api/search",
-        json={"location_input": raw_value, "target": "construction"},
+        json={"location_input": raw_value, "target": "construction", "turnstile_token": "test-token"},
     )
     assert response.status_code == 200
     assert len(calls) == 1
@@ -208,7 +208,7 @@ def test_missing_location_returns_400_with_contract_payload(client, monkeypatch)
 
     monkeypatch.setattr("app.api.routes.increment_input_format_stats", _increment)
 
-    response = client.post("/api/search", json={"target": "construction"})
+    response = client.post("/api/search", json={"target": "construction", "turnstile_token": "test-token"})
     assert response.status_code == 400
     assert response.json() == {
         "detail": {

@@ -107,7 +107,7 @@ class QuotaRepository:
             logger.error("quota_lua_script_load_failed", error=str(exc))
             raise RuntimeError("QUOTA_REDIS_UNAVAILABLE") from exc
 
-    async def get_usage(self, key: str) -> int:
+    async def get_usage(self, key: str, redis_op: Optional[str] = None) -> int:
         if not self.redis_client:
             raise RuntimeError("QUOTA_REDIS_UNAVAILABLE")
         try:
@@ -117,10 +117,10 @@ class QuotaRepository:
             try:
                 return int(val)
             except Exception:
-                logger.error("QUOTA_PARSE_ERROR", key=key, raw_value=str(val))
+                logger.error("QUOTA_PARSE_ERROR", key=key, raw_value=str(val), redis_op=redis_op)
                 return 0
         except Exception as exc:
-            logger.error("QUOTA_GET_USAGE_ERROR", error=str(exc), key=key)
+            logger.error("QUOTA_GET_USAGE_ERROR", error=str(exc), key=key, redis_op=redis_op)
             raise RuntimeError("QUOTA_REDIS_UNAVAILABLE") from exc
 
     async def increment(self, key: str, ttl: int = DEFAULT_QUOTA_TTL_SECONDS) -> int:
@@ -138,11 +138,11 @@ class QuotaRepository:
             logger.error("QUOTA_INCREMENT_ERROR", error=str(exc), key=key)
             raise RuntimeError("QUOTA_REDIS_UNAVAILABLE") from exc
 
-    async def check_available(self, key: str, max_limit: int) -> bool:
-        usage = await self.get_usage(key)
+    async def check_available(self, key: str, max_limit: int, redis_op: Optional[str] = None) -> bool:
+        usage = await self.get_usage(key, redis_op=redis_op)
         available = usage < max_limit
         if not available:
-            logger.info("quota_exceeded", quota_key=key, quota_limit=max_limit, quota_used=usage)
+            logger.info("quota_exceeded", quota_key=key, quota_limit=max_limit, quota_used=usage, redis_op=redis_op)
         return available
 
     async def check_and_consume(
@@ -151,6 +151,7 @@ class QuotaRepository:
         daily_limit: int,
         ttl: int = DEFAULT_QUOTA_TTL_SECONDS,
         idempotency_key: Optional[str] = None,
+        redis_op: Optional[str] = None,
     ) -> tuple[bool, int]:
         """
         Atomically check and consume one unit, returning (allowed, remaining).
@@ -163,6 +164,7 @@ class QuotaRepository:
             limit=daily_limit,
             ttl=ttl,
             idempotency_key=idempotency_key,
+            redis_op=redis_op,
         )
         allowed = result_code in {QUOTA_CONSUMED_SENTINEL, QUOTA_IDEMPOTENT_REPLAY_SENTINEL}
         return allowed, remaining
@@ -174,6 +176,7 @@ class QuotaRepository:
         ttl: int = DEFAULT_QUOTA_TTL_SECONDS,
         idempotency_key: Optional[str] = None,
         idempotency_ttl: int = DEFAULT_IDEMPOTENCY_TTL_SECONDS,
+        redis_op: Optional[str] = None,
     ) -> tuple[int, int, int]:
         """
         Atomically consume one quota unit.
@@ -194,7 +197,7 @@ class QuotaRepository:
             result = await self._eval_quota_script(keys=keys, args=args)
             result_code, usage, remaining = self._parse_lua_result(result)
             if result_code == QUOTA_EXCEEDED_SENTINEL:
-                logger.info("quota_exceeded", quota_key=key, quota_limit=safe_limit, quota_used=usage)
+                logger.info("quota_exceeded", quota_key=key, quota_limit=safe_limit, quota_used=usage, redis_op=redis_op)
             elif result_code == QUOTA_IDEMPOTENT_REPLAY_SENTINEL:
                 logger.info(
                     "quota_idempotent_replay",
@@ -203,6 +206,7 @@ class QuotaRepository:
                     quota_used=usage,
                     quota_remaining=remaining,
                     idempotency_key=bool(idempotency_key),
+                    redis_op=redis_op,
                 )
             else:
                 logger.info(
@@ -213,12 +217,13 @@ class QuotaRepository:
                     quota_remaining=remaining,
                     ttl=safe_ttl,
                     idempotency_key=bool(idempotency_key),
+                    redis_op=redis_op,
                 )
             return result_code, usage, remaining
         except RuntimeError:
             raise
         except Exception as exc:
-            logger.error("quota_redis_failure", error=str(exc), quota_key=key)
+            logger.error("quota_redis_failure", error=str(exc), quota_key=key, redis_op=redis_op)
             raise RuntimeError("QUOTA_REDIS_UNAVAILABLE") from exc
 
     async def _eval_quota_script(self, *, keys: list[str], args: list[int]) -> Any:
