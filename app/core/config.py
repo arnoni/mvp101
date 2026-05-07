@@ -30,7 +30,15 @@ class Settings(BaseSettings):
     UPSTASH_REDIS_REST_URL: Optional[str] = Field(None, description="Upstash Redis REST URL")
     UPSTASH_REDIS_REST_TOKEN: Optional[str] = Field(None, description="Upstash Redis REST Token")
     SMOKE_TURNSTILE_TOKEN: Optional[str] = Field(None, description="Secure bypass token for Turnstile during smoke tests")
-    ENV: str = Field("development", description="Application environment (e.g., production, development)")
+    ENV: str = Field(
+        "development",
+        description="Application environment (e.g., production, development)",
+        validation_alias=AliasChoices("ENV", "ENVIRONMENT"),
+    )
+    VERCEL_ENV: Optional[str] = Field(
+        None,
+        description="Vercel deployment environment (production, preview, development)",
+    )
     SENTRY_DSN: Optional[str] = Field(None, description="Sentry DSN for error reporting")
     SENTRY_FRONTEND_DSN: Optional[str] = Field(None, description="Sentry Frontend DSN for error reporting")
     RELEASE: Optional[str] = Field(None, description="Application release version for Sentry")
@@ -173,6 +181,23 @@ class Settings(BaseSettings):
     LEGAL_MINIMUM_AGE: str = Field("18", description="Minimum age shown in privacy policy")
 
     @property
+    def is_production(self) -> bool:
+        """Return True when startup/security behavior must use production safeguards.
+
+        VERCEL_ENV is the authoritative source on Vercel because it is set by
+        the platform. ENV/ENVIRONMENT remains a fallback for non-Vercel local
+        and CI contexts. If both sources are present and either says
+        production, the stricter production interpretation wins.
+        """
+        vercel_env = (self.VERCEL_ENV or "").strip().lower()
+        app_env = (self.ENV or "").strip().lower()
+
+        if vercel_env:
+            return vercel_env == "production" or app_env == "production"
+
+        return app_env == "production"
+
+    @property
     def sentry_release(self) -> str:
         return self.RELEASE or self.VERSION
         
@@ -191,6 +216,16 @@ class Settings(BaseSettings):
     )
 
 settings = Settings()
+
+
+def get_settings() -> Settings:
+    """Build settings from the current environment.
+
+    Tests use this helper after monkeypatching environment variables so each
+    assertion receives a fresh Settings instance.
+    """
+    return Settings()
+
 
 def is_inside_da_nang_bbox(lat: float, lon: float) -> bool:
     """Implements TSD Section 10: Only Da Nang bounding box accepted."""
