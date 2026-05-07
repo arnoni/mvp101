@@ -22,7 +22,7 @@ from app.services.analytics import capture
 from app.services.entitlement_service import TierStatus
 from app.services.magic_auth_service import MagicAuthService, PaymentGatewayFactory
 from app.utils.security import get_client_ip, verify_turnstile
-from app.utils.url import resolve_public_base_url
+from app.utils.url import resolve_checkout_base, resolve_public_base_url
 from email_service import EmailService
 
 logger = structlog.get_logger(__name__)
