@@ -3,11 +3,13 @@
 # Implements TSD Section 8: Validate and sanitize all inputs
 
 from fastapi import Request, HTTPException, status
+import hashlib
 import httpx
 import structlog
 import sentry_sdk
 from app.core.config import settings
 from app.models.dto import ErrorResponse
+from app.core.keys import KeyBuilder
 from pydantic import validate_call
 logger = structlog.get_logger(__name__)
 
@@ -89,100 +91,253 @@ async def protect_mutation(request: Request):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="origin not allowed")
 
     return True
-@validate_call
-async def verify_turnstile(token: str, client_ip: str | None = None, *, source: str | None = None, origin: str | None = None, hostname: str | None = None) -> bool:
-    """
-    Verifies the Cloudflare Turnstile token against the Cloudflare API.
-    Implements TSD Section 6: Turnstile verification.
-    """
-    # 0. SMOKE TEST BYPASS: If token matches secret smoke token, skip verification
-    if settings.SMOKE_TURNSTILE_TOKEN and token == settings.SMOKE_TURNSTILE_TOKEN:
-        _safe_log("warning", "turnstile_smoke_bypass", client_ip=client_ip)
-        return True
+TURNSTILE_SITEVERIFY_URL = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
+TURNSTILE_CACHE_TTL_SECONDS = 5 * 60
 
-    url = "https://challenges.cloudflare.com/turnstile/v0/siteverify"
-    data = {
-        "secret": settings.CLOUDFLARE_TURNSTILE_SECRET,
-        "response": token,
-        "remoteip": client_ip
-    }
-    
-    logger.info("Initiating Turnstile verification check")
+
+def _turnstile_ip_ua_hash(client_ip: str | None, user_agent: str | None) -> str:
+    raw = f"{client_ip or 'unknown_ip'}:{user_agent or 'unknown_ua'}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _turnstile_cache_key(
+    *,
+    anon_id: str | None = None,
+    client_ip: str | None = None,
+    user_agent: str | None = None,
+) -> str | None:
+    if anon_id:
+        return KeyBuilder.turnstile_verified(anon_id)
+    if client_ip:
+        return KeyBuilder.turnstile_verified_ip_ua(_turnstile_ip_ua_hash(client_ip, user_agent))
+    return None
+
+
+async def _read_turnstile_cache(cache_key: str | None) -> bool:
+    if not cache_key or not redis_client:
+        return False
     try:
-        async with httpx.AsyncClient(timeout=5) as client:
-            response = await client.post(url, data=data)
-            response.raise_for_status()
-            result = response.json()
-            
-            if result.get("success"):
-                if settings.ENV == "preview":
-                    hostname = (result.get("hostname") or "").strip()
-                    if not hostname.endswith(settings.TURNSTILE_PREVIEW_HOSTNAME_SUFFIX):
-                        raise HTTPException(status_code=403, detail="Invalid Turnstile hostname")
-                logger.info("Turnstile EXACT verification SUCCESS")
-                return True
-            else:
-                error_codes = result.get("error-codes", [])
-                _safe_log(
-                    "warning",
-                    "turnstile_verification_failed",
-                    cloudflare_error_codes=error_codes,
-                    source=source,
-                    origin=origin,
-                    hostname=hostname,
-                    client_ip=client_ip,
-                )
-                _capture_turnstile_issue("turnstile_verification_failed", cloudflare_error_codes=error_codes, source=source, origin=origin, hostname=hostname, client_ip=client_ip)
-                return False
-    except httpx.TimeoutException:
-        # ... (error handling)
-        logger.error("Turnstile verification timed out.")
-        raise HTTPException(
-            status_code=status.HTTP_408_REQUEST_TIMEOUT,
-            detail=ErrorResponse(
-                error="TURNSTILE_TIMEOUT",
-                detail="Turnstile verification service timed out."
-            ).model_dump()
-        )
-    except httpx.HTTPStatusError as e:
+        cached = await redis_client.get(cache_key)
+    except Exception as exc:
         _safe_log(
             "error",
-            "turnstile_siteverify_http_error",
-            status_code=e.response.status_code if e.response else None,
+            "turnstile_cache_read_failed",
+            cache_key=cache_key,
+            error_class=exc.__class__.__name__,
+            error_detail=str(exc),
+        )
+        return False
+    if cached:
+        logger.info("turnstile_verification_cache_hit", cache_key=cache_key)
+        return True
+    return False
+
+
+async def _write_turnstile_cache(cache_key: str | None) -> None:
+    if not cache_key or not redis_client:
+        return
+    try:
+        await redis_client.setex(cache_key, TURNSTILE_CACHE_TTL_SECONDS, "1")
+    except Exception as exc:
+        _safe_log(
+            "error",
+            "turnstile_cache_write_failed",
+            cache_key=cache_key,
+            error_class=exc.__class__.__name__,
+            error_detail=str(exc),
+        )
+
+
+@validate_call
+async def verify_turnstile(
+    token: str,
+    client_ip: str | None = None,
+    anon_id: str | None = None,
+    *,
+    user_agent: str | None = None,
+    source: str | None = None,
+    origin: str | None = None,
+    hostname: str | None = None,
+) -> bool:
+    """
+    Verify a Cloudflare Turnstile token with Cloudflare's server-side API.
+
+    Successful validations are cached for five minutes by anonymous identity
+    when available. If identity middleware has not supplied an anon_id yet, the
+    cache falls back to a hash of client IP plus user-agent to reduce shared NAT
+    collisions. Smoke-test tokens are intentionally never accepted here.
+    """
+    token = (token or "").strip()
+    if not token:
+        _safe_log("warning", "turnstile_token_missing", source=source, origin=origin, hostname=hostname)
+        return False
+
+    secret = settings.CLOUDFLARE_TURNSTILE_SECRET
+    if not secret:
+        _safe_log("error", "turnstile_secret_missing", source=source, origin=origin, hostname=hostname)
+        return False
+
+    cache_key = _turnstile_cache_key(anon_id=anon_id, client_ip=client_ip, user_agent=user_agent)
+    if await _read_turnstile_cache(cache_key):
+        return True
+
+    data = {
+        "secret": secret,
+        "response": token,
+    }
+    if client_ip:
+        data["remoteip"] = client_ip
+
+    logger.info("turnstile_siteverify_started", source=source, origin=origin, hostname=hostname)
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            response = await client.post(TURNSTILE_SITEVERIFY_URL, data=data)
+            response.raise_for_status()
+            result = response.json()
+    except (httpx.TimeoutException, httpx.RequestError) as exc:
+        _safe_log(
+            "error",
+            "turnstile_api_unavailable",
+            error_class=exc.__class__.__name__,
+            error_detail=str(exc),
             source=source,
             origin=origin,
             hostname=hostname,
             client_ip=client_ip,
         )
-        _capture_turnstile_issue("turnstile_siteverify_http_error", level="error", status_code=e.response.status_code if e.response else None, source=source, origin=origin, hostname=hostname, client_ip=client_ip)
+        _capture_turnstile_issue(
+            "turnstile_api_unavailable",
+            level="error",
+            error_class=exc.__class__.__name__,
+            error_detail=str(exc),
+            source=source,
+            origin=origin,
+            hostname=hostname,
+            client_ip=client_ip,
+        )
         return False
-    except Exception as e:
-        logger.error(f"Unexpected error during Turnstile verification: {e}")
-        _capture_turnstile_issue("turnstile_verification_unexpected_error", level="error", error_class=e.__class__.__name__, error_detail=str(e), source=source, origin=origin, hostname=hostname, client_ip=client_ip)
+    except httpx.HTTPStatusError as exc:
+        _safe_log(
+            "error",
+            "turnstile_api_unavailable",
+            status_code=exc.response.status_code if exc.response else None,
+            source=source,
+            origin=origin,
+            hostname=hostname,
+            client_ip=client_ip,
+        )
+        _capture_turnstile_issue(
+            "turnstile_api_unavailable",
+            level="error",
+            status_code=exc.response.status_code if exc.response else None,
+            source=source,
+            origin=origin,
+            hostname=hostname,
+            client_ip=client_ip,
+        )
+        return False
+    except Exception as exc:
+        _safe_log(
+            "error",
+            "turnstile_api_unavailable",
+            error_class=exc.__class__.__name__,
+            error_detail=str(exc),
+            source=source,
+            origin=origin,
+            hostname=hostname,
+            client_ip=client_ip,
+        )
+        _capture_turnstile_issue(
+            "turnstile_api_unavailable",
+            level="error",
+            error_class=exc.__class__.__name__,
+            error_detail=str(exc),
+            source=source,
+            origin=origin,
+            hostname=hostname,
+            client_ip=client_ip,
+        )
         return False
 
-async def is_turnstile_verified(anon_id: str | None = None, client_ip: str | None = None) -> bool:
-    """Checks if the user has already successfully verified Turnstile recently."""
-    if not redis_client:
-        return False
-        
-    cache_key = None
-    if anon_id:
-        cache_key = f"turnstile_ok:{anon_id}"
-    elif client_ip:
-        cache_key = f"turnstile_ok_ip:{client_ip}"
-        
-    if cache_key:
-        try:
-            val = await redis_client.get(cache_key)
-            if val:
-                logger.info(f"Turnstile challenge skipped (cached) for key: {cache_key}")
-                return True
-            else:
-                logger.debug(f"Turnstile challenge required (no cache) for key: {cache_key}")
-        except Exception as e:
-            logger.error(f"Error checking turnstile cache: {e}")
+    if result.get("success") is True:
+        if settings.ENV == "preview":
+            verified_hostname = (result.get("hostname") or "").strip()
+            if not verified_hostname.endswith(settings.TURNSTILE_PREVIEW_HOSTNAME_SUFFIX):
+                raise HTTPException(status_code=403, detail="Invalid Turnstile hostname")
+        await _write_turnstile_cache(cache_key)
+        logger.info("turnstile_siteverify_success", source=source, origin=origin, hostname=hostname)
+        return True
+
+    error_codes = result.get("error-codes", [])
+    _safe_log(
+        "warning",
+        "turnstile_verification_failed",
+        cloudflare_error_codes=error_codes,
+        source=source,
+        origin=origin,
+        hostname=hostname,
+        client_ip=client_ip,
+    )
+    _capture_turnstile_issue(
+        "turnstile_verification_failed",
+        cloudflare_error_codes=error_codes,
+        source=source,
+        origin=origin,
+        hostname=hostname,
+        client_ip=client_ip,
+    )
     return False
+
+async def is_turnstile_verified(
+    anon_id: str | None = None,
+    client_ip: str | None = None,
+    user_agent: str | None = None,
+) -> bool:
+    """Checks if the user has already successfully verified Turnstile recently."""
+    return await _read_turnstile_cache(
+        _turnstile_cache_key(anon_id=anon_id, client_ip=client_ip, user_agent=user_agent)
+    )
+
+
+async def verify_turnstile_dependency(request: Request) -> bool:
+    """FastAPI dependency that validates a Turnstile token or returns 403."""
+    try:
+        payload = await request.json()
+    except Exception:
+        payload = {}
+    token = None
+    if isinstance(payload, dict):
+        token = payload.get("turnstile_token") or payload.get("cf_turnstile_token")
+
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=ErrorResponse(
+                error="TURNSTILE_REQUIRED",
+                detail="Human verification required.",
+                error_id=getattr(request.state, "request_id", None),
+            ).model_dump(),
+        )
+
+    ok = await verify_turnstile(
+        token=token,
+        client_ip=get_client_ip(request),
+        anon_id=getattr(request.state, "anon_id", None),
+        user_agent=request.headers.get("user-agent"),
+        source=request.url.path if request.url else None,
+        origin=request.headers.get("origin"),
+        hostname=request.url.hostname if request.url else None,
+    )
+    if not ok:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=ErrorResponse(
+                error="TURNSTILE_INVALID",
+                detail="Verification failed. Please complete the human check again and resubmit.",
+                error_id=getattr(request.state, "request_id", None),
+            ).model_dump(),
+        )
+    return True
 
 def get_client_ip(request: Request) -> str:
     """

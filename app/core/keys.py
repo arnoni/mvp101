@@ -70,6 +70,14 @@ class KeyBuilder:
         return f"dd:security:reputation:ip:{ip}"
 
     @staticmethod
+    def turnstile_verified(anon_id: str) -> str:
+        return f"dd:turnstile:verified:anon:{anon_id}"
+
+    @staticmethod
+    def turnstile_verified_ip_ua(ip_ua_hash: str) -> str:
+        return f"dd:turnstile:verified:ip_ua:{ip_ua_hash}"
+
+    @staticmethod
     def ugc_dedup(content_hash: str, geo_cell: str, day_bucket: str) -> str:
         """UGC deduplication key scoped to the DB unique constraint window."""
         return f"dd:ugc:dedup:{content_hash}:{geo_cell}:{day_bucket}"

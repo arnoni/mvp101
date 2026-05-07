@@ -111,6 +111,10 @@ def build_async_engine() -> AsyncEngine:
 async def lifespan(app: FastAPI):
     # Application startup
     logger.info(f"Application startup: v{settings.VERSION}")
+    if settings.SMOKE_TURNSTILE_TOKEN:
+        if settings.ENV == "production":
+            raise RuntimeError("SMOKE_TURNSTILE_TOKEN must not be set in production")
+        logger.warning("smoke_turnstile_token_configured_non_production", env=settings.ENV)
     logger.info("Initializing POI Service (PostGIS-backed)...")
     
     # Startup contract: Redis required in production when ENABLE_REDIS true
