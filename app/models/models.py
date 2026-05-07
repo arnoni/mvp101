@@ -149,6 +149,7 @@ class UGCReport(Base):
     moderated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     content_hash: Mapped[str] = mapped_column(Text, nullable=False)
     geo_cell: Mapped[str] = mapped_column(Text, nullable=False)
+    day_bucket: Mapped[str] = mapped_column(Text, nullable=False)
     duplicate_of_id: Mapped[int | None] = mapped_column(ForeignKey("ugc_reports.id", name="ugc_reports_duplicate_of_id_fkey"))
     nearest_poi_id: Mapped[int | None] = mapped_column(ForeignKey("pois.id", name="ugc_reports_nearest_poi_id_fkey"))
     nearest_poi_distance_m: Mapped[int | None] = mapped_column(Integer)
@@ -160,6 +161,7 @@ class UGCReport(Base):
         CheckConstraint("char_length(category) <= 50", name="ugc_reports_category_check"),
         CheckConstraint("char_length(noise_type) <= 50", name="ugc_reports_noise_type_check"),
         CheckConstraint("severity >= 1 AND severity <= 5", name="ugc_reports_severity_check"),
+        UniqueConstraint("content_hash", "geo_cell", "day_bucket", name="ugc_reports_dedup_unique"),
         Index("ugc_reports_content_hash", "content_hash"),
         Index("ugc_reports_geo_cell_created_at", "geo_cell", "created_at"),
         Index("ugc_reports_geom_gist", "geom", postgresql_using="gist"),

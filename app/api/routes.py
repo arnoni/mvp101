@@ -7,6 +7,9 @@ from pydantic import BaseModel, Field
 from pydantic import ValidationError
 import uuid
 from sqlalchemy import insert, text
+from sqlalchemy.exc import IntegrityError
+
+from app.core.keys import KeyBuilder
 
 from app.core.config import settings
 from app.models.models import FunnelEvent
@@ -41,10 +44,13 @@ from app.services.input_format_stats_service import increment_input_format_stats
 from app.services.query_history_repository import QueryHistoryEvent, QueryHistoryRepository
 import time
 import os
+import hashlib
+import json
 
 router = APIRouter()
 logger = structlog.get_logger(__name__)
 USER_REPORT_DAILY_SUCCESS_LIMIT = int(os.getenv("USER_REPORT_DAILY_SUCCESS_LIMIT", "3"))
+UGC_DEDUP_TTL_SECONDS = 7 * 24 * 3600
 UGC_INSERT_SQL = text("""
 INSERT INTO ugc_reports (
   public_id,
@@ -58,7 +64,8 @@ INSERT INTO ugc_reports (
   geom,
   status,
   content_hash,
-  geo_cell
+  geo_cell,
+  day_bucket
 )
 VALUES (
   CAST(:public_id AS uuid),
@@ -72,9 +79,19 @@ VALUES (
   ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
   'pending'::ugc_report_status,
   :content_hash,
-  :geo_cell
+  :geo_cell,
+  :day_bucket
 )
 RETURNING id, public_id, created_at
+""")
+UGC_FIND_DUPLICATE_SQL = text("""
+SELECT public_id
+FROM ugc_reports
+WHERE content_hash = :content_hash
+  AND geo_cell = :geo_cell
+  AND day_bucket = :day_bucket
+ORDER BY created_at ASC
+LIMIT 1
 """)
 def _raise_location_resolution_blocked_http_exception(msg: str | None = None) -> None:
     from app.services.location_parser import _BLOCKED_RESOLUTION_MESSAGE
@@ -664,8 +681,45 @@ def validate_report_location(lat: float, lon: float) -> str | None:
 
 
 def _hash_identifier(value: str) -> str:
-    import hashlib
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+
+
+def _normalize_ugc_text(value: str | None) -> str:
+    return " ".join((value or "").strip().lower().split())
+
+
+def _normalize_ugc_evidence_urls(urls: list[str] | None) -> list[str]:
+    return sorted(_normalize_ugc_text(url) for url in (urls or []) if _normalize_ugc_text(url))
+
+
+def _quantize_ugc_coord(value: float, step: float = 0.0005) -> float:
+    return round(round(value / step) * step, 6)
+
+
+def generate_ugc_dedup_fields(data: UGCReportRequest) -> tuple[str, str, str]:
+    title_n = _normalize_ugc_text(data.title)
+    desc_n = _normalize_ugc_text(data.description)
+    cat_n = _normalize_ugc_text(data.category)
+    evidence_n = json.dumps(_normalize_ugc_evidence_urls(data.evidence_urls), separators=(",", ":"))
+    content_hash = hashlib.sha256(f"{title_n}|{desc_n}|{cat_n}|{evidence_n}".encode("utf-8")).hexdigest()
+    lat_q = _quantize_ugc_coord(float(data.lat))
+    lon_q = _quantize_ugc_coord(float(data.lon))
+    geo_cell = f"{lat_q}:{lon_q}"
+    day_bucket = time.strftime("%Y-%m-%d", time.gmtime())
+    return content_hash, geo_cell, day_bucket
+
+
+def generate_ugc_dedup_key(content_hash: str, geo_cell: str, day_bucket: str) -> str:
+    return KeyBuilder.ugc_dedup(content_hash, geo_cell, day_bucket)
+
+
+def _is_ugc_dedup_integrity_error(exc: IntegrityError) -> bool:
+    if "ugc_reports_dedup_unique" in str(exc):
+        return True
+    orig = getattr(exc, "orig", None)
+    sqlstate = getattr(orig, "sqlstate", None) or getattr(orig, "pgcode", None)
+    constraint_name = getattr(getattr(orig, "diag", None), "constraint_name", None)
+    return sqlstate == "23505" and constraint_name == "ugc_reports_dedup_unique"
 
 
 def _user_report_scope(request: Request) -> str:
@@ -1072,78 +1126,204 @@ async def ugc_report_submit(
     if not is_inside_app_bbox(data.lat, data.lon):
         raise HTTPException(
             status_code=http_status.HTTP_400_BAD_REQUEST,
-            detail=ErrorResponse(error="OUT_OF_BOUNDS", detail="Coordinates outside allowed area.").model_dump()
+            detail=ErrorResponse(error="OUT_OF_BOUNDS", detail="Coordinates outside allowed area.").model_dump(),
         )
     if data.severity is not None:
         if data.severity < 1 or data.severity > 5:
             raise HTTPException(
                 status_code=http_status.HTTP_400_BAD_REQUEST,
-                detail=ErrorResponse(error="INVALID_SEVERITY", detail="Severity must be between 1 and 5.").model_dump()
+                detail=ErrorResponse(error="INVALID_SEVERITY", detail="Severity must be between 1 and 5.").model_dump(),
             )
     if data.evidence_urls is not None:
         if len(data.evidence_urls) > 5:
             raise HTTPException(
                 status_code=http_status.HTTP_400_BAD_REQUEST,
-                detail=ErrorResponse(error="TOO_MANY_EVIDENCE_URLS", detail="Maximum 5 evidence URLs allowed.").model_dump()
+                detail=ErrorResponse(error="TOO_MANY_EVIDENCE_URLS", detail="Maximum 5 evidence URLs allowed.").model_dump(),
             )
         for u in data.evidence_urls:
             if len(u) > 500:
                 raise HTTPException(
                     status_code=http_status.HTTP_400_BAD_REQUEST,
-                    detail=ErrorResponse(error="EVIDENCE_URL_TOO_LONG", detail="Evidence URL exceeds maximum length.").model_dump()
+                    detail=ErrorResponse(error="EVIDENCE_URL_TOO_LONG", detail="Evidence URL exceeds maximum length.").model_dump(),
                 )
-    import hashlib, json, time, uuid
+
     redis_cli = getattr(request.app.state, "redis", None)
-    if not redis_cli:
-        raise HTTPException(status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE, detail="enforcement unavailable")
-    def norm_text(s: str) -> str:
-        return " ".join((s or "").strip().lower().split())
-    title_n = norm_text(data.title)
-    desc_n = norm_text(data.description)
-    cat_n = norm_text(data.category or "")
-    def quantize_coord(v: float, step: float = 0.0005) -> float:
-        return round(round(v / step) * step, 6)
-    lat_q = quantize_coord(float(data.lat))
-    lon_q = quantize_coord(float(data.lon))
-    geo_cell = f"{lat_q}:{lon_q}"
-    content_hash = hashlib.sha256(f"{title_n}|{desc_n}|{cat_n}".encode("utf-8")).hexdigest()
-    day_bucket = time.strftime("%Y%m%d", time.gmtime())
-    dedup_key = hashlib.sha256(f"{anon_id}|{geo_cell}|{content_hash}|{day_bucket}".encode("utf-8")).hexdigest()
-    dedup_redis_key = f"ugc:dedup:{dedup_key}"
-    public_id = str(uuid.uuid4())
     db_engine = getattr(request.app.state, "db_engine", None)
     if not db_engine:
         raise HTTPException(status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE, detail="enforcement unavailable")
-    try:
-      async with db_engine.begin() as conn:
-        row = (await conn.execute(
-          UGC_INSERT_SQL,
-          {
-            "public_id": public_id,
-            "reporter_anon_id": anon_id,
-            "reporter_user_id": user_id,
-            "reporter_tier": tier_to_client(tier),
-            "title": data.title,
-            "description": data.description,
-            "category": data.category,
-            "severity": data.severity,
-            "lat": float(data.lat),
-            "lon": float(data.lon),
-            "content_hash": content_hash,
-            "geo_cell": geo_cell,
-          }
-        )).first()
-        public_id = str(row.public_id)
-    except Exception as exc:
-      logger.exception(
-          "ugc_report_db_insert_failed",
-          error=str(exc),
-          description="Failed to insert UGC report row into database.",
-      )
-      raise HTTPException(status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE, detail=ErrorResponse(error="STORAGE_UNAVAILABLE", detail="Database unavailable.").model_dump())
-    if data.evidence_urls:
+
+    content_hash, geo_cell, day_bucket = generate_ugc_dedup_fields(data)
+    dedup_redis_key = generate_ugc_dedup_key(content_hash, geo_cell, day_bucket)
+    public_id = str(uuid.uuid4())
+    redis_claimed = False
+
+    if redis_cli:
         try:
-            await redis_cli.set(f"ugc:evidence:{public_id}", json.dumps(data.evidence_urls), ex=7 * 24 * 3600)
+            redis_claimed = bool(
+                await redis_cli.set(
+                    dedup_redis_key,
+                    public_id,
+                    ex=UGC_DEDUP_TTL_SECONDS,
+                    nx=True,
+                )
+            )
+            if not redis_claimed:
+                existing = await redis_cli.get(dedup_redis_key)
+                logger.info(
+                    "ugc_report_dedup_redis_duplicate",
+                    report_id=existing or public_id,
+                    dedup_key_hash=_hash_identifier(dedup_redis_key),
+                    content_hash=content_hash,
+                    geo_cell=geo_cell,
+                    day_bucket=day_bucket,
+                )
+                return {"ok": True, "report_id": existing or public_id, "duplicate": True}
+        except Exception as exc:
+            redis_claimed = False
+            logger.warning(
+                "ugc_dedup_redis_unavailable",
+                error=str(exc),
+                dedup_key_hash=_hash_identifier(dedup_redis_key),
+                content_hash=content_hash,
+                geo_cell=geo_cell,
+                day_bucket=day_bucket,
+                anon_id_hash=_hash_identifier(anon_id),
+                description="Redis UGC dedup unavailable; falling back to database unique constraint.",
+            )
+    else:
+        logger.warning(
+            "ugc_dedup_redis_unavailable",
+            dedup_key_hash=_hash_identifier(dedup_redis_key),
+            content_hash=content_hash,
+            geo_cell=geo_cell,
+            day_bucket=day_bucket,
+            anon_id_hash=_hash_identifier(anon_id),
+            description="Redis UGC dedup unavailable; falling back to database unique constraint.",
+        )
+
+    try:
+        async with db_engine.begin() as conn:
+            row = (
+                await conn.execute(
+                    UGC_INSERT_SQL,
+                    {
+                        "public_id": public_id,
+                        "reporter_anon_id": anon_id,
+                        "reporter_user_id": user_id,
+                        "reporter_tier": tier_to_client(tier),
+                        "title": data.title,
+                        "description": data.description,
+                        "category": data.category,
+                        "severity": data.severity,
+                        "lat": float(data.lat),
+                        "lon": float(data.lon),
+                        "content_hash": content_hash,
+                        "geo_cell": geo_cell,
+                        "day_bucket": day_bucket,
+                    },
+                )
+            ).first()
+            public_id = str(row.public_id)
+    except IntegrityError as exc:
+        if not _is_ugc_dedup_integrity_error(exc):
+            if redis_claimed:
+                try:
+                    await redis_cli.delete(dedup_redis_key)
+                except Exception:
+                    logger.warning(
+                        "ugc_report_dedup_cache_cleanup_failed",
+                        dedup_key_hash=_hash_identifier(dedup_redis_key),
+                    )
+            logger.exception(
+                "ugc_report_db_insert_failed",
+                error=str(exc),
+                description="Failed to insert UGC report row into database.",
+            )
+            raise HTTPException(
+                status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=ErrorResponse(error="STORAGE_UNAVAILABLE", detail="Database unavailable.").model_dump(),
+            )
+
+        existing_public_id = public_id
+        try:
+            async with db_engine.begin() as conn:
+                existing = (
+                    await conn.execute(
+                        UGC_FIND_DUPLICATE_SQL,
+                        {
+                            "content_hash": content_hash,
+                            "geo_cell": geo_cell,
+                            "day_bucket": day_bucket,
+                        },
+                    )
+                ).first()
+                if existing:
+                    existing_public_id = str(existing.public_id)
+        except Exception as lookup_exc:
+            logger.warning(
+                "ugc_report_duplicate_lookup_failed",
+                error=str(lookup_exc),
+                dedup_key_hash=_hash_identifier(dedup_redis_key),
+            )
+
+        if redis_cli:
+            try:
+                if redis_claimed:
+                    await redis_cli.set(
+                        dedup_redis_key,
+                        existing_public_id,
+                        ex=UGC_DEDUP_TTL_SECONDS,
+                    )
+                else:
+                    await redis_cli.set(
+                        dedup_redis_key,
+                        existing_public_id,
+                        ex=UGC_DEDUP_TTL_SECONDS,
+                        nx=True,
+                    )
+            except Exception as redis_exc:
+                logger.warning(
+                    "ugc_report_dedup_cache_write_failed",
+                    error=str(redis_exc),
+                    report_id=existing_public_id,
+                    dedup_key_hash=_hash_identifier(dedup_redis_key),
+                    description="Failed to persist UGC deduplication key in Redis after DB duplicate.",
+                )
+        logger.info(
+            "ugc_report_db_duplicate",
+            report_id=existing_public_id,
+            dedup_key_hash=_hash_identifier(dedup_redis_key),
+            content_hash=content_hash,
+            geo_cell=geo_cell,
+            day_bucket=day_bucket,
+        )
+        return {"ok": True, "report_id": existing_public_id, "duplicate": True}
+    except Exception as exc:
+        if redis_claimed:
+            try:
+                await redis_cli.delete(dedup_redis_key)
+            except Exception:
+                logger.warning(
+                    "ugc_report_dedup_cache_cleanup_failed",
+                    dedup_key_hash=_hash_identifier(dedup_redis_key),
+                )
+        logger.exception(
+            "ugc_report_db_insert_failed",
+            error=str(exc),
+            description="Failed to insert UGC report row into database.",
+        )
+        raise HTTPException(
+            status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=ErrorResponse(error="STORAGE_UNAVAILABLE", detail="Database unavailable.").model_dump(),
+        )
+
+    if data.evidence_urls and redis_cli:
+        try:
+            await redis_cli.set(
+                f"ugc:evidence:{public_id}",
+                json.dumps(data.evidence_urls),
+                ex=UGC_DEDUP_TTL_SECONDS,
+            )
         except Exception as exc:
             logger.warning(
                 "ugc_report_evidence_cache_write_failed",
@@ -1151,19 +1331,5 @@ async def ugc_report_submit(
                 report_id=public_id,
                 description="Failed to cache UGC evidence URLs in Redis.",
             )
-    try:
-        # Residual serverless risk: if the function crashes after DB commit but before this Redis write,
-        # a retry may insert again because Redis is the only shared dedup state across invocations.
-        claimed = await redis_cli.set(dedup_redis_key, public_id, ex=7 * 24 * 3600, nx=True)
-        if not claimed:
-            existing = await redis_cli.get(dedup_redis_key)
-            return {"ok": True, "report_id": existing or public_id, "duplicate": True}
-    except Exception as exc:
-        logger.warning(
-            "ugc_report_dedup_cache_write_failed",
-            error=str(exc),
-            report_id=public_id,
-            dedup_key_hash=_hash_identifier(dedup_redis_key),
-            description="Failed to persist UGC deduplication key in Redis.",
-        )
+
     return {"ok": True, "report_id": public_id, "duplicate": False}
