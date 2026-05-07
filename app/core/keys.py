@@ -68,3 +68,8 @@ class KeyBuilder:
     @staticmethod
     def reputation(ip: str) -> str:
         return f"dd:security:reputation:ip:{ip}"
+
+    @staticmethod
+    def ugc_dedup(content_hash: str, geo_cell: str, day_bucket: str) -> str:
+        """UGC deduplication key scoped to the DB unique constraint window."""
+        return f"dd:ugc:dedup:{content_hash}:{geo_cell}:{day_bucket}"
