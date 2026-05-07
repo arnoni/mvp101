@@ -44,6 +44,13 @@ class QuotaInterface(Protocol):
     """Abstract interface for checking usage."""
     async def get_usage(self, key: str) -> int: ...
     async def check_available(self, key: str, max_limit: int) -> bool: ...
+    async def check_and_consume(
+        self,
+        key: str,
+        daily_limit: int,
+        ttl: int = 86400,
+        idempotency_key: Optional[str] = None,
+    ) -> tuple[bool, int]: ...
 
 
 # --- Policy Engine ---
@@ -239,9 +246,21 @@ async def run_gate(
 
     limit = max(1, int(daily_limit))
 
+    raw_idempotency_key = (request.headers.get("Idempotency-Key") or "").strip()[:128]
+    idempotency_key = None
+    if raw_idempotency_key:
+        from app.core.keys import KeyBuilder
+
+        idempotency_key = KeyBuilder.quota_idempotency(quota_key, raw_idempotency_key)
+
     try:
-        allowed, remaining_after = await quota_repo.check_and_consume(quota_key, limit)
+        allowed, remaining_after = await quota_repo.check_and_consume(
+            quota_key,
+            limit,
+            idempotency_key=idempotency_key,
+        )
     except RuntimeError:
+        logger.error("quota_redis_failure", quota_key=quota_key, daily_limit=limit)
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="enforcement unavailable")
 
     if monitor_quota:

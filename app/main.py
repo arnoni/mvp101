@@ -163,6 +163,7 @@ async def lifespan(app: FastAPI):
                  if not pong: raise RuntimeError("Redis ping failed")
                  
             app.state.quota_repo = QuotaRepository(app.state.redis)
+            await app.state.quota_repo.load_lua_scripts()
             logger.info("Upstash Redis (REST) connected and QuotaRepository ready")
         except Exception as e:
             logger.error(f"Redis initialization failed: {e}")

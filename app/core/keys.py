@@ -11,6 +11,10 @@ class KeyBuilder:
     @staticmethod
     def quota_block(identity_kind: str, identity_id: str) -> str:
         return f"dd:quota:block:{identity_kind}:{identity_id}"
+
+    @staticmethod
+    def quota_idempotency(quota_key: str, idempotency_key: str) -> str:
+        return f"dd:quota:idempotency:{quota_key}:{idempotency_key}"
     
     @staticmethod
     def session(sid: str) -> str:
