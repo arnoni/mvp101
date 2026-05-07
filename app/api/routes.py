@@ -46,6 +46,7 @@ import time
 import os
 import hashlib
 import json
+from datetime import datetime, timezone, timedelta
 
 router = APIRouter()
 logger = structlog.get_logger(__name__)
@@ -93,6 +94,142 @@ WHERE content_hash = :content_hash
 ORDER BY created_at ASC
 LIMIT 1
 """)
+
+def _seconds_until_next_utc_midnight() -> int:
+    now = datetime.now(timezone.utc)
+    tomorrow = (now + timedelta(days=1)).date()
+    midnight = datetime.combine(tomorrow, datetime.min.time(), tzinfo=timezone.utc)
+    return max(1, int((midnight - now).total_seconds()))
+
+
+def _search_error_context(
+    request: Request,
+    *,
+    limiter: str | None = None,
+    tier: TierStatus | None = None,
+    quota_remaining: int | None = None,
+    quota_limit: int | None = None,
+    turnstile_present: bool = False,
+    turnstile_valid: bool | None = None,
+) -> dict:
+    return {
+        "limiter": limiter,
+        "tier": tier_to_client(tier or getattr(request.state, "tier", TierStatus.FREE)),
+        "quota_remaining": quota_remaining,
+        "quota_limit": quota_limit,
+        "turnstile_present": turnstile_present,
+        "turnstile_valid": turnstile_valid,
+        "request_id": get_req_id(request),
+    }
+
+
+def _structured_search_error_response(
+    status_code: int,
+    error: str,
+    message: str,
+    *,
+    retry_after_seconds: int | None = None,
+    remaining: int | None = None,
+    limit: int | None = None,
+    scope: str | None = None,
+) -> JSONResponse:
+    payload = {"error": error, "message": message}
+    if retry_after_seconds is not None:
+        payload["retry_after_seconds"] = int(retry_after_seconds)
+    if remaining is not None:
+        payload["remaining"] = int(remaining)
+    if limit is not None:
+        payload["limit"] = int(limit)
+    if scope is not None:
+        payload["scope"] = scope
+    return JSONResponse(status_code=status_code, content=payload)
+
+
+def _search_http_exception_response(
+    request: Request,
+    exc: HTTPException,
+    *,
+    tier: TierStatus,
+    quota_limit: int,
+    turnstile_present: bool,
+    turnstile_valid: bool | None,
+) -> JSONResponse:
+    detail = exc.detail if isinstance(exc.detail, dict) else {}
+    error = detail.get("error")
+    remaining = detail.get("quota_remaining")
+    retry_after_seconds = detail.get("retry_after_seconds")
+    if exc.status_code == http_status.HTTP_429_TOO_MANY_REQUESTS:
+        code = "FREE_DAILY_QUOTA_EXCEEDED" if error in {None, "QUOTA_EXCEEDED"} else error
+        retry_after_seconds = retry_after_seconds or _seconds_until_next_utc_midnight()
+        logger.warning(
+            "search_request_rejected",
+            error=code,
+            status_code=429,
+            threshold_value=quota_limit,
+            current_counter=max(0, quota_limit - int(remaining or 0)),
+            **_search_error_context(
+                request,
+                limiter="anonymous",
+                tier=tier,
+                quota_remaining=int(remaining or 0),
+                quota_limit=quota_limit,
+                turnstile_present=turnstile_present,
+                turnstile_valid=turnstile_valid,
+            ),
+        )
+        return _structured_search_error_response(
+            http_status.HTTP_429_TOO_MANY_REQUESTS,
+            code,
+            "You've used today's free checks. Try again tomorrow or join research access.",
+            retry_after_seconds=retry_after_seconds,
+            remaining=int(remaining or 0),
+            limit=quota_limit,
+            scope="anonymous",
+        )
+    if exc.status_code == http_status.HTTP_503_SERVICE_UNAVAILABLE:
+        logger.warning(
+            "search_request_rejected",
+            error="SEARCH_TEMPORARILY_THROTTLED",
+            status_code=503,
+            **_search_error_context(
+                request,
+                limiter="server",
+                tier=tier,
+                quota_remaining=remaining,
+                quota_limit=quota_limit,
+                turnstile_present=turnstile_present,
+                turnstile_valid=turnstile_valid,
+            ),
+        )
+        return _structured_search_error_response(
+            http_status.HTTP_503_SERVICE_UNAVAILABLE,
+            "SEARCH_TEMPORARILY_THROTTLED",
+            "Service temporarily busy. Please try again in a moment.",
+            retry_after_seconds=int(retry_after_seconds or 30),
+        )
+    if exc.status_code == http_status.HTTP_403_FORBIDDEN and error in {"TURNSTILE_REQUIRED", "TURNSTILE_INVALID", "CHALLENGE_REQUIRED"}:
+        code = "TURNSTILE_REQUIRED" if error in {"TURNSTILE_REQUIRED", "CHALLENGE_REQUIRED"} else "TURNSTILE_INVALID"
+        logger.warning(
+            "search_request_rejected",
+            error=code,
+            status_code=403,
+            **_search_error_context(
+                request,
+                limiter="turnstile",
+                tier=tier,
+                quota_remaining=remaining,
+                quota_limit=quota_limit,
+                turnstile_present=turnstile_present,
+                turnstile_valid=turnstile_valid,
+            ),
+        )
+        return _structured_search_error_response(
+            http_status.HTTP_403_FORBIDDEN,
+            code,
+            "Verification required." if code == "TURNSTILE_REQUIRED" else "Verification failed.",
+        )
+    raise exc
+
 def _raise_location_resolution_blocked_http_exception(msg: str | None = None) -> None:
     from app.services.location_parser import _BLOCKED_RESOLUTION_MESSAGE
     raise HTTPException(
@@ -419,6 +556,8 @@ async def search(
         tier = getattr(request.state, "tier", TierStatus.FREE)
         entitlement_stale = getattr(request.state, "entitlement_stale", False)
         daily_limit = int(getattr(request.state, "daily_limit", 3) or 3)
+        turnstile_token = (data.turnstile_token or "").strip()
+        turnstile_present = bool(turnstile_token)
 
         # Aggregate telemetry first so blocked/challenged attempts are still counted.
         classification = classify_location_input(data.location_input or "")
@@ -459,6 +598,26 @@ async def search(
 
         await protect_mutation(request)
         started_at = time.perf_counter()
+        if not turnstile_present:
+            logger.warning(
+                "search_request_rejected",
+                error="TURNSTILE_REQUIRED",
+                status_code=403,
+                **_search_error_context(
+                    request,
+                    limiter="turnstile",
+                    tier=tier,
+                    quota_remaining=None,
+                    quota_limit=daily_limit,
+                    turnstile_present=False,
+                    turnstile_valid=False,
+                ),
+            )
+            return _structured_search_error_response(
+                http_status.HTTP_403_FORBIDDEN,
+                "TURNSTILE_REQUIRED",
+                "Verification required.",
+            )
         if data.location_input:
             try:
                 parsed_input = parse_location_input(data.location_input)
@@ -532,8 +691,10 @@ async def search(
                 entitlement_stale=entitlement_stale,
                 daily_limit=daily_limit,
                 area_code=area_code,
+                force_turnstile_required=True,
+                consume_quota=False,
             )
-        except HTTPException:
+        except HTTPException as exc:
             for check_type in check_types:
                 ui_surface = "demand_level_page" if check_type == "demand" else "construction_level_page"
                 await _emit_funnel_event(
@@ -545,7 +706,14 @@ async def search(
                 )
                 if user_id is not None:
                     capture(str(user_id), "check_blocked_tier", {"tier": _tier_to_funnel(tier)})
-            raise
+            return _search_http_exception_response(
+                request,
+                exc,
+                tier=tier,
+                quota_limit=daily_limit,
+                turnstile_present=turnstile_present,
+                turnstile_valid=(False if exc.status_code == http_status.HTTP_403_FORBIDDEN else None),
+            )
 
         limit = daily_limit
         checks_today = max(0, limit - gate_result.remaining_after)
@@ -565,6 +733,68 @@ async def search(
             quota_remaining=gate_result.remaining_after,
             checks_today=checks_today,
         )
+
+        if not getattr(gate_result, "admin_bypass", False) and getattr(gate_result, "quota_key", None):
+            raw_idempotency_key = (request.headers.get("Idempotency-Key") or "").strip()[:128]
+            idempotency_key = KeyBuilder.quota_idempotency(gate_result.quota_key, raw_idempotency_key) if raw_idempotency_key else None
+            try:
+                allowed, remaining_after = await quota_repo.check_and_consume(
+                    gate_result.quota_key,
+                    getattr(gate_result, "quota_limit", None) or daily_limit,
+                    idempotency_key=idempotency_key,
+                    redis_op="quota_increment",
+                )
+            except RuntimeError:
+                logger.warning(
+                    "search_request_rejected",
+                    error="SEARCH_TEMPORARILY_THROTTLED",
+                    status_code=503,
+                    redis_op="quota_increment",
+                    **_search_error_context(
+                        request,
+                        limiter="server",
+                        tier=tier,
+                        quota_remaining=gate_result.remaining_after,
+                        quota_limit=getattr(gate_result, "quota_limit", None) or daily_limit,
+                        turnstile_present=turnstile_present,
+                        turnstile_valid=True,
+                    ),
+                )
+                return _structured_search_error_response(
+                    http_status.HTTP_503_SERVICE_UNAVAILABLE,
+                    "SEARCH_TEMPORARILY_THROTTLED",
+                    "Service temporarily busy. Please try again in a moment.",
+                    retry_after_seconds=30,
+                )
+            if not allowed:
+                logger.warning(
+                    "search_request_rejected",
+                    error="FREE_DAILY_QUOTA_EXCEEDED",
+                    status_code=429,
+                    threshold_value=getattr(gate_result, "quota_limit", None) or daily_limit,
+                    current_counter=getattr(gate_result, "quota_limit", None) or daily_limit,
+                    redis_op="quota_increment",
+                    **_search_error_context(
+                        request,
+                        limiter="anonymous",
+                        tier=tier,
+                        quota_remaining=0,
+                        quota_limit=getattr(gate_result, "quota_limit", None) or daily_limit,
+                        turnstile_present=turnstile_present,
+                        turnstile_valid=True,
+                    ),
+                )
+                return _structured_search_error_response(
+                    http_status.HTTP_429_TOO_MANY_REQUESTS,
+                    "FREE_DAILY_QUOTA_EXCEEDED",
+                    "You've used today's free checks. Try again tomorrow or join research access.",
+                    retry_after_seconds=_seconds_until_next_utc_midnight(),
+                    remaining=0,
+                    limit=getattr(gate_result, "quota_limit", None) or daily_limit,
+                    scope="anonymous",
+                )
+            response_payload.quota_remaining = remaining_after
+            response_payload.checks_today = max(0, (getattr(gate_result, "quota_limit", None) or daily_limit) - remaining_after)
         demand_cell_id = BucketEngine.get_cell_id(data.lat, data.lon)
         logger.info("demand_cell_id_computed", lat=data.lat, lon=data.lon, demand_cell_id=demand_cell_id)
         try:
@@ -989,7 +1219,7 @@ async def user_report_submit(
                 await _increment_user_report_success_quota(
                     request, redis_cli, key=success_quota_key, limit=success_quota_limit
                 )
-            except HTTPException:
+            except HTTPException as exc:
                 raise
             except RuntimeError as quota_exc:
                 logger.error("user_report_success_quota_increment_failed", request_id=request_id, error=str(quota_exc))

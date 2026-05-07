@@ -43,14 +43,15 @@ class PolicyDecision(BaseModel):
 
 class QuotaInterface(Protocol):
     """Abstract interface for checking usage."""
-    async def get_usage(self, key: str) -> int: ...
-    async def check_available(self, key: str, max_limit: int) -> bool: ...
+    async def get_usage(self, key: str, redis_op: Optional[str] = None) -> int: ...
+    async def check_available(self, key: str, max_limit: int, redis_op: Optional[str] = None) -> bool: ...
     async def check_and_consume(
         self,
         key: str,
         daily_limit: int,
         ttl: int = 86400,
         idempotency_key: Optional[str] = None,
+        redis_op: Optional[str] = None,
     ) -> tuple[bool, int]: ...
 
 
@@ -103,7 +104,7 @@ class PolicyEngine:
         )
         
         try:
-            current_usage = await self.quota_repo.get_usage(quota_key)
+            current_usage = await self.quota_repo.get_usage(quota_key, redis_op="quota_check")
         except RuntimeError as e:
             # Handle redis_unavailable or other repo errors
             # For the landing page/evaluation, we might want to fail-open (allow with 0 usage)
@@ -172,6 +173,8 @@ class GateResult:
     decision: PolicyDecision
     remaining_after: int
     admin_bypass: bool
+    quota_key: Optional[str] = None
+    quota_limit: int = 0
 
 @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
 async def run_gate(
@@ -187,6 +190,7 @@ async def run_gate(
     area_code: str,
     force_turnstile_required: bool = False,
     disallow_admin_bypass: bool = False,
+    consume_quota: bool = True,
 ) -> GateResult:
     actor_email = ((getattr(request.state, "user_email", None) or "")).lower()
     monitor_quota = actor_email == MONITORED_QUOTA_EMAIL
@@ -210,7 +214,7 @@ async def run_gate(
 
     if admin_bypass:
         decision = PolicyDecision(verdict=PolicyVerdict.ALLOW, quota_remaining=999, max_results=5)
-        return GateResult(decision=decision, remaining_after=decision.quota_remaining or 999, admin_bypass=True)
+        return GateResult(decision=decision, remaining_after=decision.quota_remaining or 999, admin_bypass=True, quota_key=None, quota_limit=999)
 
     decision = await policy_engine.evaluate(context)
 
@@ -218,8 +222,8 @@ async def run_gate(
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=ErrorResponse(
-                error="QUOTA_EXCEEDED",
-                detail="Daily quota exceeded.",
+                error="FREE_DAILY_QUOTA_EXCEEDED",
+                detail="You've used today's free checks. Try again tomorrow or join research access.",
                 retry_after_seconds=decision.retry_after,
                 quota_remaining=decision.quota_remaining,
                 error_id=getattr(request.state, "request_id", None),
@@ -231,8 +235,8 @@ async def run_gate(
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=ErrorResponse(
-                    error="CHALLENGE_REQUIRED",
-                    detail="Human verification required.",
+                    error="TURNSTILE_REQUIRED",
+                    detail="Verification required.",
                     quota_remaining=decision.quota_remaining,
                     error_id=getattr(request.state, "request_id", None),
                 ).model_dump(),
@@ -269,14 +273,18 @@ async def run_gate(
         idempotency_key = KeyBuilder.quota_idempotency(quota_key, raw_idempotency_key)
 
     try:
+        if not consume_quota:
+            return GateResult(decision=decision, remaining_after=decision.quota_remaining, admin_bypass=False, quota_key=quota_key, quota_limit=limit)
+
         allowed, remaining_after = await quota_repo.check_and_consume(
             quota_key,
             limit,
             idempotency_key=idempotency_key,
+            redis_op="quota_increment",
         )
     except RuntimeError:
-        logger.error("quota_redis_failure", quota_key=quota_key, daily_limit=limit)
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="enforcement unavailable")
+        logger.error("quota_redis_failure", quota_key=quota_key, daily_limit=limit, redis_op="quota_increment")
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail={"error": "SEARCH_TEMPORARILY_THROTTLED", "message": "Service temporarily busy. Please try again in a moment.", "retry_after_seconds": 30})
 
     if monitor_quota:
         before_remaining = max(0, int(decision.quota_remaining))
@@ -301,12 +309,12 @@ async def run_gate(
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=ErrorResponse(
-                error="QUOTA_EXCEEDED",
-                detail="Daily quota exceeded.",
+                error="FREE_DAILY_QUOTA_EXCEEDED",
+                detail="You've used today's free checks. Try again tomorrow or join research access.",
                 retry_after_seconds=3600 * 24,
                 quota_remaining=0,
                 error_id=getattr(request.state, "request_id", None),
             ).model_dump(),
         )
 
-    return GateResult(decision=decision, remaining_after=remaining_after, admin_bypass=False)
+    return GateResult(decision=decision, remaining_after=remaining_after, admin_bypass=False, quota_key=quota_key, quota_limit=limit)

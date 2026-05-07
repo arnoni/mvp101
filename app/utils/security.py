@@ -123,12 +123,13 @@ async def _read_turnstile_cache(cache_key: str | None) -> bool:
             "error",
             "turnstile_cache_read_failed",
             cache_key=cache_key,
+            redis_op="turnstile_replay_guard",
             error_class=exc.__class__.__name__,
             error_detail=str(exc),
         )
         return False
     if cached:
-        logger.info("turnstile_verification_cache_hit", cache_key=cache_key)
+        logger.info("turnstile_verification_cache_hit", cache_key=cache_key, redis_op="turnstile_replay_guard")
         return True
     return False
 
@@ -138,11 +139,13 @@ async def _write_turnstile_cache(cache_key: str | None) -> None:
         return
     try:
         await redis_client.setex(cache_key, TURNSTILE_CACHE_TTL_SECONDS, "1")
+        logger.info("turnstile_verification_cache_written", cache_key=cache_key, redis_op="turnstile_replay_guard")
     except Exception as exc:
         _safe_log(
             "error",
             "turnstile_cache_write_failed",
             cache_key=cache_key,
+            redis_op="turnstile_replay_guard",
             error_class=exc.__class__.__name__,
             error_detail=str(exc),
         )

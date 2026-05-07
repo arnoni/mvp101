@@ -42,7 +42,8 @@
   const PIVOT_Y = 180;
   const DURATION = 800;
   const VERIFY_TIMEOUT_TEXT = "Verification unavailable. Please check your connection or disable ad blockers and try again.";
-  const SEARCH_CHALLENGE_CODES = new Set(["CHALLENGE_REQUIRED", "INVALID_CHALLENGE"]);
+  const SEARCH_CHALLENGE_CODES = new Set(["CHALLENGE_REQUIRED", "INVALID_CHALLENGE", "TURNSTILE_REQUIRED", "TURNSTILE_INVALID"]);
+  let searchRequestInFlight = false;
   let parseAbortController = null;
   let reportParseAbortController = null;
   let _checkoutOpSeq = 0;
@@ -89,7 +90,7 @@
     let data = null;
     try { data = await response.json();
     } catch (err) { if (response.ok) return { ok: true, status: response.status, data: null, response }; }
-    if (!response.ok) { const err = new Error(extractApiMessage(data) || `Request failed with HTTP ${response.status}.`);
+    if (!response.ok) { const err = new Error(extractApiMessage(data) || "Something went wrong. Please try again.");
       err.status = response.status;
       err.data = data;
       err.errorCode = extractErrorCode(data);
@@ -206,9 +207,9 @@
     btn.querySelector(".btn-text")?.classList.toggle("hidden", Boolean(isLoading));
     btn.querySelector(".btn-spinner")?.classList.toggle("hidden", !isLoading); }
   function extractErrorCode(data) {
-    return data?.detail?.detail?.error_code || data?.detail?.error_code || data?.error_code || data?.reason_code || data?.detail?.reason_code || null; }
+    return data?.error || data?.detail?.error || data?.detail?.detail?.error || data?.detail?.detail?.error_code || data?.detail?.error_code || data?.error_code || data?.reason_code || data?.detail?.reason_code || null; }
   function extractApiMessage(data) {
-    return data?.detail?.detail?.message || data?.detail?.message || data?.message || (typeof data?.detail === "string" ? data.detail : ""); }
+    return data?.message || data?.detail?.message || data?.detail?.detail?.message || (typeof data?.detail === "string" ? data.detail : ""); }
   function parseLocationPayload(data, fallbackText) {
     const normalized = data?.normalized || data;
     const lat = Number(normalized?.latitude ?? normalized?.lat);
@@ -320,13 +321,13 @@
     updateButtons(); }
   function updateButtons() {
     const hasCoords = state.coords.valid;
-    const busy = state.hero.searchRequestInFlight || state.hero.constructionStatus === "loading" || state.hero.demandStatus === "loading";
+    const busy = searchRequestInFlight || state.hero.searchRequestInFlight || state.hero.constructionStatus === "loading" || state.hero.demandStatus === "loading";
     const mainBtn = $("mainActionBtn");
     const conBtn = $("constructionGoBtn");
     const demandBtn = $("demandGoBtn");
     if (mainBtn) mainBtn.disabled = !hasCoords || busy;
-    if (conBtn) conBtn.disabled = !hasCoords || state.hero.constructionStatus === "loading";
-    if (demandBtn) demandBtn.disabled = !hasCoords || state.hero.demandStatus === "loading"; }
+    if (conBtn) conBtn.disabled = !hasCoords || busy;
+    if (demandBtn) demandBtn.disabled = !hasCoords || busy; }
   // ── 6. Hero: location input, parse preview, fetchConstruction, fetchDemand
   function setHeroCoords(parsed) {
     state.coords = { lat: parsed.lat, lng: parsed.lng, valid: true, key: normalizeKey(parsed.key || `${parsed.lat},${parsed.lng}`) };
@@ -387,6 +388,32 @@
     } finally { parseAbortController = null;
       updateButtons(); } }
   const debouncedParseHeroLocation = debounce(parseHeroLocation, 350);
+
+  function productSearchErrorMessage(code) {
+    if (code === "FREE_DAILY_QUOTA_EXCEEDED") return "You've used today's free checks. Try again tomorrow or join research access.";
+    if (code === "IP_RATE_LIMIT_EXCEEDED") return "Too many requests from your location. Please wait and try again.";
+    if (code === "TURNSTILE_REQUIRED" || code === "TURNSTILE_INVALID") return "Verification failed. Please try again.";
+    if (code === "SEARCH_TEMPORARILY_THROTTLED") return "Service temporarily busy. Please try again in a moment.";
+    return "Something went wrong. Please try again."; }
+  function handleStructuredSearchError(err, attemptId) {
+    const code = err?.errorCode || null;
+    if ((err?.status === 429 || err?.status === 503) && !code) {
+      try { window.Sentry?.captureMessage?.("search_unstructured_backend_error", {
+          level: "warning",
+          extra: { http_status: err.status, coord_key: state.coords.key, attempt_id: attemptId }
+        });
+      } catch (_) {}
+    }
+    if (code === "TURNSTILE_REQUIRED" || code === "TURNSTILE_INVALID" || SEARCH_CHALLENGE_CODES.has(code)) {
+      heroTurnstile.reset();
+      $("turnstileSlot")?.classList.remove("hidden");
+      heroTurnstile.init();
+    }
+    const props = { tier: AccessState.get().tier, coord_key: state.coords.key, attempt_id: attemptId };
+    if (code === "FREE_DAILY_QUOTA_EXCEEDED") { captureEvent("search_quota_exceeded", props); openJoinResearchModal("quota_exceeded_search"); }
+    if (code === "IP_RATE_LIMIT_EXCEEDED") captureEvent("search_rate_limited", props);
+    if (code === "SEARCH_TEMPORARILY_THROTTLED") captureEvent("search_throttled", props);
+    return productSearchErrorMessage(code); }
   function searchPayload(target) {
     return { lat: state.coords.lat,
       lon: state.coords.lng,
@@ -432,7 +459,7 @@
     return !responseKey || !currentKey || responseKey === currentKey; }
   async function fetchConstruction(options = {}) {
     logSearchEvent("search_submit_clicked", { trigger: options.trigger || "unknown" });
-    if (state.hero.searchRequestInFlight) return blockSearchSubmit("request_in_flight", "A search is already running. Please wait.");
+    if (searchRequestInFlight || state.hero.searchRequestInFlight) return blockSearchSubmit("request_in_flight", "A search is already running. Please wait.");
     if (!state.coords.valid) return blockSearchSubmit("invalid_location", state.input.error || "Please enter a valid location before searching.");
     const turnstileToken = heroTurnstile.getToken();
     if (isHeroTurnstileRequired() && !turnstileToken) {
@@ -442,7 +469,14 @@
     }
     const attemptId = ++state.hero.searchAttemptId;
     setSearchState("turnstile_verified");
+    if (!turnstileToken) {
+      console.warn(JSON.stringify({ level: "warning", event: "search_dispatch_blocked_missing_token", attempt_id: attemptId, search_state: state.hero.searchState }));
+      heroTurnstile.reset();
+      setSearchState("idle");
+      return blockSearchSubmit("turnstile_token_missing_at_dispatch", "Verification failed. Please try again.");
+    }
     logSearchEvent("search_validation_passed", { attempt_id: attemptId });
+    searchRequestInFlight = true;
     state.hero.searchRequestInFlight = true;
     state.hero.constructionStatus = "loading";
     setSearchState("request_started");
@@ -450,7 +484,16 @@
     setText("constructionMessage", document.body.dataset.labelAnalyzingSignals || "Analyzing signals...");
     try {
       logSearchEvent("search_request_started", { attempt_id: attemptId });
-      const { data } = await apiPost("/api/search", searchPayload("construction"));
+      const payload = searchPayload("construction");
+      if (state.hero.searchState === "turnstile_verified" && !payload.turnstile_token) {
+        console.warn(JSON.stringify({ level: "warning", event: "search_payload_missing_token", attempt_id: attemptId, search_state: state.hero.searchState }));
+        heroTurnstile.reset();
+        setSearchState("idle");
+        state.hero.constructionStatus = "error";
+        setText("constructionMessage", "Verification failed. Please try again.");
+        return null;
+      }
+      const { data } = await apiPost("/api/search", payload);
       if (attemptId !== state.hero.searchAttemptId) return null;
       if (data?.verification_required) { $("turnstileSlot")?.classList.remove("hidden");
         heroTurnstile.reset();
@@ -485,13 +528,10 @@
       setSearchState("render_result");
       setText("constructionMessage", result.message || document.body.dataset.labelReady || "Ready");
       return result;
-    } catch (err) { if (SEARCH_CHALLENGE_CODES.has(err.errorCode)) {
-        heroTurnstile.reset();
-        $("turnstileSlot")?.classList.remove("hidden");
-        await heroTurnstile.init(); }
+    } catch (err) { const message = handleStructuredSearchError(err, attemptId);
       state.hero.constructionStatus = "error";
       setSearchState("request_failed");
-      setText("constructionMessage", err.message || "Could not check construction right now.");
+      setText("constructionMessage", message);
       logSearchEvent("search_request_failed", {
         attempt_id: attemptId,
         error_code: err.errorCode || null,
@@ -505,18 +545,40 @@
       });
       return null;
     } finally {
-      if (attemptId === state.hero.searchAttemptId) state.hero.searchRequestInFlight = false;
+      if (attemptId === state.hero.searchAttemptId) { state.hero.searchRequestInFlight = false; searchRequestInFlight = false; }
       if (state.hero.constructionStatus === "loading") state.hero.constructionStatus = "idle";
       updateButtons();
     } }
   async function fetchDemand() { const access = AccessState.get();
+    if (searchRequestInFlight || state.hero.searchRequestInFlight) return null;
     if (!access.demandAllowed || access.tier === "free") { openJoinResearchModal("demand_level_page");
       return null; }
     if (!state.coords.valid) return null;
+    const demandAttemptId = ++state.hero.searchAttemptId;
+    searchRequestInFlight = true;
+    state.hero.searchRequestInFlight = true;
     state.hero.demandStatus = "loading";
     updateButtons();
     setText("demandMessage", document.body.dataset.labelCheckingDemand || "Checking demand...");
-    try { const { data } = await apiPost("/api/search", searchPayload("demand"));
+    try { const token = heroTurnstile.getToken();
+      setSearchState("turnstile_verified");
+      if (!token) {
+        console.warn(JSON.stringify({ level: "warning", event: "search_dispatch_blocked_missing_token", attempt_id: demandAttemptId, search_state: state.hero.searchState }));
+        setSearchState("idle");
+        heroTurnstile.reset();
+        await heroTurnstile.init();
+        setText("demandMessage", "Verification failed. Please try again.");
+        return null;
+      }
+      const demandPayload = searchPayload("demand");
+      if (!demandPayload.turnstile_token) {
+        console.warn(JSON.stringify({ level: "warning", event: "search_payload_missing_token", attempt_id: demandAttemptId, search_state: state.hero.searchState }));
+        heroTurnstile.reset();
+        setSearchState("idle");
+        setText("demandMessage", "Verification failed. Please try again.");
+        return null;
+      }
+      const { data } = await apiPost("/api/search", demandPayload);
       if (data?.verification_required) { $("turnstileSlot")?.classList.remove("hidden");
         await heroTurnstile.init();
         setText("demandMessage", document.body.dataset.labelVerificationRequired || "Verification required");
@@ -530,12 +592,9 @@
       state.hero.demandStatus = "ready";
       setText("demandMessage", result.message || document.body.dataset.labelReady || "Ready");
       return result;
-    } catch (err) { if (SEARCH_CHALLENGE_CODES.has(err.errorCode)) {
-        heroTurnstile.reset();
-        $("turnstileSlot")?.classList.remove("hidden");
-        await heroTurnstile.init(); }
+    } catch (err) { const message = handleStructuredSearchError(err, demandAttemptId);
       state.hero.demandStatus = "error";
-      setText("demandMessage", err.message || "Could not check demand right now.");
+      setText("demandMessage", message);
       logClientException("demand_search_failed", err, {
         error_code: err.errorCode || null,
         http_status: err.status || null,
@@ -551,7 +610,8 @@
         window.posthog?.flush?.();
       } catch (_) {}
       return null;
-    } finally { if (state.hero.demandStatus === "loading") state.hero.demandStatus = "idle";
+    } finally { if (demandAttemptId === state.hero.searchAttemptId) { state.hero.searchRequestInFlight = false; searchRequestInFlight = false; }
+      if (state.hero.demandStatus === "loading") state.hero.demandStatus = "idle";
       updateButtons(); } }
   // ── 7. Modal system: openModal, closeModal, hooks map
   const hooks = { supportModalLayer: {

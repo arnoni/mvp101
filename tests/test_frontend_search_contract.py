@@ -20,7 +20,8 @@ def test_search_submit_telemetry_and_request_lifecycle_are_instrumented():
         "search_validation_passed",
     ]:
         assert event_name in APP_JS
-    assert 'apiPost("/api/search", searchPayload("construction"))' in APP_JS
+    assert 'const payload = searchPayload("construction");' in APP_JS
+    assert 'apiPost("/api/search", payload)' in APP_JS
 
 
 def test_render_result_requires_request_success_state_first():
