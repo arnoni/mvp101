@@ -1,14 +1,29 @@
 import asyncio
+import hashlib
 import html
 from typing import Any, Optional
 
 import resend
+import sentry_sdk
 import structlog
 
 from app.core.config import settings
 
 logger = structlog.get_logger(__name__)
 RESEND_SEND_TIMEOUT_SECONDS = 10
+
+
+def _hash_email(email: str) -> str:
+    return hashlib.sha256(email.strip().lower().encode("utf-8")).hexdigest()
+
+
+def _safe_provider_response(response: Any) -> Any:
+    if response is None or isinstance(response, (dict, list, str, int, float, bool)):
+        return response
+    try:
+        return repr(response)
+    except Exception as exc:
+        return f"<unrepresentable {exc.__class__.__name__}>"
 
 
 def _extract_provider_email_id(response: Any) -> Optional[str]:
@@ -54,9 +69,25 @@ class EmailService:
             )
             provider_error = _extract_provider_error(response)
             if provider_error:
+                logger.error(
+                    "magic_link_send_failed",
+                    provider="resend",
+                    reason="provider_error",
+                    email_hash=_hash_email(str((params.get("to") or [""])[0])),
+                    resend_response=_safe_provider_response(response),
+                )
+                sentry_sdk.capture_message("magic_link_send_failed", level="error")
                 raise RuntimeError(f"Resend send failed: {provider_error}")
             email_id = _extract_provider_email_id(response)
             if not email_id:
+                logger.error(
+                    "magic_link_send_failed",
+                    provider="resend",
+                    reason="missing_provider_email_id",
+                    email_hash=_hash_email(str((params.get("to") or [""])[0])),
+                    resend_response=_safe_provider_response(response),
+                )
+                sentry_sdk.capture_message("magic_link_send_failed", level="error")
                 raise RuntimeError(f"Resend send response did not include an email id: {response!r}")
             return email_id
         except asyncio.TimeoutError:
@@ -121,13 +152,15 @@ class EmailService:
 
         except Exception as exc:
             logger.error(
-                "E_EMAIL_SEND_FAILED",
+                "magic_link_send_failed",
                 provider="resend",
                 reason="magic_link_send_failed",
-                email=email,
+                email_hash=_hash_email(email),
+                resend_response=None,
                 error_class=exc.__class__.__name__,
                 error_detail=str(exc),
             )
+            sentry_sdk.capture_exception(exc)
             return False
 
     async def send_test_email(self, email: str) -> bool:

@@ -733,10 +733,23 @@
     setButtonLoading(btn, true);
     logFlowEvent("join_research_access_email_submit_started", { action: "submit_email", status: "started", ui_surface: state.unlock.uiSurface, step: "purchaseStep1" });
     saveResumeStateBeforeMagicLink();
-    try { const plan = state.unlock.plan || "sim_1_day";
-      const intentId = sessionStorage.getItem("last_payment_intent_id") || undefined;
-      await apiPost("/api/auth/magic-link", { email, plan, turnstile_token: token, intent_id: intentId });
+    try { const plan = 'sim_1_day';
+      const { data } = await apiPost("/api/billing/unlock-intent", {
+            email,
+            plan,
+            turnstile_token: token,
+            ui_surface: state.unlock.uiSurface || "hero_unlock_button"
+          });
       if (!isCurrentOperation("checkout", opId)) return;
+      if (data?.intent_id) {
+        sessionStorage.setItem("last_payment_intent_id", data.intent_id);
+      }
+      if (data?.ok !== true || data?.status !== "magic_link_sent") {
+        const deliveryError = new Error(data?.message || "Magic link delivery failed.");
+        deliveryError.errorCode = data?.error || data?.status || "MAGIC_LINK_DELIVERY_FAILED";
+        deliveryError.status = 502;
+        throw deliveryError;
+      }
       logFlowEvent("join_research_access_magic_link_succeeded", { action: "request_magic_link", status: "succeeded", ui_surface: state.unlock.uiSurface, step: "purchaseStep3" });
       setText("resendMessage", `We've sent a secure access link to ${email}. Click it to activate your pass.`);
       showSupportStep(3);
