@@ -44,3 +44,27 @@ def test_send_async_times_out(monkeypatch):
 
     with pytest.raises(TimeoutError):
         asyncio.run(_run())
+
+
+def test_send_magic_link_returns_false_when_provider_response_has_no_id(monkeypatch):
+    monkeypatch.setattr("email_service.settings.RESEND_API_KEY", "rk_test", raising=False)
+    monkeypatch.setattr("email_service.settings.RESEND_FROM_EMAIL", "noreply@example.com", raising=False)
+
+    def _suppressed_send(_params):
+        return {"object": "email"}
+
+    captured = {}
+
+    def _capture_message(message, level=None):
+        captured["message"] = message
+        captured["level"] = level
+
+    monkeypatch.setattr("email_service.resend.Emails.send", _suppressed_send)
+    monkeypatch.setattr("email_service.sentry_sdk.capture_message", _capture_message)
+    monkeypatch.setattr("email_service.sentry_sdk.capture_exception", lambda _exc: None)
+
+    service = EmailService()
+    result = asyncio.run(service.send_magic_link("user@example.com", "https://example.com/magic"))
+
+    assert result is False
+    assert captured == {"message": "magic_link_send_failed", "level": "error"}

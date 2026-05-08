@@ -1,6 +1,7 @@
 import uuid
 import random
 import asyncio
+import hashlib
 import structlog
 
 from fastapi import APIRouter, HTTPException, Request
@@ -25,6 +26,10 @@ SIMULATED_PLAN_ALIAS_TO_HOURS = {
     "sim_1_day": 24,
 }
 UNLOCK_INTENT_MAGIC_LINK_TIMEOUT_SECONDS = 12
+
+
+def _hash_email(email: str) -> str:
+    return hashlib.sha256(email.strip().lower().encode("utf-8")).hexdigest()
 
 
 def _tier_to_funnel(tier: TierStatus | str | None) -> str:
@@ -340,6 +345,23 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
             sentry_sdk.capture_exception(exc)
         except Exception:
             pass
+
+    if not email_sent:
+        logger.error(
+            "magic_link_send_failed",
+            email_hash=_hash_email(email),
+            resend_response=None,
+            request_id=request_id,
+            intent_id=simulated_intent_id,
+            reason="provider_returned_false_or_timeout",
+        )
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "error": "MAGIC_LINK_DELIVERY_FAILED",
+                "message": "We could not send your access link right now. Please try again.",
+            },
+        )
 
     if email_sent:
         try:

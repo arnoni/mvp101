@@ -510,7 +510,13 @@ async def _resend_magic_link_impl(payload: MagicLinkRequest, request: Request, *
             sent = await _send_magic_link_email(email=email, request_ip=ip, db_engine=db_engine, redis_cli=redis_cli)
             if not sent:
                 logger.warning("magic_link_send_failed_simulated", email=email, intent_id=str(simulated_intent["intent_id"]))
-                return generic_response
+                raise HTTPException(
+                    status_code=502,
+                    detail={
+                        "error": "MAGIC_LINK_DELIVERY_FAILED",
+                        "message": "We could not send your access link right now. Please try again.",
+                    },
+                )
             async with db_engine.begin() as conn:
                 update_result = await conn.execute(
                     update(SimulatedPaymentIntent)
@@ -542,6 +548,8 @@ async def _resend_magic_link_impl(payload: MagicLinkRequest, request: Request, *
                     capture(str(simulated_intent["user_id"]), "simulated_magic_sent", {"path": "resend"})
             logger.info("magic_link_resend_simulated_send_finished", request_id=request_id, email=email, intent_id=str(simulated_intent["intent_id"]), sent=True)
             return generic_response
+        except HTTPException:
+            raise
         except Exception as exc:
             logger.exception("magic_link_simulated_flow_failed", email=email, error=str(exc))
             try:
@@ -688,8 +696,16 @@ async def _resend_magic_link_impl(payload: MagicLinkRequest, request: Request, *
         )
         if not sent:
             logger.warning("magic_link_send_failed_real", email=email, reason="provider_returned_false")
-            return generic_response
+            raise HTTPException(
+                status_code=502,
+                detail={
+                    "error": "MAGIC_LINK_DELIVERY_FAILED",
+                    "message": "We could not send your access link right now. Please try again.",
+                },
+            )
         logger.info("magic_link_resend_real_send_finished", request_id=request_id, email=email, sent=True)
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.error(
             "magic_link_send_failed_real",
