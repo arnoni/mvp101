@@ -1,6 +1,6 @@
 import asyncio
 import html
-from typing import Optional
+from typing import Any, Optional
 
 import resend
 import structlog
@@ -9,6 +9,23 @@ from app.core.config import settings
 
 logger = structlog.get_logger(__name__)
 RESEND_SEND_TIMEOUT_SECONDS = 10
+
+
+def _extract_provider_email_id(response: Any) -> Optional[str]:
+    if isinstance(response, dict):
+        email_id = response.get("id")
+        return str(email_id) if email_id else None
+    email_id = getattr(response, "id", None)
+    return str(email_id) if email_id else None
+
+
+def _extract_provider_error(response: Any) -> Optional[str]:
+    if isinstance(response, dict):
+        error = response.get("error") or response.get("message")
+        if error:
+            return str(error)
+    error = getattr(response, "error", None) or getattr(response, "message", None)
+    return str(error) if error else None
 
 
 class EmailService:
@@ -35,15 +52,26 @@ class EmailService:
                 asyncio.to_thread(resend.Emails.send, params),
                 timeout=timeout_seconds,
             )
-            if isinstance(response, dict):
-                return response.get("id")
-            return getattr(response, "id", None)
+            provider_error = _extract_provider_error(response)
+            if provider_error:
+                raise RuntimeError(f"Resend send failed: {provider_error}")
+            email_id = _extract_provider_email_id(response)
+            if not email_id:
+                raise RuntimeError(f"Resend send response did not include an email id: {response!r}")
+            return email_id
         except asyncio.TimeoutError:
-            logger.error("email_resend_sdk_timeout", timeout_seconds=timeout_seconds)
+            logger.error(
+                "E_EMAIL_SEND_FAILED",
+                provider="resend",
+                reason="timeout",
+                timeout_seconds=timeout_seconds,
+            )
             raise
         except Exception as exc:
             logger.error(
-                "email_resend_sdk_call_failed",
+                "E_EMAIL_SEND_FAILED",
+                provider="resend",
+                reason="sdk_call_failed",
                 error_class=exc.__class__.__name__,
                 error_detail=str(exc),
             )
@@ -53,7 +81,9 @@ class EmailService:
         """Sends the magic link email via Resend."""
         if not self.api_key or not self.from_email:
             logger.error(
-                "email_send_magic_link_config_missing",
+                "E_EMAIL_SEND_FAILED",
+                provider="resend",
+                reason="magic_link_config_missing",
                 has_api_key=bool(self.api_key),
                 has_from_email=bool(self.from_email),
                 email=email,
@@ -86,14 +116,14 @@ class EmailService:
             }
 
             email_id = await self._send_async(params)
-            if not email_id:
-                logger.warning("email_send_magic_link_missing_provider_id", email=email)
             logger.info("email_send_magic_link_success", email=email, provider_email_id=email_id)
             return True
 
         except Exception as exc:
             logger.error(
-                "email_send_magic_link_failed",
+                "E_EMAIL_SEND_FAILED",
+                provider="resend",
+                reason="magic_link_send_failed",
                 email=email,
                 error_class=exc.__class__.__name__,
                 error_detail=str(exc),
