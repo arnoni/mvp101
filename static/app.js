@@ -43,6 +43,7 @@
   const DURATION = 800;
   const VERIFY_TIMEOUT_TEXT = "Verification unavailable. Please check your connection or disable ad blockers and try again.";
   const SEARCH_CHALLENGE_CODES = new Set(["CHALLENGE_REQUIRED", "INVALID_CHALLENGE", "TURNSTILE_REQUIRED", "TURNSTILE_INVALID"]);
+  window.dilldrillTurnstileToken = window.dilldrillTurnstileToken || null;
   let searchRequestInFlight = false;
   let parseAbortController = null;
   let reportParseAbortController = null;
@@ -222,6 +223,58 @@
     if (el) el.textContent = text || ""; }
   function setHidden(id, hidden) {
     $(id)?.classList.toggle("hidden", Boolean(hidden)); }
+  function recordTurnstileLifecycle(eventName, level, props) {
+    window.posthog?.capture?.(eventName, props);
+    window.posthog?.flush?.();
+    window.Sentry?.addBreadcrumb?.({ message: eventName, level });
+  }
+  function setHeroTurnstileToken(token) {
+    window.dilldrillTurnstileToken = token || null;
+    const tokenInput = $("heroTurnstileToken");
+    if (tokenInput) tokenInput.value = token || "";
+  }
+  function getHeroTurnstileToken() {
+    return window.dilldrillTurnstileToken || heroTurnstile.getToken();
+  }
+  function setHeroTurnstileVerified(verified) {
+    const challenge = document.querySelector("[data-turnstile-container]");
+    const badge = document.querySelector("[data-turnstile-verified]");
+    if (challenge) {
+      challenge.toggleAttribute("hidden", Boolean(verified));
+      challenge.classList.toggle("hidden", Boolean(verified));
+    }
+    if (badge) badge.toggleAttribute("hidden", !verified);
+  }
+  function showHeroTurnstileChallenge() {
+    setHeroTurnstileVerified(false);
+  }
+  function onTurnstileRendered() {
+    recordTurnstileLifecycle("turnstile_started", "info");
+  }
+  function onTurnstileSuccess(token) {
+    setHeroTurnstileToken(token);
+    setHeroTurnstileVerified(true);
+    recordTurnstileLifecycle("turnstile_success", "info");
+    updateButtons();
+  }
+  function onTurnstileExpired() {
+    setHeroTurnstileToken(null);
+    showHeroTurnstileChallenge();
+    heroTurnstile.reset();
+    recordTurnstileLifecycle("turnstile_expired", "warning");
+    updateButtons();
+  }
+  function onTurnstileError(code) {
+    setHeroTurnstileToken(null);
+    showHeroTurnstileChallenge();
+    recordTurnstileLifecycle("turnstile_error", "error", { code });
+    updateButtons();
+    window.Sentry?.captureException?.(new Error("Turnstile error"), { extra: { code } });
+  }
+  window.onTurnstileRendered = onTurnstileRendered;
+  window.onTurnstileSuccess = onTurnstileSuccess;
+  window.onTurnstileExpired = onTurnstileExpired;
+  window.onTurnstileError = onTurnstileError;
   // ── 3. TurnstileManager factory
   function TurnstileManager(containerId, opts = {}) {
     let widgetId;
@@ -247,7 +300,7 @@
       if (!sitekey) { setStatus(document.body?.dataset.labelVerificationUnavailableSitekeyMissing || "Verification unavailable: site key missing."); opts.onError?.(); return null; }
       try { const turnstile = await waitForTurnstile();
         if (widgetId !== undefined) { turnstile.reset(widgetId); token = null; return widgetId; }
-        widgetId = turnstile.render(el, { sitekey, theme: el.dataset.theme || "auto", callback: (newToken) => { token = newToken || null; setStatus(""); try { console.info(JSON.stringify({ level: "info", event: "turnstile_token_received", containerId, token_length: token?.length || 0 })); } catch (_) {} opts.onToken?.(token); }, "expired-callback": () => { token = null; opts.onExpire?.(); }, "error-callback": () => { token = null; opts.onError?.(); } });
+        widgetId = turnstile.render(el, { sitekey, theme: el.dataset.theme || "auto", "render-callback": () => opts.onRender?.(), callback: (newToken) => { token = newToken || null; setStatus(""); try { console.info(JSON.stringify({ level: "info", event: "turnstile_token_received", containerId, token_length: token?.length || 0 })); } catch (_) {} opts.onToken?.(token); }, "expired-callback": () => { token = null; opts.onExpire?.(); }, "error-callback": (code) => { token = null; opts.onError?.(code); } });
         return widgetId;
       } catch (err) { setStatus(VERIFY_TIMEOUT_TEXT); opts.onError?.(err);
         logClientException("turnstile_init_failed", err, {
@@ -272,7 +325,8 @@
       } catch (err) { widgetId = undefined;
         logClientException("turnstile_reset_failed", err, { containerId });
       } finally { token = null;
-        setStatus(""); } }
+        setStatus("");
+        opts.onReset?.(); } }
     function destroy() {
       try { if (widgetId !== undefined && window.turnstile?.remove) window.turnstile.remove(widgetId);
       } catch (err) { logClientException("turnstile_destroy_failed", err, { containerId });
@@ -281,9 +335,11 @@
         initPromise = null; } }
     return { init, reset, getToken: () => token || null, destroy }; }
   // ── 4. Turnstile instances
-  const heroTurnstile = TurnstileManager("turnstileContainer", { onToken: () => { $("turnstileSlot")?.classList.remove("hidden"); updateButtons(); },
-    onExpire: () => updateButtons(),
-    onError: () => updateButtons() });
+  const heroTurnstile = TurnstileManager("turnstileContainer", { onRender: () => onTurnstileRendered(),
+    onToken: (token) => onTurnstileSuccess(token),
+    onExpire: () => onTurnstileExpired(),
+    onError: (code) => onTurnstileError(code),
+    onReset: () => setHeroTurnstileToken(null) });
   const unlockTurnstile = TurnstileManager("unlock-turnstile-widget", { statusElId: "unlockTurnstileStatusMsg",
     onToken: () => syncResendButtonState(),
     onExpire: () => syncResendButtonState(),
@@ -321,13 +377,14 @@
     updateButtons(); }
   function updateButtons() {
     const hasCoords = state.coords.valid;
+    const hasTurnstileToken = window.dilldrillTurnstileToken !== null;
     const busy = searchRequestInFlight || state.hero.searchRequestInFlight || state.hero.constructionStatus === "loading" || state.hero.demandStatus === "loading";
     const mainBtn = $("mainActionBtn");
     const conBtn = $("constructionGoBtn");
     const demandBtn = $("demandGoBtn");
-    if (mainBtn) mainBtn.disabled = !hasCoords || busy;
-    if (conBtn) conBtn.disabled = !hasCoords || busy;
-    if (demandBtn) demandBtn.disabled = !hasCoords || busy; }
+    if (mainBtn) mainBtn.disabled = !hasCoords || !hasTurnstileToken || busy;
+    if (conBtn) conBtn.disabled = !hasCoords || !hasTurnstileToken || busy;
+    if (demandBtn) demandBtn.disabled = !hasCoords || !hasTurnstileToken || busy; }
   // ── 6. Hero: location input, parse preview, fetchConstruction, fetchDemand
   function setHeroCoords(parsed) {
     state.coords = { lat: parsed.lat, lng: parsed.lng, valid: true, key: normalizeKey(parsed.key || `${parsed.lat},${parsed.lng}`) };
@@ -406,7 +463,7 @@
     }
     if (code === "TURNSTILE_REQUIRED" || code === "TURNSTILE_INVALID" || SEARCH_CHALLENGE_CODES.has(code)) {
       heroTurnstile.reset();
-      $("turnstileSlot")?.classList.remove("hidden");
+      showHeroTurnstileChallenge();
       heroTurnstile.init();
     }
     const props = { tier: AccessState.get().tier, coord_key: state.coords.key, attempt_id: attemptId };
@@ -425,9 +482,9 @@
     state.hero.searchState = next;
     return next; }
   function isHeroTurnstileRequired() {
-    return document.body?.dataset.turnstileRequired === "true" || Boolean(heroTurnstile.getToken()); }
+    return document.body?.dataset.turnstileRequired === "true" || Boolean(getHeroTurnstileToken()); }
   function searchTelemetryProps(extra = {}) {
-    const token = heroTurnstile.getToken();
+    const token = getHeroTurnstileToken();
     return {
       source: "hero_search_form",
       tier: AccessState.get().tier,
@@ -461,9 +518,9 @@
     logSearchEvent("search_submit_clicked", { trigger: options.trigger || "unknown" });
     if (searchRequestInFlight || state.hero.searchRequestInFlight) return blockSearchSubmit("request_in_flight", "A search is already running. Please wait.");
     if (!state.coords.valid) return blockSearchSubmit("invalid_location", state.input.error || "Please enter a valid location before searching.");
-    const turnstileToken = heroTurnstile.getToken();
+    const turnstileToken = getHeroTurnstileToken();
     if (isHeroTurnstileRequired() && !turnstileToken) {
-      $("turnstileSlot")?.classList.remove("hidden");
+      showHeroTurnstileChallenge();
       await heroTurnstile.init();
       return blockSearchSubmit("turnstile_token_missing", document.body.dataset.labelSecurityCheckRequired || "Please complete the security check.");
     }
@@ -495,7 +552,7 @@
       }
       const { data } = await apiPost("/api/search", payload);
       if (attemptId !== state.hero.searchAttemptId) return null;
-      if (data?.verification_required) { $("turnstileSlot")?.classList.remove("hidden");
+      if (data?.verification_required) { showHeroTurnstileChallenge();
         heroTurnstile.reset();
         await heroTurnstile.init();
         state.hero.constructionStatus = "idle";
@@ -560,7 +617,7 @@
     state.hero.demandStatus = "loading";
     updateButtons();
     setText("demandMessage", document.body.dataset.labelCheckingDemand || "Checking demand...");
-    try { const token = heroTurnstile.getToken();
+    try { const token = getHeroTurnstileToken();
       setSearchState("turnstile_verified");
       if (!token) {
         console.warn(JSON.stringify({ level: "warning", event: "search_dispatch_blocked_missing_token", attempt_id: demandAttemptId, search_state: state.hero.searchState }));
@@ -579,7 +636,7 @@
         return null;
       }
       const { data } = await apiPost("/api/search", demandPayload);
-      if (data?.verification_required) { $("turnstileSlot")?.classList.remove("hidden");
+      if (data?.verification_required) { showHeroTurnstileChallenge();
         await heroTurnstile.init();
         setText("demandMessage", document.body.dataset.labelVerificationRequired || "Verification required");
         state.hero.demandStatus = "idle";
