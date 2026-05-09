@@ -734,6 +734,7 @@
     logFlowEvent("join_research_access_email_submit_started", { action: "submit_email", status: "started", ui_surface: state.unlock.uiSurface, step: "purchaseStep1" });
     saveResumeStateBeforeMagicLink();
     try { const plan = 'sim_1_day';
+      // apiPost wraps successful responses as { ok, status, data, response }.
       const { data } = await apiPost("/api/billing/unlock-intent", {
             email,
             plan,
@@ -744,6 +745,7 @@
       if (data?.intent_id) {
         sessionStorage.setItem("last_payment_intent_id", data.intent_id);
       }
+      // UnlockIntentResponse.ok is serialized by app/schemas/billing.py.
       if (data?.ok !== true || data?.status !== "magic_link_sent") {
         const deliveryError = new Error(data?.message || "Magic link delivery failed.");
         deliveryError.errorCode = data?.error || data?.status || "MAGIC_LINK_DELIVERY_FAILED";

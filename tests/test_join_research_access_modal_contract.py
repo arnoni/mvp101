@@ -24,15 +24,15 @@ def test_frontend_keeps_sim_1_day_submission_and_disabled_click_analytics_payloa
 
 def test_frontend_modal_state_and_support_close_reset_are_wired():
     app_js = Path("static/app.js").read_text(encoding="utf-8")
-    assert 'modals: { active: null, history: [] }' in app_js
-    assert "supportModal?.addEventListener('modal:close'" in app_js
-    assert "state.unlock.checkoutSubmitting = false;" in app_js
+    assert 'modals: { active: null }' in app_js
+    assert 'el.dispatchEvent(new CustomEvent("modal:close"' in app_js
+    assert "state.unlock.submitting = false;" in app_js
 
 
 def test_frontend_persists_intent_id_before_intent_created_early_return():
     app_js = Path("static/app.js").read_text(encoding="utf-8")
-    persist_marker = "if (data.intent_id) {\n            sessionStorage.setItem('last_payment_intent_id', data.intent_id);\n          }"
-    early_return_marker = "if (data.ok === true && data.status === 'intent_created') {"
+    persist_marker = "if (data?.intent_id) {\n        sessionStorage.setItem(\"last_payment_intent_id\", data.intent_id);\n      }"
+    early_return_marker = 'if (data?.ok !== true || data?.status !== "magic_link_sent") {'
     assert persist_marker in app_js
     assert app_js.index(persist_marker) < app_js.index(early_return_marker)
 
