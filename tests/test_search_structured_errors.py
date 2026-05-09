@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 from app.schemas.search import SearchResponse
+from app.services.entitlement_service import EntitlementResult, TierStatus
 
 
 class FakeQuotaRepo:
@@ -168,4 +169,28 @@ def test_server_backpressure_during_quota_increment_returns_structured_503(clien
         "message": "Service temporarily busy. Please try again in a moment.",
         "retry_after_seconds": 30,
     }
+    assert quota.consume_calls == 1
+
+
+def test_simulated_paid_missing_turnstile_token_returns_result_without_challenge(monkeypatch):
+    async def fake_get_tier(*_args, **_kwargs):
+        return EntitlementResult(tier=TierStatus.SIMULATED_PAID, daily_limit=5)
+
+    monkeypatch.setattr("app.core.middleware.EntitlementService.get_tier", fake_get_tier)
+    monkeypatch.setattr("app.api.routes.protect_mutation", lambda _request: _noop_async())
+    monkeypatch.setattr("app.api.routes._emit_funnel_event", lambda *_args, **_kwargs: _noop_async())
+    monkeypatch.setattr("app.api.routes.SearchService", FakeSearchService)
+    monkeypatch.setattr("app.services.policy_engine.verify_turnstile", lambda *_args, **_kwargs: _false_async())
+    FakeSearchService.should_fail = False
+    quota = FakeQuotaRepo(usage=0)
+
+    with TestClient(app) as test_client:
+        app.state.quota_repo = quota
+        app.state.query_history_repo = FakeQueryHistoryRepo()
+        app.state.demand_service = FakeDemandService()
+        response = test_client.post("/api/search", json=_payload(turnstile_token=None))
+
+    assert response.status_code == 200
+    assert response.json()["construction"]["score"] == 5
+    assert quota.get_usage_calls == 1
     assert quota.consume_calls == 1

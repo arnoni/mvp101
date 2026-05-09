@@ -10,4 +10,4 @@ def test_search_turnstile_policy_matches_frontend_contract():
     assert "search_payload_missing_token" in app_js
     assert "gate_result = await run_gate(" in routes_py
     assert "data_turnstile_token=data.turnstile_token" in routes_py
-    assert "force_turnstile_required=True" in routes_py
+    assert "force_turnstile_required=(tier == TierStatus.FREE)" in routes_py
