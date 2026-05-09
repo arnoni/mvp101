@@ -158,12 +158,15 @@
         <div class="parsed-preview hidden" id="parsedPreview" aria-live="polite"></div>
         <div class="inline-error" id="coordError" aria-live="polite"></div>
 
-        <div class="turnstile-slot{% if not initial_turnstile_required %} hidden{% endif %}" id="turnstileSlot">
+        <input id="heroTurnstileToken" name="turnstile_token" type="hidden" value="">
+        <div class="turnstile-slot{% if not initial_turnstile_required %} hidden{% endif %}" id="turnstileSlot" data-turnstile-container>
           <p class="turnstile-label">{{ t.get('verification_required', 'Verification required') }}</p>
-          <div id="turnstileContainer"></div>
+          <div id="turnstileContainer" data-render-callback="onTurnstileRendered"></div>
         </div>
 
-        <button class="primary-btn" id="mainActionBtn" type="button" disabled>{{ t.get('button_search', 'Check Location') }}</button>
+        <div class="turnstile-slot turnstile-verified" data-turnstile-verified hidden>{{ t.get('verification.verified', '✅ Verified') }}</div>
+
+        <button class="primary-btn" id="mainActionBtn" type="button" disabled>{{ t.get('search.cta', 'Check Noise Risk') }}</button>
       </form>
     </section>
 
