@@ -3,7 +3,7 @@ from fastapi.responses import JSONResponse
 import structlog
 from typing import Optional
 from urllib.parse import quote, unquote
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from pydantic import ValidationError
 import uuid
 from sqlalchemy import insert, text
@@ -15,7 +15,13 @@ from app.core.config import settings
 from app.models.models import FunnelEvent
 from app.models.dto import ErrorResponse, StatusResponse, UserStatus
 from app.schemas.search import SearchRequest, SearchResponse, SearchTarget
-from app.schemas.user_reports import UserReportRequest, UserReportResponse
+from app.schemas.user_reports import (
+    REPORT_TYPE_TO_CATEGORY,
+    REPORT_TYPE_TO_SEVERITY,
+    ReportType,
+    UserReportRequest,
+    UserReportResponse,
+)
 from app.services.search_service import SearchService, SearchDependencies
 from app.services.area_bucketer import AreaBucketer
 from app.services.analytics import capture, posthog
@@ -348,14 +354,23 @@ def get_policy_engine(quota_repo: QuotaRepository = Depends(get_quota_repo)) -> 
 
 # --- UGC DTO ---
 class UGCReportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     title: str = Field(..., min_length=3, max_length=200)
     description: str = Field(..., min_length=10, max_length=2000)
     lat: float
     lon: float
-    category: Optional[str] = Field(default=None, max_length=50)
-    severity: Optional[int] = None
+    report_type: ReportType
     evidence_urls: Optional[list[str]] = None
     turnstile_token: Optional[str] = None
+
+    @property
+    def category(self) -> str:
+        return REPORT_TYPE_TO_CATEGORY[self.report_type]
+
+    @property
+    def severity(self) -> int:
+        return REPORT_TYPE_TO_SEVERITY[self.report_type]
 
 
 
@@ -380,8 +395,7 @@ def _map_user_report_to_ugc(data: UserReportRequest) -> UGCReportRequest:
         description=description,
         lat=data.lat,
         lon=data.lon,
-        category=category,
-        severity=3,
+        report_type=data.report_type,
         evidence_urls=None,
         turnstile_token=data.cf_turnstile_token,
     )
@@ -1229,7 +1243,7 @@ async def user_report_submit(
         logger.info(
             "user_report_submitted",
             user_id=getattr(request.state, "identity_id", None),
-            report_type=data.report_kind.value,
+            report_type=data.report_type,
             lat=round(data.lat, 5),
             lon=round(data.lon, 5),
             is_nearby_now=data.is_nearby_now,
@@ -1243,7 +1257,7 @@ async def user_report_submit(
             user_id,
             "user_report_submitted",
             {
-                "report_type": data.report_kind.value,
+                "report_type": data.report_type,
                 "is_nearby_now": data.is_nearby_now,
                 "has_notes": bool(note_stripped),
                 "location_source": data.location_source,
@@ -1367,12 +1381,14 @@ async def ugc_report_submit(
             status_code=http_status.HTTP_400_BAD_REQUEST,
             detail=ErrorResponse(error="OUT_OF_BOUNDS", detail="Coordinates outside allowed area.").model_dump(),
         )
-    if data.severity is not None:
-        if data.severity < 1 or data.severity > 5:
-            raise HTTPException(
-                status_code=http_status.HTTP_400_BAD_REQUEST,
-                detail=ErrorResponse(error="INVALID_SEVERITY", detail="Severity must be between 1 and 5.").model_dump(),
-            )
+    category = REPORT_TYPE_TO_CATEGORY[data.report_type]
+    severity = REPORT_TYPE_TO_SEVERITY[data.report_type]
+    logger.info(
+        "ugc_report_type_resolved",
+        report_type=data.report_type,
+        category=category,
+        severity=severity,
+    )
     if data.evidence_urls is not None:
         if len(data.evidence_urls) > 5:
             raise HTTPException(
@@ -1452,8 +1468,8 @@ async def ugc_report_submit(
                         "reporter_tier": tier_to_client(tier),
                         "title": data.title,
                         "description": data.description,
-                        "category": data.category,
-                        "severity": data.severity,
+                        "category": category,
+                        "severity": severity,
                         "lat": float(data.lat),
                         "lon": float(data.lon),
                         "content_hash": content_hash,
