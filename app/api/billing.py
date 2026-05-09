@@ -5,6 +5,7 @@ import hashlib
 import structlog
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
 from sqlalchemy import insert, select, func, case
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -14,6 +15,7 @@ from app.schemas.billing import UnlockIntentRequest, UnlockIntentResponse, Unloc
 from app.services.analytics import capture
 from app.services.entitlement_service import TierStatus
 from app.services.magic_auth_service import MagicAuthService, PaymentGatewayFactory
+from app.utils.rate_limits import check_magic_link_rate_limit
 from app.utils.security import get_client_ip, protect_mutation, verify_turnstile
 from app.utils.url import resolve_checkout_base
 from email_service import EmailService
@@ -70,7 +72,7 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
     logger.info(
         "unlock_intent_received",
         request_id=request_id,
-        email=payload.email.lower(),
+        email=payload.email.strip().lower(),
         plan=payload.plan,
         ui_surface=payload.ui_surface.value if payload.ui_surface else UnlockUiSurface.HERO_UNLOCK_BUTTON.value,
     )
@@ -99,15 +101,15 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
         hostname=request.url.hostname,
     )
     if not is_valid_turnstile:
-        logger.warning("unlock_intent_turnstile_failed", request_id=request_id, email=payload.email.lower())
+        logger.warning("unlock_intent_turnstile_failed", request_id=request_id, email=payload.email.strip().lower())
         raise HTTPException(status_code=403, detail="Turnstile verification failed")
-    logger.info("unlock_intent_turnstile_verified", request_id=request_id, email=payload.email.lower())
+    logger.info("unlock_intent_turnstile_verified", request_id=request_id, email=payload.email.strip().lower())
 
     db_engine = getattr(request.app.state, "db_engine", None)
     if not db_engine:
         raise HTTPException(status_code=503, detail="Database is not configured")
 
-    email = payload.email.lower()
+    email = payload.email.strip().lower()
     anon_id = getattr(request.state, "anon_id", None)
     ab_cohort = getattr(request.state, "ab_cohort", None)
     if ab_cohort not in {"A", "B"}:
@@ -248,6 +250,17 @@ async def unlock_intent(payload: UnlockIntentRequest, request: Request):
     email_sent = False
     try:
         redis_cli = getattr(request.app.state, "redis", None)
+        if redis_cli:
+            within_rate_limit = await check_magic_link_rate_limit(redis_cli, email, get_client_ip(request))
+            if not within_rate_limit:
+                logger.warning("unlock_intent_magic_link_rate_limited", request_id=request_id, email=email, client_ip=get_client_ip(request))
+                return JSONResponse(
+                    status_code=429,
+                    content={"message": "If this email is eligible, we sent a new access link."},
+                )
+        else:
+            logger.warning("unlock_intent_magic_link_rate_limit_skipped", request_id=request_id, email=email, reason="redis_unavailable")
+
         auth_service = MagicAuthService(
             db=db_engine,
             redis=redis_cli,

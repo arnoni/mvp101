@@ -217,7 +217,7 @@ class MagicAuthService:
         """Generates a one-time token and persists it in Postgres."""
         try:
             del purchase_id, provider
-            normalized_email = email.lower()
+            normalized_email = email.strip().lower()
             expires_at = datetime.now(timezone.utc) + timedelta(minutes=settings.MAGICLINK_EXPIRY_MINUTES)
             token = secrets.token_urlsafe(32)
             token_hash = hashlib.sha256(token.encode()).hexdigest()
@@ -245,6 +245,16 @@ class MagicAuthService:
                     if await self._supports_magic_link_request_ip(conn):
                         insert_values["request_ip"] = request_ip
 
+                    now = datetime.utcnow()
+                    await conn.execute(
+                        update(MagicLinkToken)
+                        .where(
+                            MagicLinkToken.user_id == user_id,
+                            MagicLinkToken.redeemed_at.is_(None),
+                            MagicLinkToken.expires_at > now,
+                        )
+                        .values(redeemed_at=now)
+                    )
                     await conn.execute(insert(MagicLinkToken).values(**insert_values))
                 except Exception as e:
                     logger.error(f"MAGIC_AUTH_DB_INSERT_FAILED: {e}")
@@ -280,7 +290,7 @@ class MagicAuthService:
 
                 user_result = await conn.execute(
                     pg_insert(User)
-                    .values(email=token_row.email.lower())
+                    .values(email=token_row.email.strip().lower())
                     .on_conflict_do_update(
                         index_elements=[User.email],
                         set_={"last_login": func.now(), "updated_at": func.now()},

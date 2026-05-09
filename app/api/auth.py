@@ -21,6 +21,7 @@ from app.models.models import FunnelEvent, MagicLinkToken, SimulatedBillingPlan,
 from app.services.analytics import capture
 from app.services.entitlement_service import TierStatus
 from app.services.magic_auth_service import MagicAuthService, PaymentGatewayFactory
+from app.utils.rate_limits import check_magic_link_rate_limit
 from app.utils.security import get_client_ip, verify_turnstile
 from app.utils.url import resolve_checkout_base, resolve_public_base_url
 from email_service import EmailService
@@ -348,7 +349,7 @@ async def _resend_magic_link_impl(payload: MagicLinkRequest, request: Request, *
     logger.info(
         "magic_link_resend_received",
         request_id=request_id,
-        email=payload.email.lower(),
+        email=payload.email.strip().lower(),
         enforce_turnstile=enforce_turnstile,
         has_intent_id=bool(payload.intent_id),
     )
@@ -356,7 +357,7 @@ async def _resend_magic_link_impl(payload: MagicLinkRequest, request: Request, *
         logger.warning("magic_link_unavailable_services", has_redis=bool(redis_cli), has_db=bool(db_engine))
         return generic_response
 
-    email = payload.email.lower()
+    email = payload.email.strip().lower()
     ip = get_client_ip(request)
     if enforce_turnstile:
         if not payload.turnstile_token:
@@ -391,27 +392,10 @@ async def _resend_magic_link_impl(payload: MagicLinkRequest, request: Request, *
             return generic_response
         logger.info("magic_link_turnstile_valid", request_id=request_id, email=email, client_ip=ip)
 
-    cooldown_key = f"magic_resend:cooldown:{email}"
-    count_key = f"magic_resend:count:{email}:{ip}"
-    ip_count_key = f"magic_ip_limit:{ip}"
-
     try:
-        ip_count = await redis_cli.incr(ip_count_key)
-        if ip_count == 1:
-            await redis_cli.expire(ip_count_key, 3600)
-        if int(ip_count) > 10:
-            logger.warning("magic_link_ip_rate_limit_exceeded", ip=ip, count=int(ip_count))
-            return generic_response
-
-        if await redis_cli.get(cooldown_key):
-            logger.info("magic_link_cooldown_active", email=email)
-            return generic_response
-        count = await redis_cli.incr(count_key)
-        if count == 1:
-            await redis_cli.expire(count_key, 180)
-        if int(count) > 2:
-            await redis_cli.set(cooldown_key, "1", ex=180)
-            logger.warning("magic_link_rate_limited", email=email, client_ip=ip, count=int(count))
+        within_rate_limit = await check_magic_link_rate_limit(redis_cli, email, ip)
+        if not within_rate_limit:
+            logger.warning("magic_link_rate_limited", email=email, client_ip=ip)
             return generic_response
     except Exception as exc:
         logger.error("magic_link_rate_limit_check_failed", email=email, client_ip=ip, error=str(exc))
@@ -439,7 +423,7 @@ async def _resend_magic_link_impl(payload: MagicLinkRequest, request: Request, *
                 {"intent_id": payload.intent_id},
             )
             ownership_row = ownership_result.mappings().first()
-            if ownership_row and str(ownership_row["email"]).lower() != email:
+            if ownership_row and str(ownership_row["email"]).strip().lower() != email:
                 logger.warning("magic_link_simulated_intent_ownership_mismatch", email=email, intent_id=payload.intent_id)
                 return generic_response
 
@@ -488,7 +472,7 @@ async def _resend_magic_link_impl(payload: MagicLinkRequest, request: Request, *
                 {"intent_id": payload.intent_id},
             )
             ownership_row = ownership_result.mappings().first()
-            if ownership_row and str(ownership_row["email"]).lower() != email:
+            if ownership_row and str(ownership_row["email"]).strip().lower() != email:
                 logger.warning(
                     "AUTH_RESEND_INTENT_OWNERSHIP_MISMATCH: "
                     f"requested_email={email} intent_id={payload.intent_id}"
@@ -664,7 +648,7 @@ async def _resend_magic_link_impl(payload: MagicLinkRequest, request: Request, *
         if not active_pass:
             # Intent exists but is not yet paid; keep generic response without forcing cooldown escalation.
             if pending_intent:
-                await redis_cli.set(cooldown_key, "1", ex=30)
+                await redis_cli.set(f"magic_resend:cooldown:{email}", "1", ex=30)
         return generic_response
 
     raw_token = secrets.token_urlsafe(32)
@@ -672,6 +656,16 @@ async def _resend_magic_link_impl(payload: MagicLinkRequest, request: Request, *
     expires_at = func.now() + text("interval '10 minutes'")
     try:
         async with db_engine.begin() as conn:
+            now = datetime.utcnow()
+            await conn.execute(
+                update(MagicLinkToken)
+                .where(
+                    MagicLinkToken.user_id == active_pass["user_id"],
+                    MagicLinkToken.redeemed_at.is_(None),
+                    MagicLinkToken.expires_at > now,
+                )
+                .values(redeemed_at=now)
+            )
             await conn.execute(
                 insert(MagicLinkToken).values(
                     user_id=active_pass["user_id"],
@@ -812,7 +806,7 @@ async def magic_landing(
                 user_result = await conn.execute(
                     pg_insert(User)
                     .values(
-                        email=token_row.email.lower(),
+                        email=token_row.email.strip().lower(),
                         ab_cohort=(
                             getattr(request.state, "ab_cohort", None)
                             if getattr(request.state, "ab_cohort", None) in {"A", "B"}
@@ -853,17 +847,31 @@ async def magic_landing(
                         .where(SimulatedPaymentIntent.id == pending_intent.id)
                         .values(status="activated", activated_at=func.now(), updated_at=func.now())
                     )
-                    pass_result = await conn.execute(
-                        insert(SimulatedUserPass).values(
-                            user_id=user_id_uuid,
-                            plan_code=pending_intent.plan_code,
-                            simulated_intent_id=pending_intent.id,
-                            status="active",
-                            expires_at=func.now() + text(f"interval '{duration_hours} hours'"),
+                    existing_pass_result = await conn.execute(
+                        select(SimulatedUserPass)
+                        .where(
+                            SimulatedUserPass.user_id == user_id_uuid,
+                            SimulatedUserPass.status == "active",
+                            SimulatedUserPass.expires_at > datetime.utcnow(),
                         )
-                        .returning(SimulatedUserPass.id)
+                        .limit(1)
                     )
-                    pass_row = pass_result.first()
+                    existing_pass = existing_pass_result.scalar_one_or_none()
+                    pass_reused = existing_pass is not None
+                    if existing_pass is None:
+                        pass_result = await conn.execute(
+                            insert(SimulatedUserPass).values(
+                                user_id=user_id_uuid,
+                                plan_code=pending_intent.plan_code,
+                                simulated_intent_id=pending_intent.id,
+                                status="active",
+                                expires_at=func.now() + text(f"interval '{duration_hours} hours'"),
+                            )
+                            .returning(SimulatedUserPass.id)
+                        )
+                        pass_row = pass_result.first()
+                    else:
+                        pass_row = existing_pass
                     success_counter_result = await conn.execute(
                         update(User)
                         .where(User.id == user_id_uuid)
@@ -905,6 +913,7 @@ async def magic_landing(
                                     metadata_json={
                                         "carried_forward_credits": carried_forward_credits,
                                         "plan_code": pending_intent.plan_code,
+                                        "pass_reused": pass_reused,
                                     },
                                 )
                             )
@@ -932,10 +941,10 @@ async def magic_landing(
                                 related_simulated_intent_id=pending_intent.id,
                                 related_simulated_pass_id=(pass_row.id if pass_row else None),
                                 ui_surface="user_access_modal",
-                                metadata_json={"plan_code": pending_intent.plan_code, "upgraded_from_anon_id": str(anon_id) if anon_id else None},
+                                metadata_json={"plan_code": pending_intent.plan_code, "upgraded_from_anon_id": str(anon_id) if anon_id else None, "pass_reused": pass_reused},
                             )
                         )
-                        capture(str(user_id_uuid), "simulated_pass_activated", {"plan_code": pending_intent.plan_code, "upgraded_from_anon_id": str(anon_id) if anon_id else None})
+                        capture(str(user_id_uuid), "simulated_pass_activated", {"plan_code": pending_intent.plan_code, "upgraded_from_anon_id": str(anon_id) if anon_id else None, "pass_reused": pass_reused})
                     except Exception as event_err:
                         _report_funnel_failure(
                             route="/api/auth/magic",
@@ -964,10 +973,11 @@ async def magic_landing(
                                     "plan_code": pending_intent.plan_code,
                                     "join_research_aggregated_success_count": aggregated_success_count,
                                     "upgraded_from_anon_id": str(anon_id) if anon_id else None,
+                                    "pass_reused": pass_reused,
                                 },
                             )
                         )
-                        capture(str(user_id_uuid), "join_research_aggregated_success", {"join_research_aggregated_success_count": aggregated_success_count, "upgraded_from_anon_id": str(anon_id) if anon_id else None})
+                        capture(str(user_id_uuid), "join_research_aggregated_success", {"join_research_aggregated_success_count": aggregated_success_count, "upgraded_from_anon_id": str(anon_id) if anon_id else None, "pass_reused": pass_reused})
                     except Exception as event_err:
                         _report_funnel_failure(
                             route="/api/auth/magic",
