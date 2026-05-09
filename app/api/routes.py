@@ -78,7 +78,7 @@ VALUES (
   :category,
   :severity,
   ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography,
-  'pending'::ugc_report_status,
+  'pending'::text::ugc_report_status,
   :content_hash,
   :geo_cell,
   :day_bucket
@@ -1546,6 +1546,24 @@ async def ugc_report_submit(
                     "ugc_report_dedup_cache_cleanup_failed",
                     dedup_key_hash=_hash_identifier(dedup_redis_key),
                 )
+        if "UndefinedObjectError" in str(exc) or "does not exist" in str(exc):
+            logger.error(
+                "ugc_report_schema_error",
+                error=str(exc),
+            )
+            import sentry_sdk
+
+            sentry_sdk.capture_exception(exc)
+            raise HTTPException(
+                status_code=http_status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail={
+                    "error": "SCHEMA_ERROR",
+                    "detail": "Database schema mismatch.",
+                    "retry_after_seconds": None,
+                    "quota_remaining": None,
+                    "error_id": None,
+                },
+            )
         logger.exception(
             "ugc_report_db_insert_failed",
             error=str(exc),
