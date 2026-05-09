@@ -38,7 +38,7 @@ def _payload(token="ok"):
     return {
         "lat": 16.0745,
         "lon": 108.244,
-        "report_kind": "active_construction",
+        "report_type": "active",
         "is_nearby_now": True,
         "note": "construction noise all day",
         "cf_turnstile_token": token,

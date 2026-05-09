@@ -29,11 +29,22 @@
   function subscribeAccessState(fn) { accessListeners.add(fn); return () => accessListeners.delete(fn); }
   const AccessState = { get: () => ({ ...accessStateValue }), set: setAccessState, readDomAccess, subscribe: subscribeAccessState };
   // ── 2. Module-scope state, constants, utilities
+  const REPORT_TYPE_VALUES = {
+    active: "active",
+    maybe: "maybe",
+    ended: "ended",
+    active_construction: "active",
+    maybe_construction: "maybe",
+    construction_ended: "ended",
+    "Active Construction": "active",
+    "Maybe Construction": "maybe",
+    "Construction Ended": "ended",
+  };
   const state = { coords: { lat: null, lng: null, valid: false, key: null },
     input: { kind: "empty", original: "", preview: "", error: "", touched: false },
     hero: { constructionStatus: "idle", demandStatus: "idle", constructionScore: null, demandScore: null, searchState: "idle", searchRequestInFlight: false, searchAttemptId: 0 },
     unlock: { plan: "sim_1_day", email: "", step: 1, uiSurface: null, cooldownUntil: 0, submitting: false, resendSubmitting: false },
-    report: { type: "active_construction", note: "", locationRaw: "", locationParsed: null, locationError: null, locationSource: "manual_input", locationSourceLocked: false, uiState: "idle", quotaBlocked: false, submitAttemptId: 0, autoCloseTimer: null },
+    report: { type: "active", note: "", locationRaw: "", locationParsed: null, locationError: null, locationSource: "manual_input", locationSourceLocked: false, uiState: "idle", quotaBlocked: false, submitAttemptId: 0, autoCloseTimer: null },
     modals: { active: null } };
   const ARC_LENGTH = 377;
   const MIN_ANGLE = -82;
@@ -830,7 +841,7 @@
       state.report.locationSource = "hero_prefill"; } }
   function resetReportModal() {
     window.clearTimeout(state.report.autoCloseTimer);
-    state.report = { type: "active_construction", note: "", locationRaw: "", locationParsed: null, locationError: null, locationSource: "manual_input", locationSourceLocked: false, uiState: "idle", quotaBlocked: false, submitAttemptId: state.report.submitAttemptId + 1, autoCloseTimer: null };
+    state.report = { type: "active", note: "", locationRaw: "", locationParsed: null, locationError: null, locationSource: "manual_input", locationSourceLocked: false, uiState: "idle", quotaBlocked: false, submitAttemptId: state.report.submitAttemptId + 1, autoCloseTimer: null };
     setHidden("reportFormState", false);
     setHidden("reportSuccessState", true);
     setText("reportError", "");
@@ -839,7 +850,7 @@
     const note = $("reportNote"); if (note) note.value = "";
     const nearby = $("reportNearbyNow"); if (nearby) nearby.checked = false;
     setText("reportCharCount", "0/180");
-    $("reportTypeGrid")?.querySelectorAll("[data-report-type]").forEach((pill) => { const active = pill.dataset.reportType === "active_construction";
+    $("reportTypeGrid")?.querySelectorAll("[data-report-type]").forEach((pill) => { const active = REPORT_TYPE_VALUES[pill.dataset.reportType] === "active";
       pill.classList.toggle("active", active);
       pill.setAttribute("aria-checked", active ? "true" : "false"); });
     setButtonLoading($("reportSubmitBtn"), false);
@@ -875,7 +886,7 @@
     try { const { data } = await apiPost("/api/user-reports", {
         lat: parsed.lat,
         lon: parsed.lng,
-        report_kind: state.report.type,
+        report_type: state.report.type,
         note,
         is_nearby_now: Boolean($("reportNearbyNow")?.checked),
         location_source: state.report.locationSource,
@@ -890,14 +901,14 @@
         level: "info",
         event: "user_report_submitted",
         status: reportStatus,
-        report_kind: state.report.type,
+        report_type: state.report.type,
         is_duplicate: reportStatus === "duplicate_report",
         location_source: state.report.locationSource,
         tier: AccessState.get().tier
       }));
       captureEvent("user_report_submitted", {
         status: reportStatus,
-        report_kind: state.report.type,
+        report_type: state.report.type,
         is_duplicate: reportStatus === "duplicate_report",
         location_source: state.report.locationSource,
         tier: AccessState.get().tier
@@ -905,7 +916,7 @@
       try {
         window.posthog?.capture?.("user_report_submitted", {
           status: reportStatus,
-          report_kind: state.report.type,
+          report_type: state.report.type,
           is_duplicate: reportStatus === "duplicate_report",
           location_source: state.report.locationSource,
           tier: AccessState.get().tier
@@ -1129,7 +1140,7 @@
     $("reportLocationInput")?.addEventListener("input", debouncedParseReportLocation);
     $("reportTypeGrid")?.addEventListener("click", (event) => { const pill = event.target.closest?.("[data-report-type]");
       if (!pill) return;
-      state.report.type = pill.dataset.reportType || "active_construction";
+      state.report.type = REPORT_TYPE_VALUES[pill.dataset.reportType] || REPORT_TYPE_VALUES[normalizeInput(pill.textContent || "")] || "active";
       $("reportTypeGrid")?.querySelectorAll("[data-report-type]").forEach((el) => { const active = el === pill;
         el.classList.toggle("active", active);
         el.setAttribute("aria-checked", active ? "true" : "false"); }); });

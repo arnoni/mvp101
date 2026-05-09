@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.api.routes import UGCReportRequest, ugc_report_submit
+from app.schemas.user_reports import ReportType
 from app.services.entitlement_service import TierStatus
 
 
@@ -77,8 +78,7 @@ async def test_ugc_report_submit_deduplicates_50_concurrent_identical_reports():
         description="Heavy equipment operating next door",
         lat=16.0544,
         lon=108.2022,
-        category="active_construction",
-        severity=3,
+        report_type=ReportType.ACTIVE,
         evidence_urls=["https://example.com/photo.jpg"],
     )
 
