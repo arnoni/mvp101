@@ -20,6 +20,21 @@ def validate_startup_security_settings(settings: Settings) -> None:
             is_production=settings.is_production,
         )
 
+    if (vercel_env == "preview") != (app_env == "preview"):
+        logger.warning(
+            "env_vercel_env_mismatch",
+            vercel_env=vercel_env,
+            app_env=app_env,
+            is_production=settings.is_production,
+        )
+
+    if not settings.CLOUDFLARE_TURNSTILE_SECRET:
+        logger.warning(
+            "turnstile_secret_missing_at_startup",
+            env=settings.ENV,
+            vercel_env=settings.VERCEL_ENV,
+        )
+
     if settings.is_production and settings.SMOKE_TURNSTILE_TOKEN:
         logger.critical(
             "unsafe_production_config",

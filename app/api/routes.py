@@ -598,7 +598,7 @@ async def search(
 
         await protect_mutation(request)
         started_at = time.perf_counter()
-        if not turnstile_present:
+        if tier == TierStatus.FREE and not turnstile_present:
             logger.warning(
                 "search_request_rejected",
                 error="TURNSTILE_REQUIRED",
@@ -691,7 +691,7 @@ async def search(
                 entitlement_stale=entitlement_stale,
                 daily_limit=daily_limit,
                 area_code=area_code,
-                force_turnstile_required=True,
+                force_turnstile_required=(tier == TierStatus.FREE),
                 consume_quota=False,
             )
         except HTTPException as exc:
