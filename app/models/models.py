@@ -37,6 +37,36 @@ class User(Base):
     join_research_aggregated_success_count: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
     )
+    remaining_quota: Mapped[int | None] = mapped_column(
+        Integer,
+        CheckConstraint(
+            "remaining_quota IS NULL OR remaining_quota >= 0",
+            name="ck_users_remaining_quota_non_negative",
+        ),
+        nullable=True,
+    )
+
+
+class ConstructionQuery(Base):
+    __tablename__ = "construction_queries"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE", name="construction_queries_user_id_fkey"),
+        nullable=False,
+    )
+    fingerprint: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "fingerprint", name="uq_construction_queries_user_fingerprint"),
+        Index("ix_construction_queries_user_id", "user_id"),
+    )
 
 
 class BillingPlan(Base):

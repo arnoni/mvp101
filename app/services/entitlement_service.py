@@ -125,6 +125,38 @@ class EntitlementService:
             )
             sentry_sdk.capture_exception(exc)
 
+
+    @staticmethod
+    async def reset_remaining_quota_on_expiry(
+        *,
+        db_engine: Optional[AsyncEngine],
+        user_id: str,
+        free_daily_limit: int,
+    ) -> None:
+        if not db_engine:
+            return
+        try:
+            async with db_engine.begin() as conn:
+                await conn.execute(
+                    text(
+                        """
+                        UPDATE users
+                        SET remaining_quota = :free_daily_limit,
+                            updated_at = now()
+                        WHERE id = :user_id::uuid
+                        """
+                    ),
+                    {"user_id": user_id, "free_daily_limit": int(free_daily_limit)},
+                )
+        except Exception as exc:
+            struct_logger.exception(
+                "remaining_quota_expiry_reset_failed",
+                user_id=user_id,
+                free_daily_limit=free_daily_limit,
+                error=str(exc),
+            )
+            sentry_sdk.capture_exception(exc)
+
     @staticmethod
     @validate_call(config=ConfigDict(arbitrary_types_allowed=True))
     async def get_tier(
@@ -198,6 +230,11 @@ class EntitlementService:
                                 "new_daily_limit": free_limit,
                                 "source": "redis_expiration_check",
                             },
+                        )
+                        await EntitlementService.reset_remaining_quota_on_expiry(
+                            db_engine=db_engine,
+                            user_id=user_id,
+                            free_daily_limit=free_limit,
                         )
                         return EntitlementResult(
                             tier=TierStatus.FREE,

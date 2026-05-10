@@ -35,6 +35,13 @@ class GaugeResult(BaseModel):
     cached: bool = False
 
 
+class QuotaMeta(BaseModel):
+    consumed: bool
+    remaining: int
+    effective_tier: str
+    reason: str
+
+
 class SearchResponse(BaseModel):
     construction: Optional[GaugeResult] = None
     demand: Optional[GaugeResult] = None
@@ -43,3 +50,4 @@ class SearchResponse(BaseModel):
     quota_remaining: int
     checks_today: int
     tier: Optional[str] = None
+    quota: Optional[QuotaMeta] = None

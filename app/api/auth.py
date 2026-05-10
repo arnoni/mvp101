@@ -837,11 +837,13 @@ async def magic_landing(
                 pending_intent = pending_intent_result.fetchone()
                 if pending_intent is not None:
                     plan_result = await conn.execute(
-                        select(SimulatedBillingPlan.duration_hours)
+                        select(SimulatedBillingPlan.duration_hours, SimulatedBillingPlan.daily_limit)
                         .where(SimulatedBillingPlan.code == pending_intent.plan_code)
                         .limit(1)
                     )
-                    duration_hours = int(plan_result.scalar_one_or_none() or 24)
+                    plan_row = plan_result.first()
+                    duration_hours = int(plan_row.duration_hours if plan_row and plan_row.duration_hours else 24)
+                    plan_daily_limit = int(plan_row.daily_limit if plan_row and plan_row.daily_limit else 0)
                     await conn.execute(
                         update(SimulatedPaymentIntent)
                         .where(SimulatedPaymentIntent.id == pending_intent.id)
@@ -892,6 +894,15 @@ async def magic_landing(
                             anon_id=anon_id,
                             redis_cli=redis,
                         )
+                    initial_remaining = max(0, plan_daily_limit - (1 if carried_forward_credits else 0))
+                    await conn.execute(
+                        update(User)
+                        .where(User.id == user_id_uuid)
+                        .values(
+                            remaining_quota=func.coalesce(User.remaining_quota, initial_remaining),
+                            updated_at=func.now(),
+                        )
+                    )
                     if carried_forward_credits > 0:
                         try:
                             await conn.execute(
