@@ -294,7 +294,7 @@
     function container() { return $(containerId); }
     function statusEl() { return opts.statusElId ? $(opts.statusElId) : null; }
     function setStatus(message) { const el = statusEl(); if (el) el.textContent = message || ""; }
-    function getSitekey(el) { return el?.dataset.sitekey || (containerId === "turnstileContainer" ? document.body?.dataset.turnstileSitekey : ""); }
+    function getSitekey(el) { return el?.dataset.sitekey || document.body?.dataset.turnstileSitekey || ""; }
     function waitForTurnstile() {
       const startedAt = Date.now();
       let delay = 100;
@@ -308,24 +308,37 @@
       const el = container();
       if (!el) return null;
       const sitekey = getSitekey(el);
-      if (!sitekey) { setStatus(document.body?.dataset.labelVerificationUnavailableSitekeyMissing || "Verification unavailable: site key missing."); opts.onError?.(); return null; }
-
-      console.info(JSON.stringify({ //ARNON_2026_05_10_TEMP
+      console.info(JSON.stringify({
         level: "info",
         event: "turnstile_init_attempt",
         containerId,
-        elementDatasetSitekey: el?.dataset?.sitekey,
-        bodyDatasetSitekey: document.body?.dataset?.turnstileSitekey,
-        getSitekeyResult: getSitekey(el),
-        elementExists: !!el,
-        elementOffsetWidth: el?.offsetWidth,
-        elementOffsetHeight: el?.offsetHeight,
-        isDialog: el?.tagName === "DIALOG",
-        dialogOpen: el?.open,
+        elementSitekey: el?.dataset?.sitekey,
+        resolvedSitekey: sitekey,
+        bodySitekey: document.body?.dataset?.turnstileSitekey,
+        elementWidth: el?.offsetWidth,
+        elementHeight: el?.offsetHeight,
       }));
-
+      if (!sitekey) { setStatus(document.body?.dataset.labelVerificationUnavailableSitekeyMissing || "Verification unavailable: site key missing."); opts.onError?.(); return null; }
       try { const turnstile = await waitForTurnstile();
         if (widgetId !== undefined) { turnstile.reset(widgetId); token = null; return widgetId; }
+        // Wait for the container to be laid out and have non-zero dimensions.
+        // This is critical for <dialog> elements where showModal() and render()
+        // happen in the same task before the browser paints.
+        await new Promise((resolve) => {
+          if (el.offsetWidth > 0 && el.offsetHeight > 0) return resolve();
+          if (typeof ResizeObserver !== "function") {
+            window.setTimeout(resolve, 0);
+            return;
+          }
+          const observer = new ResizeObserver(() => {
+            if (el.offsetWidth > 0 && el.offsetHeight > 0) {
+              observer.disconnect();
+              resolve();
+            }
+          });
+          observer.observe(el);
+          window.setTimeout(() => { observer.disconnect(); resolve(); }, 2000);
+        });
         widgetId = turnstile.render(el, { sitekey, theme: el.dataset.theme || "auto", "render-callback": () => opts.onRender?.(), callback: (newToken) => { token = newToken || null; setStatus(""); try { console.info(JSON.stringify({ level: "info", event: "turnstile_token_received", containerId, token_length: token?.length || 0 })); } catch (_) {} opts.onToken?.(token); }, "expired-callback": () => { token = null; opts.onExpire?.(); }, "error-callback": (code) => { token = null; opts.onError?.(code); } });
         return widgetId;
       } catch (err) { setStatus(VERIFY_TIMEOUT_TEXT); opts.onError?.(err);
@@ -355,10 +368,17 @@
         opts.onReset?.(); } }
     function destroy() {
       try { if (widgetId !== undefined && window.turnstile?.remove) window.turnstile.remove(widgetId);
-      } catch (err) { logClientException("turnstile_destroy_failed", err, { containerId });
-      } finally { widgetId = undefined;
-        token = null;
-        initPromise = null; } }
+      } catch (err) { logClientException("turnstile_destroy_failed", err, { containerId }); }
+      widgetId = undefined;
+      token = null;
+      initPromise = null;
+      setStatus("");
+      const el = container();
+      if (el) {
+        const staleIframe = el.querySelector("iframe");
+        if (staleIframe) staleIframe.remove();
+      }
+      opts.onReset?.(); }
     return { init, reset, getToken: () => token || null, destroy }; }
   // ── 4. Turnstile instances
   const heroTurnstile = TurnstileManager("turnstileContainer", { onRender: () => onTurnstileRendered(),
@@ -699,9 +719,9 @@
   // ── 7. Modal system: openModal, closeModal, hooks map
   const hooks = { supportModalLayer: {
       onOpen: () => unlockTurnstile.init(),
-      onClose: () => { logFlowEvent("join_research_access_modal_closed", { action: "close_join_research_modal", status: "closed", ui_surface: state.unlock.uiSurface, step: `purchaseStep${state.unlock.step}` }); unlockTurnstile.reset(); resetSupportModal(); } },
+      onClose: () => { logFlowEvent("join_research_access_modal_closed", { action: "close_join_research_modal", status: "closed", ui_surface: state.unlock.uiSurface, step: `purchaseStep${state.unlock.step}` }); unlockTurnstile.destroy(); resetSupportModal(); } },
     reportModalLayer: { onOpen: () => reportTurnstile.init(),
-      onClose: () => { reportTurnstile.reset(); resetReportModal(); } } };
+      onClose: () => { reportTurnstile.destroy(); resetReportModal(); } } };
   function shouldUseDialogOpen(el) {
     return el?.tagName === "DIALOG" && !el.classList.contains("bottom-sheet") && !el.classList.contains("sheet-layer"); }
   function openModal(id, options = {}) {
@@ -997,7 +1017,8 @@
       } catch (_) {}
       state.report.autoCloseTimer = window.setTimeout(() => closeModal("reportModalLayer"), 2000);
     } catch (err) { const code = err.errorCode;
-      if (code === "turnstile_failed" || code === "turnstile_required") { reportTurnstile.reset(); await reportTurnstile.init(); }
+      const normalizedCode = String(code || "").toLowerCase();
+      if (normalizedCode === "turnstile_failed" || normalizedCode === "turnstile_required" || err.status === 403) { reportTurnstile.destroy(); await reportTurnstile.init(); }
       setText("reportError", err.message || "Could not submit report right now.");
       const isExpected429 = err.status === 429 &&
         (code === "daily_report_quota_exceeded" || code === "user_report_rate_limited");
