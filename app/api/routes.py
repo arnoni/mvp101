@@ -8,13 +8,14 @@ from pydantic import ValidationError
 import uuid
 from sqlalchemy import insert, text
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.keys import KeyBuilder
 
 from app.core.config import settings
 from app.models.models import FunnelEvent
 from app.models.dto import ErrorResponse, StatusResponse, UserStatus
-from app.schemas.search import SearchRequest, SearchResponse, SearchTarget
+from app.schemas.search import QuotaMeta, SearchRequest, SearchResponse, SearchTarget
 from app.schemas.user_reports import (
     REPORT_TYPE_TO_CATEGORY,
     REPORT_TYPE_TO_SEVERITY,
@@ -28,6 +29,13 @@ from app.services.analytics import capture, posthog
 from app.services.entitlement_service import EntitlementService, TierStatus
 from app.services.policy_engine import PolicyEngine, RequestContext, PolicyVerdict, PolicyDecision, run_gate
 from app.services.quota_repository import QuotaRepository
+from app.services.quota_service import (
+    QuotaConcurrencyError,
+    compute_construction_fingerprint,
+    consume_construction_credit,
+    get_or_initialize_remaining_quota,
+    has_construction_query,
+)
 from app.utils.security import verify_turnstile, verify_turnstile_dependency, get_client_ip, protect_mutation
 from app.services.bucket_engine import BucketEngine
 from app.services.precompute_repo import PrecomputeRepository
@@ -58,6 +66,7 @@ router = APIRouter()
 logger = structlog.get_logger(__name__)
 USER_REPORT_DAILY_SUCCESS_LIMIT = int(os.getenv("USER_REPORT_DAILY_SUCCESS_LIMIT", "3"))
 UGC_DEDUP_TTL_SECONDS = 7 * 24 * 3600
+DEFAULT_CONSTRUCTION_RADIUS_M = 50
 UGC_INSERT_SQL = text("""
 INSERT INTO ugc_reports (
   public_id,
@@ -679,6 +688,32 @@ async def search(
                 )
         area_code = AreaBucketer.get_area_code(data.lat, data.lon)
         check_types = ["construction", "demand"] if data.target == SearchTarget.BOTH else [data.target.value]
+        query_fingerprint = compute_construction_fingerprint(
+            data.lat, data.lon, radius_m=DEFAULT_CONSTRUCTION_RADIUS_M
+        )
+
+        if user_id is not None and data.target == SearchTarget.DEMAND:
+            if db_engine is None:
+                logger.warning(
+                    "demand_prior_construction_check_skipped",
+                    reason="db_engine_missing",
+                    user_id=str(user_id),
+                )
+            else:
+                async with AsyncSession(db_engine) as quota_db:
+                    demand_has_prior = await has_construction_query(
+                        db=quota_db,
+                        user_id=uuid.UUID(str(user_id)),
+                        query_fingerprint=query_fingerprint,
+                    )
+                if not demand_has_prior:
+                    return JSONResponse(
+                        status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        content={
+                            "error": "no_prior_construction_query",
+                            "message": "Request a construction report for this location first.",
+                        },
+                    )
 
         for check_type in check_types:
             ui_surface = "demand_level_page" if check_type == "demand" else "construction_level_page"
@@ -748,7 +783,14 @@ async def search(
             checks_today=checks_today,
         )
 
-        if not getattr(gate_result, "admin_bypass", False) and getattr(gate_result, "quota_key", None):
+        should_consume_redis_quota = (
+            user_id is None and data.target in (SearchTarget.CONSTRUCTION, SearchTarget.BOTH)
+        )
+        if (
+            should_consume_redis_quota
+            and not getattr(gate_result, "admin_bypass", False)
+            and getattr(gate_result, "quota_key", None)
+        ):
             raw_idempotency_key = (request.headers.get("Idempotency-Key") or "").strip()[:128]
             idempotency_key = KeyBuilder.quota_idempotency(gate_result.quota_key, raw_idempotency_key) if raw_idempotency_key else None
             try:
@@ -809,6 +851,108 @@ async def search(
                 )
             response_payload.quota_remaining = remaining_after
             response_payload.checks_today = max(0, (getattr(gate_result, "quota_limit", None) or daily_limit) - remaining_after)
+            if user_id is None:
+                logger.info(
+                    "quota_decision",
+                    identity_kind="anon",
+                    anon_id=anon_id,
+                    report_type=data.target.value,
+                    consumed=True,
+                    remaining_quota=remaining_after,
+                    reason="redis_only_anon_quota",
+                )
+
+        if user_id is not None and db_engine is not None:
+            user_uuid = uuid.UUID(str(user_id))
+            if data.target in (SearchTarget.CONSTRUCTION, SearchTarget.BOTH):
+                try:
+                    async with AsyncSession(db_engine) as quota_db:
+                        quota_result = await consume_construction_credit(
+                            db=quota_db,
+                            user_id=user_uuid,
+                            daily_limit=daily_limit,
+                            query_fingerprint=query_fingerprint,
+                        )
+                except QuotaConcurrencyError:
+                    return _structured_search_error_response(
+                        http_status.HTTP_429_TOO_MANY_REQUESTS,
+                        "quota_concurrency_conflict",
+                        "Quota was consumed by another request. Please retry.",
+                    )
+                if quota_result.reason == "insufficient_quota":
+                    return JSONResponse(
+                        status_code=http_status.HTTP_402_PAYMENT_REQUIRED,
+                        content={
+                            "error": "quota_exceeded",
+                            "quota": QuotaMeta(
+                                consumed=False,
+                                remaining=0,
+                                effective_tier=tier_to_client(tier),
+                                reason="insufficient_quota",
+                            ).model_dump(),
+                        },
+                    )
+                response_payload.quota_remaining = quota_result.remaining_quota
+                response_payload.checks_today = max(0, daily_limit - quota_result.remaining_quota)
+                response_payload.quota = QuotaMeta(
+                    consumed=quota_result.consumed,
+                    remaining=quota_result.remaining_quota,
+                    effective_tier=tier_to_client(tier),
+                    reason=quota_result.reason,
+                )
+                logger.info(
+                    "quota_decision",
+                    user_id=str(user_uuid),
+                    effective_tier=tier_to_client(tier),
+                    report_type="construction",
+                    query_fingerprint=query_fingerprint,
+                    consumed=quota_result.consumed,
+                    remaining_quota=quota_result.remaining_quota,
+                    reason=quota_result.reason,
+                )
+                if quota_result.consumed:
+                    capture(
+                        str(user_uuid),
+                        "quota_credit_consumed",
+                        {
+                            "effective_tier": tier_to_client(tier),
+                            "remaining_quota": quota_result.remaining_quota,
+                            "report_type": "construction",
+                            "query_fingerprint": query_fingerprint,
+                            "surface": request.headers.get("X-DD-Surface") or "construction_level_page",
+                        },
+                    )
+            elif data.target == SearchTarget.DEMAND:
+                async with AsyncSession(db_engine) as quota_db:
+                    current_remaining = await get_or_initialize_remaining_quota(
+                        db=quota_db, user_id=user_uuid, daily_limit=daily_limit
+                    )
+                response_payload.quota_remaining = current_remaining
+                response_payload.checks_today = max(0, daily_limit - current_remaining)
+                response_payload.quota = QuotaMeta(
+                    consumed=False,
+                    remaining=current_remaining,
+                    effective_tier=tier_to_client(tier),
+                    reason="demand_report_no_charge",
+                )
+                logger.info(
+                    "quota_decision",
+                    user_id=str(user_uuid),
+                    effective_tier=tier_to_client(tier),
+                    report_type="demand",
+                    consumed=False,
+                    remaining_quota=current_remaining,
+                    reason="demand_report_no_charge",
+                )
+                capture(
+                    str(user_uuid),
+                    "demand_report_requested_no_quota_charge",
+                    {
+                        "effective_tier": tier_to_client(tier),
+                        "remaining_quota": current_remaining,
+                        "linked_construction_query_fingerprint": query_fingerprint,
+                    },
+                )
         demand_cell_id = BucketEngine.get_cell_id(data.lat, data.lon)
         logger.info("demand_cell_id_computed", lat=data.lat, lon=data.lon, demand_cell_id=demand_cell_id)
         try:
