@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Request, HTTPException, status as http_status, Depends, Response
 from fastapi.responses import JSONResponse
+import sentry_sdk
 import structlog
 from typing import Optional
 from urllib.parse import quote, unquote
@@ -63,6 +64,9 @@ import json
 from datetime import datetime, timezone, timedelta
 
 router = APIRouter()
+# TODO(Vercel): Vercel captures stdout/console.log. structlog outputs to stderr by default.
+# Ensure the deployment config routes stderr to Vercel's log drain, or configure
+# structlog to write JSON to stdout for unified log aggregation.
 logger = structlog.get_logger(__name__)
 USER_REPORT_DAILY_SUCCESS_LIMIT = int(os.getenv("USER_REPORT_DAILY_SUCCESS_LIMIT", "3"))
 UGC_DEDUP_TTL_SECONDS = 7 * 24 * 3600
@@ -581,6 +585,13 @@ async def search(
         daily_limit = int(getattr(request.state, "daily_limit", 3) or 3)
         turnstile_token = (data.turnstile_token or "").strip()
         turnstile_present = bool(turnstile_token)
+        if not isinstance(data.target, SearchTarget):
+            logger.warning(
+                "invalid_search_target",
+                user_id=str(user_id),
+                raw_target=data.target if hasattr(data, "target") else "unparseable",
+                reason="validation_error",
+            )
 
         # Aggregate telemetry first so blocked/challenged attempts are still counted.
         classification = classify_location_input(data.location_input or "")
@@ -707,6 +718,20 @@ async def search(
                         query_fingerprint=query_fingerprint,
                     )
                 if not demand_has_prior:
+                    logger.warning(
+                        "demand_without_prior_construction",
+                        user_id=str(user_id),
+                        query_fingerprint=query_fingerprint,
+                        reason="no_prior_construction_query",
+                    )
+                    capture(
+                        str(user_id),
+                        "demand_without_prior_construction",
+                        {
+                            "query_fingerprint": query_fingerprint,
+                            "effective_tier": tier_to_client(tier),
+                        },
+                    )
                     return JSONResponse(
                         status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
                         content={
@@ -764,6 +789,14 @@ async def search(
                 turnstile_valid=(False if exc.status_code == http_status.HTTP_403_FORBIDDEN else None),
             )
 
+        if getattr(gate_result, "admin_bypass", False):
+            logger.info(
+                "admin_bypass_quota_skip",
+                user_id=str(user_id),
+                anon_id=anon_id,
+                reason="admin_bypass",
+            )
+
         limit = daily_limit
         checks_today = max(0, limit - gate_result.remaining_after)
         tier_str = tier_to_client(tier)
@@ -800,7 +833,8 @@ async def search(
                     idempotency_key=idempotency_key,
                     redis_op="quota_increment",
                 )
-            except RuntimeError:
+            except RuntimeError as exc:
+                sentry_sdk.capture_exception(exc)
                 logger.warning(
                     "search_request_rejected",
                     error="SEARCH_TEMPORARILY_THROTTLED",
@@ -823,6 +857,19 @@ async def search(
                     retry_after_seconds=30,
                 )
             if not allowed:
+                sentry_sdk.capture_message(
+                    f"Anonymous quota exhausted: anon_id={anon_id}, tier={tier}",
+                    level="warning",
+                )
+                capture(
+                    str(anon_id),
+                    "anonymous_quota_exhausted",
+                    {
+                        "effective_tier": tier_to_client(tier),
+                        "query_fingerprint": query_fingerprint,
+                        "remaining_quota": 0,
+                    },
+                )
                 logger.warning(
                     "search_request_rejected",
                     error="FREE_DAILY_QUOTA_EXCEEDED",
@@ -861,6 +908,16 @@ async def search(
                     remaining_quota=remaining_after,
                     reason="redis_only_anon_quota",
                 )
+                capture(
+                    str(anon_id),
+                    "anonymous_quota_credit_consumed",
+                    {
+                        "effective_tier": tier_to_client(tier),
+                        "remaining_quota": remaining_after,
+                        "report_type": data.target.value,
+                        "query_fingerprint": query_fingerprint,
+                    },
+                )
 
         if user_id is not None and db_engine is not None:
             user_uuid = uuid.UUID(str(user_id))
@@ -874,12 +931,37 @@ async def search(
                             query_fingerprint=query_fingerprint,
                         )
                 except QuotaConcurrencyError:
+                    logger.warning(
+                        "quota_concurrency_conflict",
+                        user_id=str(user_uuid),
+                        query_fingerprint=query_fingerprint,
+                        reason="concurrent_quota_write",
+                    )
+                    sentry_sdk.capture_message(
+                        f"Quota concurrency conflict for user {user_uuid} on fingerprint {query_fingerprint}",
+                        level="warning",
+                    )
                     return _structured_search_error_response(
                         http_status.HTTP_429_TOO_MANY_REQUESTS,
                         "quota_concurrency_conflict",
                         "Quota was consumed by another request. Please retry.",
                     )
                 if quota_result.reason == "insufficient_quota":
+                    logger.warning(
+                        "quota_exhausted",
+                        user_id=str(user_uuid),
+                        query_fingerprint=query_fingerprint,
+                        reason="insufficient_quota",
+                    )
+                    capture(
+                        str(user_uuid),
+                        "quota_exhausted",
+                        {
+                            "effective_tier": tier_to_client(tier),
+                            "query_fingerprint": query_fingerprint,
+                            "remaining_quota": 0,
+                        },
+                    )
                     return JSONResponse(
                         status_code=http_status.HTTP_402_PAYMENT_REQUIRED,
                         content={
@@ -920,6 +1002,17 @@ async def search(
                             "report_type": "construction",
                             "query_fingerprint": query_fingerprint,
                             "surface": request.headers.get("X-DD-Surface") or "construction_level_page",
+                        },
+                    )
+                elif quota_result.reason == "duplicate_construction_query_no_charge":
+                    capture(
+                        str(user_uuid),
+                        "quota_duplicate_detected",
+                        {
+                            "effective_tier": tier_to_client(tier),
+                            "remaining_quota": quota_result.remaining_quota,
+                            "report_type": "construction",
+                            "query_fingerprint": query_fingerprint,
                         },
                     )
             elif data.target == SearchTarget.DEMAND:
@@ -1014,6 +1107,7 @@ async def search(
     except HTTPException:
         raise
     except Exception as exc:
+        sentry_sdk.capture_exception(exc)
         logger.exception(
             "search_route_unhandled_exception",
             error=str(exc),

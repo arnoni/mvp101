@@ -15,6 +15,7 @@ from app.core.keys import KeyBuilder
 from app.models.models import BillingPlan, SimulatedBillingPlan, SimulatedUserPass, UserPass
 
 logger = logging.getLogger(__name__)
+# TODO(Vercel): Ensure structlog emits JSON to stdout or routed stderr for Vercel log drain compatibility.
 struct_logger = structlog.get_logger(__name__)
 
 
@@ -148,6 +149,11 @@ class EntitlementService:
                     ),
                     {"user_id": user_id, "free_daily_limit": int(free_daily_limit)},
                 )
+            struct_logger.info(
+                "remaining_quota_reset_on_expiry",
+                user_id=user_id,
+                free_daily_limit=free_daily_limit,
+            )
         except Exception as exc:
             struct_logger.exception(
                 "remaining_quota_expiry_reset_failed",
@@ -230,6 +236,13 @@ class EntitlementService:
                                 "new_daily_limit": free_limit,
                                 "source": "redis_expiration_check",
                             },
+                        )
+                        struct_logger.info(
+                            "entitlement_expiry_detected",
+                            user_id=user_id,
+                            prior_tier=payload.get("tier"),
+                            new_tier="FREE",
+                            free_daily_limit=free_limit,
                         )
                         await EntitlementService.reset_remaining_quota_on_expiry(
                             db_engine=db_engine,
