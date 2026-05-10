@@ -45,3 +45,22 @@ def test_sentry_dsn_is_exposed_and_placeholder_sri_removed():
 
 def test_template_does_not_use_inline_click_handlers():
     assert "onclick=" not in INDEX_HTML
+
+
+def test_search_buttons_are_tier_aware_and_emit_state_telemetry():
+    assert 'const turnstileRequiredForSearch = tier === "free";' in APP_JS
+    assert 'const canSearch = hasCoords && (!turnstileRequiredForSearch || hasTurnstileToken) && !busy;' in APP_JS
+    assert 'if (mainBtn) mainBtn.disabled = !canSearch;' in APP_JS
+    assert 'if (conBtn) conBtn.disabled = !canSearch;' in APP_JS
+    assert 'if (demandBtn) demandBtn.disabled = !canSearch;' in APP_JS
+    assert 'captureEvent("search_button_state_changed"' in APP_JS
+    assert 'turnstile_required_for_search: turnstileRequiredForSearch' in APP_JS
+
+
+def test_paid_search_dispatch_does_not_require_turnstile_token():
+    assert '''function isHeroTurnstileRequired() {
+    return AccessState.get().tier === "free"; }''' in APP_JS
+    assert 'setSearchState(turnstileToken ? "turnstile_verified" : "ready_without_turnstile");' in APP_JS
+    assert 'if (turnstileRequiredForSearch && !payload.turnstile_token)' in APP_JS
+    assert 'setSearchState(token ? "turnstile_verified" : "ready_without_turnstile");' in APP_JS
+    assert 'if (turnstileRequiredForSearch && !demandPayload.turnstile_token)' in APP_JS
