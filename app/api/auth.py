@@ -5,6 +5,7 @@ import uuid
 import hashlib
 import random
 import httpx
+import sentry_sdk
 import structlog
 from datetime import datetime, timezone
 from typing import Optional
@@ -26,6 +27,7 @@ from app.utils.security import get_client_ip, verify_turnstile
 from app.utils.url import resolve_checkout_base, resolve_public_base_url
 from email_service import EmailService
 
+# TODO(Vercel): Ensure structlog emits JSON to stdout or routed stderr for Vercel log drain compatibility.
 logger = structlog.get_logger(__name__)
 router = APIRouter()
 
@@ -895,14 +897,40 @@ async def magic_landing(
                             redis_cli=redis,
                         )
                     initial_remaining = max(0, plan_daily_limit - (1 if carried_forward_credits else 0))
-                    await conn.execute(
-                        update(User)
-                        .where(User.id == user_id_uuid)
-                        .values(
-                            remaining_quota=func.coalesce(User.remaining_quota, initial_remaining),
-                            updated_at=func.now(),
+                    try:
+                        await conn.execute(
+                            update(User)
+                            .where(User.id == user_id_uuid)
+                            .values(
+                                remaining_quota=func.coalesce(User.remaining_quota, initial_remaining),
+                                updated_at=func.now(),
+                            )
                         )
-                    )
+                        logger.info(
+                            "remaining_quota_initialized_on_magic_link",
+                            user_id=str(user_id_uuid),
+                            initial_remaining=initial_remaining,
+                            carried_forward_credits=carried_forward_credits,
+                            plan_daily_limit=plan_daily_limit,
+                        )
+                        capture(
+                            str(user_id_uuid),
+                            "remaining_quota_initialized_on_magic_link",
+                            {
+                                "initial_remaining": initial_remaining,
+                                "carried_forward_credits": carried_forward_credits,
+                                "plan_daily_limit": plan_daily_limit,
+                            },
+                        )
+                    except Exception as exc:
+                        logger.error(
+                            "remaining_quota_initialization_failed",
+                            user_id=str(user_id_uuid),
+                            error=str(exc),
+                        )
+                        sentry_sdk.capture_exception(exc)
+                        # Do NOT re-raise here — the magic link flow must complete.
+                        # The quota will be re-initialized on the next request via get_or_initialize_remaining_quota.
                     if carried_forward_credits > 0:
                         try:
                             await conn.execute(
