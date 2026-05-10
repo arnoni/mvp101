@@ -309,6 +309,21 @@
       if (!el) return null;
       const sitekey = getSitekey(el);
       if (!sitekey) { setStatus(document.body?.dataset.labelVerificationUnavailableSitekeyMissing || "Verification unavailable: site key missing."); opts.onError?.(); return null; }
+
+      console.info(JSON.stringify({ //ARNON_2026_05_10_TEMP
+        level: "info",
+        event: "turnstile_init_attempt",
+        containerId,
+        elementDatasetSitekey: el?.dataset?.sitekey,
+        bodyDatasetSitekey: document.body?.dataset?.turnstileSitekey,
+        getSitekeyResult: getSitekey(el),
+        elementExists: !!el,
+        elementOffsetWidth: el?.offsetWidth,
+        elementOffsetHeight: el?.offsetHeight,
+        isDialog: el?.tagName === "DIALOG",
+        dialogOpen: el?.open,
+      }));
+
       try { const turnstile = await waitForTurnstile();
         if (widgetId !== undefined) { turnstile.reset(widgetId); token = null; return widgetId; }
         widgetId = turnstile.render(el, { sitekey, theme: el.dataset.theme || "auto", "render-callback": () => opts.onRender?.(), callback: (newToken) => { token = newToken || null; setStatus(""); try { console.info(JSON.stringify({ level: "info", event: "turnstile_token_received", containerId, token_length: token?.length || 0 })); } catch (_) {} opts.onToken?.(token); }, "expired-callback": () => { token = null; opts.onExpire?.(); }, "error-callback": (code) => { token = null; opts.onError?.(code); } });
