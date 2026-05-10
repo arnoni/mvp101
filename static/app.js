@@ -423,14 +423,36 @@
     updateButtons(); }
   function updateButtons() {
     const hasCoords = state.coords.valid;
+    const access = AccessState.get();
+    const tier = access.tier;
+    // Only free-tier users must present a Turnstile token to search.
+    // Paid / simulated_paid users are verified by session, not CAPTCHA.
+    const turnstileRequiredForSearch = tier === "free";
     const hasTurnstileToken = window.dilldrillTurnstileToken !== null;
     const busy = searchRequestInFlight || state.hero.searchRequestInFlight || state.hero.constructionStatus === "loading" || state.hero.demandStatus === "loading";
     const mainBtn = $("mainActionBtn");
     const conBtn = $("constructionGoBtn");
     const demandBtn = $("demandGoBtn");
-    if (mainBtn) mainBtn.disabled = !hasCoords || !hasTurnstileToken || busy;
-    if (conBtn) conBtn.disabled = !hasCoords || !hasTurnstileToken || busy;
-    if (demandBtn) demandBtn.disabled = !hasCoords || !hasTurnstileToken || busy; }
+    const canSearch = hasCoords && (!turnstileRequiredForSearch || hasTurnstileToken) && !busy;
+    // Emit telemetry for search button state changes
+    captureEvent("search_button_state_changed", {
+      enabled: canSearch,
+      reason: canSearch
+        ? "valid_location_parsed"
+        : !hasCoords
+          ? "no_coords"
+          : turnstileRequiredForSearch
+            ? "turnstile_missing"
+            : "busy",
+      lat: state.coords.lat || null,
+      lon: state.coords.lng || null,
+      tier,
+      has_turnstile_token: hasTurnstileToken,
+      turnstile_required_for_search: turnstileRequiredForSearch,
+    });
+    if (mainBtn) mainBtn.disabled = !canSearch;
+    if (conBtn) conBtn.disabled = !canSearch;
+    if (demandBtn) demandBtn.disabled = !canSearch; }
   // ── 6. Hero: location input, parse preview, fetchConstruction, fetchDemand
   function setHeroCoords(parsed) {
     state.coords = { lat: parsed.lat, lng: parsed.lng, valid: true, key: normalizeKey(parsed.key || `${parsed.lat},${parsed.lng}`) };
@@ -528,7 +550,7 @@
     state.hero.searchState = next;
     return next; }
   function isHeroTurnstileRequired() {
-    return document.body?.dataset.turnstileRequired === "true" || Boolean(getHeroTurnstileToken()); }
+    return AccessState.get().tier === "free"; }
   function searchTelemetryProps(extra = {}) {
     const token = getHeroTurnstileToken();
     return {
@@ -565,19 +587,14 @@
     if (searchRequestInFlight || state.hero.searchRequestInFlight) return blockSearchSubmit("request_in_flight", "A search is already running. Please wait.");
     if (!state.coords.valid) return blockSearchSubmit("invalid_location", state.input.error || "Please enter a valid location before searching.");
     const turnstileToken = getHeroTurnstileToken();
-    if (isHeroTurnstileRequired() && !turnstileToken) {
+    const turnstileRequiredForSearch = isHeroTurnstileRequired();
+    if (turnstileRequiredForSearch && !turnstileToken) {
       showHeroTurnstileChallenge();
       await heroTurnstile.init();
       return blockSearchSubmit("turnstile_token_missing", document.body.dataset.labelSecurityCheckRequired || "Please complete the security check.");
     }
     const attemptId = ++state.hero.searchAttemptId;
-    setSearchState("turnstile_verified");
-    if (!turnstileToken) {
-      console.warn(JSON.stringify({ level: "warning", event: "search_dispatch_blocked_missing_token", attempt_id: attemptId, search_state: state.hero.searchState }));
-      heroTurnstile.reset();
-      setSearchState("idle");
-      return blockSearchSubmit("turnstile_token_missing_at_dispatch", "Verification failed. Please try again.");
-    }
+    setSearchState(turnstileToken ? "turnstile_verified" : "ready_without_turnstile");
     logSearchEvent("search_validation_passed", { attempt_id: attemptId });
     searchRequestInFlight = true;
     state.hero.searchRequestInFlight = true;
@@ -588,7 +605,7 @@
     try {
       logSearchEvent("search_request_started", { attempt_id: attemptId });
       const payload = searchPayload("construction");
-      if (state.hero.searchState === "turnstile_verified" && !payload.turnstile_token) {
+      if (turnstileRequiredForSearch && !payload.turnstile_token) {
         console.warn(JSON.stringify({ level: "warning", event: "search_payload_missing_token", attempt_id: attemptId, search_state: state.hero.searchState }));
         heroTurnstile.reset();
         setSearchState("idle");
@@ -664,8 +681,9 @@
     updateButtons();
     setText("demandMessage", document.body.dataset.labelCheckingDemand || "Checking demand...");
     try { const token = getHeroTurnstileToken();
-      setSearchState("turnstile_verified");
-      if (!token) {
+      const turnstileRequiredForSearch = isHeroTurnstileRequired();
+      setSearchState(token ? "turnstile_verified" : "ready_without_turnstile");
+      if (turnstileRequiredForSearch && !token) {
         console.warn(JSON.stringify({ level: "warning", event: "search_dispatch_blocked_missing_token", attempt_id: demandAttemptId, search_state: state.hero.searchState }));
         setSearchState("idle");
         heroTurnstile.reset();
@@ -674,7 +692,7 @@
         return null;
       }
       const demandPayload = searchPayload("demand");
-      if (!demandPayload.turnstile_token) {
+      if (turnstileRequiredForSearch && !demandPayload.turnstile_token) {
         console.warn(JSON.stringify({ level: "warning", event: "search_payload_missing_token", attempt_id: demandAttemptId, search_state: state.hero.searchState }));
         heroTurnstile.reset();
         setSearchState("idle");
