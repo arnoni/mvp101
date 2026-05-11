@@ -23,6 +23,68 @@ structlog.configure(
 )
 logger = structlog.get_logger()
 
+
+async def _precompute_cell_stats_and_percentiles(engine, poi_rows):
+    """Precompute cell-level POI counts and the global p99 in one transaction.
+
+    Distance bins remain query-time computations from the user's exact GPS
+    coordinate. This job only prepares the ambient density signal used by the
+    construction scoring algorithm. ``poi_rows`` reuses the rows already fetched
+    by ``run_precompute`` and is expected to contain ``(id, name, category, lat, lon)``.
+    """
+    logger.info("cell_poi_stats_precompute_starting")
+
+    cell_counts: Dict[str, int] = {}
+    for row in poi_rows:
+        lat = row[3]
+        lon = row[4]
+        if lat is None or lon is None:
+            continue
+        cell_id = BucketEngine.get_cell_id(float(lat), float(lon))
+        cell_counts[cell_id] = cell_counts.get(cell_id, 0) + 1
+
+    async with engine.begin() as conn:
+        await conn.execute(text("TRUNCATE TABLE cell_poi_stats"))
+
+        if cell_counts:
+            await conn.execute(
+                text(
+                    "INSERT INTO cell_poi_stats (cell_id, grid_poi_count, updated_at) "
+                    "VALUES (:cell_id, :grid_poi_count, now())"
+                ),
+                [
+                    {"cell_id": cell_id, "grid_poi_count": count}
+                    for cell_id, count in cell_counts.items()
+                ],
+            )
+
+        await conn.execute(
+            text(
+                "INSERT INTO cell_poi_percentiles "
+                "    (percentile, value, sample_size, updated_at) "
+                "SELECT "
+                "    99.0 AS percentile, "
+                "    COALESCE("
+                "        percentile_cont(0.99) "
+                "            WITHIN GROUP (ORDER BY grid_poi_count), "
+                "        0.0"
+                "    ) AS value, "
+                "    COUNT(*) AS sample_size, "
+                "    now() AS updated_at "
+                "FROM cell_poi_stats "
+                "ON CONFLICT (percentile) "
+                "DO UPDATE SET "
+                "    value       = EXCLUDED.value, "
+                "    sample_size = EXCLUDED.sample_size, "
+                "    updated_at  = now()"
+            )
+        )
+
+    logger.info(
+        "cell_poi_stats_precompute_complete",
+        cells_updated=len(cell_counts),
+    )
+
 async def run_precompute():
     logger.info("Starting Daily Precompute Job")
 
@@ -113,8 +175,14 @@ async def run_precompute():
         except Exception as e:
             logger.error("insert_failed", error=str(e))
 
+    # --- Cell-level stats + global percentiles (daily, atomic) ---
+    try:
+        await _precompute_cell_stats_and_percentiles(engine, raw_pois)
+    except Exception as e:
+        logger.error("cell_poi_stats_precompute_failed", error=str(e))
+
     await engine.dispose()
-    logger.info("Job Complete")
+    logger.info("Daily precompute — all steps complete")
 
 if __name__ == "__main__":
     if sys.platform == "win32":

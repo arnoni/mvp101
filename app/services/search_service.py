@@ -6,6 +6,7 @@ import structlog
 
 from app.schemas.search import SearchRequest, SearchResponse, GaugeResult, SearchTarget
 from app.services.bucket_engine import BucketEngine
+from app.services.construction_score import construction_score
 from app.services.report_renderer import ReportRenderer
 
 logger = structlog.get_logger(__name__)
@@ -38,6 +39,72 @@ class SearchService:
     @classmethod
     def _lock_key(cls, target: str, tier: str, lat: float, lon: float) -> str:
         return f"search:v2:lock:{target}:{tier}:{lat:.4f}:{lon:.4f}"
+
+    async def _compute_construction_score(
+        self,
+        lat: float,
+        lon: float,
+        cell_id: str,
+        candidates: list,
+    ) -> tuple[int, str]:
+        """Compute construction score using tier-weighted + ambient density.
+
+        Falls back to the legacy candidate-count formula when poi_service is
+        unavailable or when any part of the new computation fails.
+        """
+        fallback_score = min(100, len(candidates) * 10)
+        fallback = (fallback_score, "legacy_fallback")
+
+        if self._deps.poi_service is None:
+            logger.info(
+                "construction_score_legacy_fallback_used",
+                reason="poi_service_unavailable",
+                cell_id=cell_id,
+            )
+            return fallback
+
+        try:
+            bins = await self._deps.poi_service.get_construction_distance_bins(lat, lon)
+            tier_counts = [
+                int(bins.get("0_10", 0)),
+                int(bins.get("10_20", 0)),
+                int(bins.get("20_30", 0)),
+                int(bins.get("30_40", 0)),
+            ]
+
+            cell_stats = await self._deps.precompute_repo.get_cell_stats(cell_id)
+            grid_count = int(cell_stats.get("grid_poi_count", 0))
+
+            percentiles = await self._deps.precompute_repo.get_grid_percentiles(
+                redis=getattr(self._deps, "redis", None)
+            )
+            grid_p99 = float(percentiles.get("p99", 0.0))
+
+            score = construction_score(tier_counts, grid_count, grid_p99)
+            logger.info(
+                "construction_score_computed",
+                tier_counts=tier_counts,
+                grid_count=grid_count,
+                grid_p99=grid_p99,
+                score=score,
+                cell_id=cell_id,
+            )
+            return score, "new_algorithm"
+
+        except Exception as exc:
+            logger.warning(
+                "construction_score_new_algorithm_failed",
+                error=str(exc),
+                lat=round(lat, 5),
+                lon=round(lon, 5),
+                cell_id=cell_id,
+            )
+            logger.info(
+                "construction_score_legacy_fallback_used",
+                reason="new_algorithm_error",
+                cell_id=cell_id,
+            )
+            return fallback
 
     async def run(self, *, request: SearchRequest, tier: str, quota_remaining: int, checks_today: int) -> SearchResponse:
         target = request.target.value
@@ -100,31 +167,14 @@ class SearchService:
             construction = None
             demand = None
             if request.target in (SearchTarget.CONSTRUCTION, SearchTarget.BOTH):
-                construction_score = self.SIMULATED_FIXED_CONSTRUCTION_SCORE
-                score_source = "simulated_fixed_fallback"
-                try:
-                    if self._deps.poi_service is not None:
-                        bins = await self._deps.poi_service.get_construction_distance_bins(request.lat, request.lon)
-                        weighted = (
-                            int(bins.get("0_10", 0)) * 4
-                            + int(bins.get("10_20", 0)) * 3
-                            + int(bins.get("20_30", 0)) * 2
-                            + int(bins.get("30_40", 0)) * 1
-                        )
-                        construction_score = min(100, weighted * 10)
-                        score_source = "real"
-                    else:
-                        logger.info("construction_score_simulated_fallback_used", reason="poi_service_unavailable")
-                except Exception as exc:
-                    logger.warning(
-                        "construction_score_real_compute_failed",
-                        error=str(exc),
-                        lat=round(request.lat, 5),
-                        lon=round(request.lon, 5),
-                    )
-                    logger.info("construction_score_simulated_fallback_used", reason="real_compute_error")
+                construction_score_value, score_source = await self._compute_construction_score(
+                    lat=request.lat,
+                    lon=request.lon,
+                    cell_id=cell_id,
+                    candidates=candidates,
+                )
                 construction = GaugeResult(
-                    score=construction_score,
+                    score=construction_score_value,
                     score_source=score_source,
                     coord_key=coord_key,
                     message_code="CONSTRUCTION_READY",

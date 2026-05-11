@@ -1,5 +1,4 @@
 # app/services/poi_service.py
-import math
 from typing import List, Tuple, Dict, Any
 import structlog
 from sqlalchemy import text
@@ -33,18 +32,28 @@ class POIService:
         user_lat: float,
         user_lon: float,
     ) -> Dict[str, int]:
-        """
-        Query raw `pois` securely and return count bins in meters:
-        [0,10), [10,20), [20,30), [30,40).
-        """
-        if not self.engine:
-            return {"0_10": 0, "10_20": 0, "20_30": 0, "30_40": 0}
+        """Query raw `pois` and return COUNT(*) per km-distance tier from the
+        user's exact GPS coordinate.
 
-        # Bounding-box prefilter (~40m) before exact distance check (ST_DWithin).
-        # 1 deg lat ~= 111_320m; lon adjusted by cos(lat).
-        lat_deg_pad = 40.0 / 111_320.0
-        lon_denominator = max(0.1, abs(math.cos(math.radians(user_lat))))
-        lon_deg_pad = 40.0 / (111_320.0 * lon_denominator)
+        Tiers (kilometres from user coordinate):
+            "0_10"  —  0 km <= d < 10 km
+            "10_20" — 10 km <= d < 20 km
+            "20_30" — 20 km <= d < 30 km
+            "30_40" — 30 km <= d < 40 km
+
+        Distance is computed as great-circle distance from the user's
+        coordinate to each POI's geom using ST_DWithin on the existing
+        geography column. The GiST index on geom is used natively for an
+        index-driven distance scan — no bounding-box prefilter needed.
+
+        Expected query plan: "Index Scan using idx_pois_geom on pois"
+        (NOT "Seq Scan on pois").
+
+        Returns zero counts if self.engine is None or the query fails.
+        """
+        zero_bins = {"0_10": 0, "10_20": 0, "20_30": 0, "30_40": 0}
+        if not self.engine:
+            return zero_bins
 
         stmt = text(
             """
@@ -55,35 +64,22 @@ class POIService:
                 SELECT ST_Distance(p.geom, o.g) AS dist_m
                 FROM pois p
                 CROSS JOIN origin o
-                WHERE ST_Intersects(
-                    p.geom::geometry,
-                    ST_MakeEnvelope(:min_lon, :min_lat, :max_lon, :max_lat, 4326)
-                )
-                AND ST_DWithin(p.geom, o.g, 40)
+                WHERE ST_DWithin(p.geom, o.g, 40000)
             )
             SELECT
-                COUNT(*) FILTER (WHERE dist_m >= 0 AND dist_m < 10)  AS c0_10,
-                COUNT(*) FILTER (WHERE dist_m >= 10 AND dist_m < 20) AS c10_20,
-                COUNT(*) FILTER (WHERE dist_m >= 20 AND dist_m < 30) AS c20_30,
-                COUNT(*) FILTER (WHERE dist_m >= 30 AND dist_m < 40) AS c30_40
+                COUNT(*) FILTER (WHERE dist_m >=     0 AND dist_m < 10000) AS c0_10,
+                COUNT(*) FILTER (WHERE dist_m >= 10000 AND dist_m < 20000) AS c10_20,
+                COUNT(*) FILTER (WHERE dist_m >= 20000 AND dist_m < 30000) AS c20_30,
+                COUNT(*) FILTER (WHERE dist_m >= 30000 AND dist_m < 40000) AS c30_40
             FROM nearby
             """
         )
 
-        params = {
-            "lat": user_lat,
-            "lon": user_lon,
-            "min_lat": user_lat - lat_deg_pad,
-            "max_lat": user_lat + lat_deg_pad,
-            "min_lon": user_lon - lon_deg_pad,
-            "max_lon": user_lon + lon_deg_pad,
-        }
-
         try:
             async with self.engine.connect() as conn:
-                row = (await conn.execute(stmt, params)).mappings().first()
+                row = (await conn.execute(stmt, {"lat": user_lat, "lon": user_lon})).mappings().first()
             if not row:
-                return {"0_10": 0, "10_20": 0, "20_30": 0, "30_40": 0}
+                return zero_bins
             return {
                 "0_10": int(row.get("c0_10") or 0),
                 "10_20": int(row.get("c10_20") or 0),
@@ -92,4 +88,4 @@ class POIService:
             }
         except Exception:
             logger.exception("poi_distance_bin_query_failed")
-            return {"0_10": 0, "10_20": 0, "20_30": 0, "30_40": 0}
+            return zero_bins

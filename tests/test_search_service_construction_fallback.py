@@ -6,7 +6,7 @@ from app.services.search_service import SearchDependencies, SearchService
 
 class DummyPrecomputeRepo:
     async def get_candidates(self, cell_id):
-        return []
+        return [object(), object(), object(), object(), object()]
 
 
 class DummyDemandService:
@@ -20,7 +20,7 @@ class FailingPoiService:
 
 
 @pytest.mark.asyncio
-async def test_construction_score_falls_back_to_simulated_fixed_when_real_compute_fails():
+async def test_construction_score_falls_back_to_legacy_formula_when_real_compute_fails():
     svc = SearchService(
         SearchDependencies(
             redis=None,
@@ -38,5 +38,5 @@ async def test_construction_score_falls_back_to_simulated_fixed_when_real_comput
     )
 
     assert res.construction is not None
-    assert res.construction.score == SearchService.SIMULATED_FIXED_CONSTRUCTION_SCORE
-    assert res.construction.score_source == "simulated_fixed_fallback"
+    assert res.construction.score == 50
+    assert res.construction.score_source == "legacy_fallback"
