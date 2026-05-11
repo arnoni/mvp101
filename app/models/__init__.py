@@ -1,4 +1,6 @@
 from app.models.base import Base
+from app.models.cell_poi_percentiles import CellPoiPercentile
+from app.models.cell_poi_stats import CellPoiStat
 from app.models.models import (
     BillingPlan,
     CellPoiPrecompute,
@@ -24,6 +26,8 @@ __all__ = [
     "User",
     "BillingPlan",
     "CellPoiPrecompute",
+    "CellPoiStat",
+    "CellPoiPercentile",
     "UGCReport",
     "UGCReportEvidence",
     "UserLocationQuery",
