@@ -1,6 +1,6 @@
 # app/services/poi_service.py
 import time
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 import sentry_sdk
 import structlog
