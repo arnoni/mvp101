@@ -30,6 +30,13 @@ from __future__ import annotations
 
 from typing import List
 
+import sentry_sdk
+import structlog
+
+from app.core.analytics import capture
+
+logger = structlog.get_logger(__name__)
+
 
 def construction_score(
     tier_counts: List[int],
@@ -62,16 +69,81 @@ def construction_score(
     >>> construction_score([0, 0, 0, 0], 0, 50.0)
     0
     """
-    weights: List[int] = [4, 3, 2, 1]
-    raw_weight: int = sum(t * w for t, w in zip(tier_counts, weights))
-    tier_score: int = min(70, raw_weight * 10)
+    if (
+        not isinstance(tier_counts, list)
+        or len(tier_counts) != 4
+        or not all(isinstance(count, int) for count in tier_counts)
+    ):
+        logger.warning(
+            "construction_score_invalid_input",
+            detail="tier_counts must be a list of 4 integers",
+            received_type=type(tier_counts).__name__,
+            received_length=len(tier_counts) if isinstance(tier_counts, list) else None,
+        )
+        sentry_sdk.capture_message(
+            f"construction_score called with invalid tier_counts: {type(tier_counts).__name__}",
+            level="warning",
+        )
+        tier_counts = (
+            list(tier_counts)[:4]
+            if isinstance(tier_counts, (list, tuple))
+            else [0, 0, 0, 0]
+        )
+        while len(tier_counts) < 4:
+            tier_counts.append(0)
 
-    if grid_p99 > 0:
-        ambient_score: int = min(30, round(30.0 * grid_count / grid_p99))
-    else:
-        ambient_score = 0
+    try:
+        if grid_count < 0:
+            logger.warning("construction_score_clamping_grid_count", grid_count=grid_count)
+            sentry_sdk.capture_message(
+                f"construction_score received negative grid_count={grid_count}",
+                level="warning",
+            )
+            grid_count = 0
 
-    return min(100, tier_score + ambient_score)
+        if grid_p99 < 0:
+            logger.warning("construction_score_clamping_grid_p99", grid_p99=grid_p99)
+            sentry_sdk.capture_message(
+                f"construction_score received negative grid_p99={grid_p99}",
+                level="warning",
+            )
+            grid_p99 = 0.0
+
+        weights: List[int] = [4, 3, 2, 1]
+        raw_weight: int = sum(t * w for t, w in zip(tier_counts, weights))
+        tier_score: int = min(70, raw_weight * 10)
+
+        if grid_p99 > 0:
+            ambient_score: int = min(30, round(30.0 * grid_count / grid_p99))
+        else:
+            ambient_score = 0
+
+        score = min(100, tier_score + ambient_score)
+
+    except (TypeError, ValueError, ArithmeticError) as exc:
+        logger.error(
+            "construction_score_computation_failed",
+            error_type=type(exc).__name__,
+            error_detail=str(exc),
+            tier_counts=tier_counts,
+            grid_count=grid_count,
+            grid_p99=grid_p99,
+        )
+        sentry_sdk.capture_exception(exc)
+        score = 0
+
+    capture(
+        user_id="system",
+        event="construction_score_computed",
+        properties={
+            "score": score,
+            "tier_counts": tier_counts,
+            "grid_count": grid_count,
+            "grid_p99": grid_p99,
+            "source": "pure_function",
+        },
+    )
+    return score
 
 
 if __name__ == "__main__":

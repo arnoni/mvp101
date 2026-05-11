@@ -12,7 +12,9 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy import text
 from app.core.config import settings
 from app.core.db import build_asyncpg_url_and_connect_args
+from app.core.analytics import capture
 from app.services.bucket_engine import BucketEngine
+import sentry_sdk
 import structlog
 
 # Configure structlog for the job
@@ -24,65 +26,159 @@ structlog.configure(
 logger = structlog.get_logger()
 
 
+def _round_coord(value):
+    if value is None:
+        return None
+    try:
+        return round(float(value), 5)
+    except (TypeError, ValueError) as exc:
+        logger.warning(
+            "coordinate_sanitization_failed",
+            value_type=type(value).__name__,
+            error_type=type(exc).__name__,
+            error_detail=str(exc),
+        )
+        sentry_sdk.capture_exception(exc)
+        return None
+
+
 async def _precompute_cell_stats_and_percentiles(engine, poi_rows):
-    """Precompute cell-level POI counts and the global p99 in one transaction.
-
-    Distance bins remain query-time computations from the user's exact GPS
-    coordinate. This job only prepares the ambient density signal used by the
-    construction scoring algorithm. ``poi_rows`` reuses the rows already fetched
-    by ``run_precompute`` and is expected to contain ``(id, name, category, lat, lon)``.
     """
-    logger.info("cell_poi_stats_precompute_starting")
+    Precompute cell-level POI counts and global p99 in one atomic transaction.
 
-    cell_counts: Dict[str, int] = {}
-    for row in poi_rows:
-        lat = row[3]
-        lon = row[4]
-        if lat is None or lon is None:
-            continue
-        cell_id = BucketEngine.get_cell_id(float(lat), float(lon))
-        cell_counts[cell_id] = cell_counts.get(cell_id, 0) + 1
+    Per-step error handling reports failures to structlog, Sentry, and PostHog
+    while tolerating individual malformed POI rows during bucketing.
+    """
+    logger.info(
+        "cell_poi_stats_precompute_starting",
+        total_poi_rows=len(poi_rows),
+    )
 
+    step = "cell_bucketing"
+    try:
+        cell_counts: Dict[str, int] = {}
+        for idx, row in enumerate(poi_rows):
+            try:
+                lat = row[-2]
+                lon = row[-1]
+                if lat is None or lon is None:
+                    continue
+                cid = BucketEngine.get_cell_id(float(lat), float(lon))
+                cell_counts[cid] = cell_counts.get(cid, 0) + 1
+            except Exception as exc:
+                safe_lat = row[-2] if len(row) >= 2 else None
+                safe_lon = row[-1] if len(row) >= 1 else None
+                logger.error(
+                    "poi_cell_bucketing_failed",
+                    poi_index=idx,
+                    lat=_round_coord(safe_lat),
+                    lon=_round_coord(safe_lon),
+                    error_type=type(exc).__name__,
+                    error_detail=str(exc),
+                )
+                sentry_sdk.capture_exception(exc)
+        logger.info(
+            "cell_bucketing_complete",
+            unique_cells=len(cell_counts),
+            total_pois=len(poi_rows),
+        )
+    except Exception as exc:
+        logger.error(
+            "precompute_step_failed",
+            step=step,
+            error_type=type(exc).__name__,
+            error_detail=str(exc),
+            rows_processed=len(poi_rows),
+        )
+        sentry_sdk.capture_exception(exc)
+        capture(
+            user_id="system",
+            event="precompute_failed",
+            properties={"step": step, "error_type": type(exc).__name__},
+        )
+        raise
+
+    step = "cell_stats_and_percentiles_upsert"
+    batch = [
+        {"cell_id": cid, "grid_poi_count": cnt}
+        for cid, cnt in cell_counts.items()
+    ]
     async with engine.begin() as conn:
-        await conn.execute(text("TRUNCATE TABLE cell_poi_stats"))
+        try:
+            await conn.execute(text("TRUNCATE TABLE cell_poi_stats"))
 
-        if cell_counts:
+            if batch:
+                await conn.execute(
+                    text(
+                        "INSERT INTO cell_poi_stats (cell_id, grid_poi_count, updated_at) "
+                        "VALUES (:cell_id, :grid_poi_count, now())"
+                    ),
+                    batch,
+                )
+
             await conn.execute(
                 text(
-                    "INSERT INTO cell_poi_stats (cell_id, grid_poi_count, updated_at) "
-                    "VALUES (:cell_id, :grid_poi_count, now())"
-                ),
-                [
-                    {"cell_id": cell_id, "grid_poi_count": count}
-                    for cell_id, count in cell_counts.items()
-                ],
+                    "INSERT INTO cell_poi_percentiles "
+                    "    (percentile, value, sample_size, updated_at) "
+                    "SELECT "
+                    "    99.0 AS percentile, "
+                    "    COALESCE("
+                    "        percentile_cont(0.99) "
+                    "            WITHIN GROUP (ORDER BY grid_poi_count), "
+                    "        0.0"
+                    "    ) AS value, "
+                    "    COUNT(*) AS sample_size, "
+                    "    now() AS updated_at "
+                    "FROM cell_poi_stats "
+                    "ON CONFLICT (percentile) "
+                    "DO UPDATE SET "
+                    "    value       = EXCLUDED.value, "
+                    "    sample_size = EXCLUDED.sample_size, "
+                    "    updated_at  = now()"
+                )
             )
 
-        await conn.execute(
-            text(
-                "INSERT INTO cell_poi_percentiles "
-                "    (percentile, value, sample_size, updated_at) "
-                "SELECT "
-                "    99.0 AS percentile, "
-                "    COALESCE("
-                "        percentile_cont(0.99) "
-                "            WITHIN GROUP (ORDER BY grid_poi_count), "
-                "        0.0"
-                "    ) AS value, "
-                "    COUNT(*) AS sample_size, "
-                "    now() AS updated_at "
-                "FROM cell_poi_stats "
-                "ON CONFLICT (percentile) "
-                "DO UPDATE SET "
-                "    value       = EXCLUDED.value, "
-                "    sample_size = EXCLUDED.sample_size, "
-                "    updated_at  = now()"
+            result = await conn.execute(
+                text("SELECT value, sample_size FROM cell_poi_percentiles WHERE percentile = 99.0")
             )
-        )
+            row = result.fetchone()
+            p99_value = float(row[0]) if row else 0.0
+            sample_size = int(row[1]) if row else 0
+
+        except Exception as exc:
+            logger.error(
+                "precompute_step_failed",
+                step=step,
+                error_type=type(exc).__name__,
+                error_detail=str(exc),
+                rows_attempted=len(batch),
+            )
+            sentry_sdk.capture_exception(exc)
+            capture(
+                user_id="system",
+                event="precompute_failed",
+                properties={
+                    "step": step,
+                    "error_type": type(exc).__name__,
+                    "rows_attempted": len(batch),
+                },
+            )
+            raise
 
     logger.info(
         "cell_poi_stats_precompute_complete",
         cells_updated=len(cell_counts),
+        p99_value=p99_value,
+        sample_size=sample_size,
+    )
+    capture(
+        user_id="system",
+        event="precompute_succeeded",
+        properties={
+            "cells_updated": len(cell_counts),
+            "p99_value": p99_value,
+            "sample_size": sample_size,
+        },
     )
 
 async def run_precompute():
@@ -107,7 +203,13 @@ async def run_precompute():
             result = await conn.execute(FETCH_ALL_SQL)
             raw_pois = result.fetchall()
     except Exception as e:
-        logger.error("failed_fetch_pois", error=str(e))
+        logger.error("failed_fetch_pois", error_type=type(e).__name__, error_detail=str(e))
+        sentry_sdk.capture_exception(e)
+        capture(
+            user_id="system",
+            event="precompute_failed",
+            properties={"step": "fetch_pois", "error_type": type(e).__name__},
+        )
         return
 
     logger.info("fetched_pois", count=len(raw_pois))
@@ -173,13 +275,24 @@ async def run_precompute():
             else:
                 logger.info("no_data_to_insert")
         except Exception as e:
-            logger.error("insert_failed", error=str(e))
+            logger.error("insert_failed", error_type=type(e).__name__, error_detail=str(e))
+            sentry_sdk.capture_exception(e)
+            capture(
+                user_id="system",
+                event="precompute_failed",
+                properties={"step": "cell_poi_precompute_insert", "error_type": type(e).__name__},
+            )
 
     # --- Cell-level stats + global percentiles (daily, atomic) ---
     try:
         await _precompute_cell_stats_and_percentiles(engine, raw_pois)
     except Exception as e:
-        logger.error("cell_poi_stats_precompute_failed", error=str(e))
+        logger.error(
+            "cell_poi_stats_precompute_failed",
+            error_type=type(e).__name__,
+            error_detail=str(e),
+        )
+        sentry_sdk.capture_exception(e)
 
     await engine.dispose()
     logger.info("Daily precompute — all steps complete")
