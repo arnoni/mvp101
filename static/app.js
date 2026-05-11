@@ -234,6 +234,16 @@
     if (el) el.textContent = text || ""; }
   function setHidden(id, hidden) {
     $(id)?.classList.toggle("hidden", Boolean(hidden)); }
+  function resetHeroResultUi() {
+    state.hero.constructionScore = null;
+    state.hero.demandScore = null;
+    state.hero.constructionStatus = "idle";
+    state.hero.demandStatus = "idle";
+    setSearchState("idle");
+    animateGauge($("constructionBand"), $("constructionNeedle"), 0);
+    animateGauge($("demandBand"), $("demandNeedle"), 0);
+    setText("constructionMessage", "");
+    setText("demandMessage", ""); }
   function recordTurnstileLifecycle(eventName, level, props) {
     window.posthog?.capture?.(eventName, props);
     window.posthog?.flush?.();
@@ -518,6 +528,7 @@
     if (code === "FREE_DAILY_QUOTA_EXCEEDED") return "You've used today's free checks. Try again tomorrow or join research access.";
     if (code === "IP_RATE_LIMIT_EXCEEDED") return "Too many requests from your location. Please wait and try again.";
     if (code === "TURNSTILE_REQUIRED" || code === "TURNSTILE_INVALID") return "Verification failed. Please try again.";
+    if (code === "SEARCH_IN_FLIGHT") return "A search for this location is already running. Please wait.";
     if (code === "SEARCH_TEMPORARILY_THROTTLED") return "Service temporarily busy. Please try again in a moment.";
     return "Something went wrong. Please try again."; }
   function handleStructuredSearchError(err, attemptId) {
@@ -596,9 +607,18 @@
     const attemptId = ++state.hero.searchAttemptId;
     setSearchState(turnstileToken ? "turnstile_verified" : "ready_without_turnstile");
     logSearchEvent("search_validation_passed", { attempt_id: attemptId });
+    captureEvent("search_initiated", {
+      trigger: options.trigger || "unknown",
+      target: "construction",
+      search_state: state.hero.searchState,
+      has_valid_coords: state.coords.valid,
+      lat: Number.isFinite(state.coords.lat) ? Math.round(state.coords.lat * 1e5) / 1e5 : null,
+      lng: Number.isFinite(state.coords.lng) ? Math.round(state.coords.lng * 1e5) / 1e5 : null
+    });
     searchRequestInFlight = true;
     state.hero.searchRequestInFlight = true;
     state.hero.constructionStatus = "loading";
+    animateGauge($("constructionBand"), $("constructionNeedle"), 0);
     setSearchState("request_started");
     updateButtons();
     setText("constructionMessage", document.body.dataset.labelAnalyzingSignals || "Analyzing signals...");
@@ -1222,7 +1242,7 @@
       closeModal(active);
     }); }
   function bindEvents() {
-    $("locationInput")?.addEventListener("input", debouncedParseHeroLocation);
+    $("locationInput")?.addEventListener("input", () => { resetHeroResultUi(); debouncedParseHeroLocation(); });
     $("coordForm")?.addEventListener("submit", (event) => { event.preventDefault(); fetchConstruction({ trigger: "form_submit" }); });
     $("mainActionBtn")?.addEventListener("click", (event) => { event.preventDefault(); fetchConstruction({ trigger: "main_button_click" }); });
     $("constructionGoBtn")?.addEventListener("click", (event) => { event.preventDefault(); fetchConstruction({ trigger: "construction_button_click" }); });

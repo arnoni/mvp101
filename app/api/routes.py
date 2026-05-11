@@ -305,10 +305,10 @@ def _tier_to_funnel(tier: TierStatus) -> str:
     return "free"
 
 
-async def _emit_funnel_event(request: Request, **values) -> None:
+async def _emit_funnel_event(request: Request, **values) -> bool:
     db_engine = getattr(request.app.state, "db_engine", None)
     if not db_engine:
-        return
+        return False
     payload = {
         "event_source": "api",
         "event_version": 1,
@@ -323,17 +323,21 @@ async def _emit_funnel_event(request: Request, **values) -> None:
     try:
         async with db_engine.begin() as conn:
             await conn.execute(insert(FunnelEvent).values(**payload))
+        return True
     except Exception as exc:
         route_path = request.url.path if request.url else "unknown"
+        metadata = payload.get("metadata_json") or {}
         logger.error(
-            "funnel_event_emit_failed",
+            "funnel_event_insert_failed",
             route=route_path,
-            event_name=payload.get("event_name"),
+            event=payload.get("event_name"),
             user_id=payload.get("user_id"),
             session_id=payload.get("session_id"),
             anon_id=payload.get("anon_id"),
-            error_class=exc.__class__.__name__,
-            error=str(exc),
+            error_type=type(exc).__name__,
+            error_detail=str(exc),
+            attempt_id=metadata.get("attempt_id") or getattr(request.state, "request_id", None),
+            target=metadata.get("target"),
         )
         try:
             import sentry_sdk
@@ -345,6 +349,7 @@ async def _emit_funnel_event(request: Request, **values) -> None:
                 sentry_sdk.capture_exception(exc)
         except Exception:
             logger.error("funnel_event_sentry_capture_failed", route=route_path, event_name=payload.get("event_name"))
+        return False
 
 # --- Dependencies ---
 
@@ -815,6 +820,14 @@ async def search(
             quota_remaining=gate_result.remaining_after,
             checks_today=checks_today,
         )
+        if response_payload.message_code == "IN_FLIGHT":
+            raise HTTPException(
+                status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail={
+                    "error_code": "SEARCH_IN_FLIGHT",
+                    "message": "A search for this location is already running. Please wait.",
+                },
+            )
 
         should_consume_redis_quota = (
             user_id is None and data.target in (SearchTarget.CONSTRUCTION, SearchTarget.BOTH)
@@ -1082,25 +1095,49 @@ async def search(
         )
         if related_query_id is not None:
             if response_payload.construction is not None and data.target in (SearchTarget.CONSTRUCTION, SearchTarget.BOTH):
-                await _emit_funnel_event(
+                funnel_recorded = await _emit_funnel_event(
                     request,
                     event_name="check_completed",
                     effective_tier=_tier_to_funnel(tier),
                     check_type="construction",
                     ui_surface="construction_level_page",
                     related_query_id=related_query_id,
+                    metadata_json={"target": target_mode, "cell_id": demand_cell_id},
                 )
+                if funnel_recorded:
+                    capture(
+                        user_id=str(related_query_id or "unknown"),
+                        event="funnel_event_recorded",
+                        properties={
+                            "event_type": "check_completed",
+                            "target": target_mode,
+                            "tier": tier_to_client(tier),
+                            "cell_id": demand_cell_id,
+                        },
+                    )
                 if user_id is not None:
                     capture(str(user_id), "check_completed", {"tier": _tier_to_funnel(tier)})
             if response_payload.demand is not None and data.target in (SearchTarget.DEMAND, SearchTarget.BOTH) and _tier_to_funnel(tier) != "free":
-                await _emit_funnel_event(
+                funnel_recorded = await _emit_funnel_event(
                     request,
                     event_name="check_completed",
                     effective_tier=_tier_to_funnel(tier),
                     check_type="demand",
                     ui_surface="demand_level_page",
                     related_query_id=related_query_id,
+                    metadata_json={"target": target_mode, "cell_id": demand_cell_id},
                 )
+                if funnel_recorded:
+                    capture(
+                        user_id=str(related_query_id or "unknown"),
+                        event="funnel_event_recorded",
+                        properties={
+                            "event_type": "check_completed",
+                            "target": target_mode,
+                            "tier": tier_to_client(tier),
+                            "cell_id": demand_cell_id,
+                        },
+                    )
                 if user_id is not None:
                     capture(str(user_id), "check_completed", {"tier": _tier_to_funnel(tier)})
         return response_payload
