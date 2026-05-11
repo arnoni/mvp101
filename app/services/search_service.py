@@ -1,10 +1,13 @@
 import json
+import time
 from dataclasses import dataclass
 from typing import Optional
 
+import sentry_sdk
 import structlog
 
-from app.schemas.search import SearchRequest, SearchResponse, GaugeResult, SearchTarget
+from app.core.analytics import capture
+from app.schemas.search import GaugeResult, SearchRequest, SearchResponse, SearchTarget
 from app.services.bucket_engine import BucketEngine
 from app.services.construction_score import construction_score
 from app.services.report_renderer import ReportRenderer
@@ -47,19 +50,29 @@ class SearchService:
         cell_id: str,
         candidates: list,
     ) -> tuple[int, str]:
-        """Compute construction score using tier-weighted + ambient density.
-
-        Falls back to the legacy candidate-count formula when poi_service is
-        unavailable or when any part of the new computation fails.
-        """
-        fallback_score = min(100, len(candidates) * 10)
-        fallback = (fallback_score, "legacy_fallback")
+        """Compute construction score using tier-weighted + ambient density."""
+        start_ms = time.time()
+        fallback = (min(100, len(candidates) * 10), "legacy_fallback")
 
         if self._deps.poi_service is None:
             logger.info(
-                "construction_score_legacy_fallback_used",
+                "construction_score_legacy_fallback",
                 reason="poi_service_unavailable",
                 cell_id=cell_id,
+                lat=round(lat, 5),
+                lon=round(lon, 5),
+                candidate_count=len(candidates),
+                fallback_score=fallback[0],
+            )
+            capture(
+                user_id=cell_id or "unknown",
+                event="construction_score_fallback_v2",
+                properties={
+                    "reason": "poi_service_none",
+                    "cell_id": cell_id,
+                    "candidate_count": len(candidates),
+                    "score": fallback[0],
+                },
             )
             return fallback
 
@@ -81,6 +94,8 @@ class SearchService:
             grid_p99 = float(percentiles.get("p99", 0.0))
 
             score = construction_score(tier_counts, grid_count, grid_p99)
+            duration_ms = round((time.time() - start_ms) * 1000, 1)
+
             logger.info(
                 "construction_score_computed",
                 tier_counts=tier_counts,
@@ -88,30 +103,89 @@ class SearchService:
                 grid_p99=grid_p99,
                 score=score,
                 cell_id=cell_id,
+                lat=round(lat, 5),
+                lon=round(lon, 5),
+                duration_ms=duration_ms,
+                source="new_algorithm",
+            )
+            capture(
+                user_id=cell_id or "unknown",
+                event="construction_score_computed_v2",
+                properties={
+                    "score": score,
+                    "source": "new_algorithm",
+                    "tier_counts": tier_counts,
+                    "grid_count": grid_count,
+                    "grid_p99": grid_p99,
+                    "cell_id": cell_id,
+                    "duration_ms": duration_ms,
+                },
             )
             return score, "new_algorithm"
 
         except Exception as exc:
-            logger.warning(
+            duration_ms = round((time.time() - start_ms) * 1000, 1)
+            logger.error(
                 "construction_score_new_algorithm_failed",
-                error=str(exc),
+                error_type=type(exc).__name__,
+                error_detail=str(exc),
+                cell_id=cell_id,
                 lat=round(lat, 5),
                 lon=round(lon, 5),
-                cell_id=cell_id,
+                candidate_count=len(candidates),
+                duration_ms=duration_ms,
             )
-            logger.info(
-                "construction_score_legacy_fallback_used",
-                reason="new_algorithm_error",
-                cell_id=cell_id,
+            sentry_sdk.capture_exception(exc)
+            capture(
+                user_id=cell_id or "unknown",
+                event="construction_score_fallback_v2",
+                properties={
+                    "reason": "exception",
+                    "error_type": type(exc).__name__,
+                    "cell_id": cell_id,
+                    "candidate_count": len(candidates),
+                    "score": fallback[0],
+                },
             )
             return fallback
 
-    async def run(self, *, request: SearchRequest, tier: str, quota_remaining: int, checks_today: int) -> SearchResponse:
+    async def run(
+        self,
+        *,
+        request: SearchRequest,
+        tier: str,
+        quota_remaining: int,
+        checks_today: int,
+    ) -> SearchResponse:
         target = request.target.value
+        cell_id = BucketEngine.get_cell_id(request.lat, request.lon)
         cache_key = self._cache_key(target, tier, request.lat, request.lon)
         lock_key = self._lock_key(target, tier, request.lat, request.lon)
         lock_acquired = False
         lock_acquire_error = False
+
+        logger.info(
+            "search_service_request_started",
+            target=target,
+            tier=tier,
+            cell_id=cell_id,
+            lat=round(request.lat, 5),
+            lon=round(request.lon, 5),
+            quota_remaining=quota_remaining,
+            checks_today=checks_today,
+        )
+        sentry_sdk.add_breadcrumb(
+            message="search_service_run",
+            category="search",
+            level="info",
+            data={
+                "target": target,
+                "tier": tier,
+                "cell_id": cell_id,
+                "lat": round(request.lat, 5),
+                "lon": round(request.lon, 5),
+            },
+        )
 
         if self._deps.redis:
             try:
@@ -127,29 +201,54 @@ class SearchService:
                     payload.quota_remaining = quota_remaining
                     payload.checks_today = checks_today
                     payload.tier = tier
+                    capture(
+                        user_id=cell_id or "unknown",
+                        event="search_cache_hit",
+                        properties={
+                            "target": target,
+                            "tier": tier,
+                            "cell_id": cell_id,
+                        },
+                    )
+                    self._log_completion(
+                        request=request,
+                        tier=tier,
+                        cell_id=cell_id,
+                        construction=payload.construction,
+                        demand=payload.demand,
+                        quota_remaining=quota_remaining,
+                        checks_today=checks_today,
+                        payload=payload,
+                    )
                     return payload
             except Exception as exc:
                 logger.warning(
                     "search_service_cache_read_failed",
-                    error=str(exc),
+                    error_type=type(exc).__name__,
+                    error_detail=str(exc),
                     cache_key=cache_key,
                     description="Failed to read search cache; continuing with live compute.",
                 )
+                sentry_sdk.capture_exception(exc)
 
             try:
-                lock_acquired = bool(await self._deps.redis.set(lock_key, "1", nx=True, ex=self.LOCK_TTL_SECONDS))
+                lock_acquired = bool(
+                    await self._deps.redis.set(lock_key, "1", nx=True, ex=self.LOCK_TTL_SECONDS)
+                )
             except Exception as exc:
                 logger.warning(
                     "search_service_lock_acquire_failed",
-                    error=str(exc),
+                    error_type=type(exc).__name__,
+                    error_detail=str(exc),
                     lock_key=lock_key,
                     description="Failed to acquire in-flight lock; proceeding without lock safety.",
                 )
+                sentry_sdk.capture_exception(exc)
                 lock_acquire_error = True
                 lock_acquired = False
 
             if self._deps.redis and not lock_acquired and not lock_acquire_error:
-                return SearchResponse(
+                response = SearchResponse(
                     construction=None,
                     demand=None,
                     message_code="IN_FLIGHT",
@@ -158,10 +257,20 @@ class SearchService:
                     checks_today=checks_today,
                     tier=tier,
                 )
+                self._log_completion(
+                    request=request,
+                    tier=tier,
+                    cell_id=cell_id,
+                    construction=None,
+                    demand=None,
+                    quota_remaining=quota_remaining,
+                    checks_today=checks_today,
+                    payload=response,
+                )
+                return response
 
         try:
             coord_key = self._coord_key(request.lat, request.lon)
-            cell_id = BucketEngine.get_cell_id(request.lat, request.lon)
             candidates = await self._deps.precompute_repo.get_candidates(cell_id)
 
             construction = None
@@ -195,7 +304,9 @@ class SearchService:
                 construction=construction,
                 demand=demand,
                 message_code="SEARCH_COMPLETE",
-                message=ReportRenderer.render(candidates, request.lat, request.lon, limit=1)[0].text if candidates else "No nearby signals",
+                message=ReportRenderer.render(candidates, request.lat, request.lon, limit=1)[0].text
+                if candidates
+                else "No nearby signals",
                 quota_remaining=quota_remaining,
                 checks_today=checks_today,
                 tier=tier,
@@ -203,22 +314,41 @@ class SearchService:
 
             if self._deps.redis:
                 try:
-                    await self._deps.redis.set(cache_key, response.model_dump_json(), ex=self.CACHE_TTL_SECONDS)
+                    await self._deps.redis.set(
+                        cache_key,
+                        response.model_dump_json(),
+                        ex=self.CACHE_TTL_SECONDS,
+                    )
                 except Exception as exc:
                     logger.warning(
                         "search_service_cache_write_failed",
-                        error=str(exc),
+                        error_type=type(exc).__name__,
+                        error_detail=str(exc),
                         cache_key=cache_key,
                         description="Failed to write search cache; response still returned.",
                     )
+                    sentry_sdk.capture_exception(exc)
+            self._log_completion(
+                request=request,
+                tier=tier,
+                cell_id=cell_id,
+                construction=construction,
+                demand=demand,
+                quota_remaining=quota_remaining,
+                checks_today=checks_today,
+                payload=response,
+            )
             return response
         except Exception as exc:
             logger.error(
                 "search_service_compute_failed",
-                error=str(exc),
+                error_type=type(exc).__name__,
+                error_detail=str(exc),
                 target=target,
+                cell_id=cell_id,
                 description="Search compute pipeline failed unexpectedly.",
             )
+            sentry_sdk.capture_exception(exc)
             raise
         finally:
             if self._deps.redis and lock_acquired:
@@ -227,7 +357,36 @@ class SearchService:
                 except Exception as exc:
                     logger.warning(
                         "search_service_lock_release_failed",
-                        error=str(exc),
+                        error_type=type(exc).__name__,
+                        error_detail=str(exc),
                         lock_key=lock_key,
                         description="Failed to release in-flight search lock.",
                     )
+                    sentry_sdk.capture_exception(exc)
+
+    def _log_completion(
+        self,
+        *,
+        request: SearchRequest,
+        tier: str,
+        cell_id: str,
+        construction: GaugeResult | None,
+        demand: GaugeResult | None,
+        quota_remaining: int,
+        checks_today: int,
+        payload: SearchResponse,
+    ) -> None:
+        construction_score_value = construction.score if construction else None
+        construction_source = construction.score_source if construction else None
+        logger.info(
+            "search_service_request_completed",
+            target=request.target.value,
+            tier=tier,
+            cell_id=cell_id,
+            construction_score=construction_score_value,
+            construction_source=construction_source,
+            demand_score=demand.score if demand else None,
+            quota_remaining=quota_remaining,
+            checks_today=checks_today,
+            cached=getattr(payload, "message_code", "") == "CACHE_HIT",
+        )

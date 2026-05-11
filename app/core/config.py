@@ -41,6 +41,13 @@ class Settings(BaseSettings):
     )
     SENTRY_DSN: Optional[str] = Field(None, description="Sentry DSN for error reporting")
     SENTRY_FRONTEND_DSN: Optional[str] = Field(None, description="Sentry Frontend DSN for error reporting")
+    SENTRY_TRACES_SAMPLE_RATE: Optional[float] = Field(None, description="Sentry trace sample rate")
+    POSTHOG_API_KEY: Optional[str] = Field(
+        None,
+        description="PostHog project API key",
+        validation_alias=AliasChoices("POSTHOG_API_KEY", "POSTHOG_PROJECT_API_KEY"),
+    )
+    POSTHOG_HOST: str = Field("https://us.i.posthog.com", description="PostHog ingestion host")
     RELEASE: Optional[str] = Field(None, description="Application release version for Sentry")
     MAX_MAPBOX_MONTHLY: int = Field(90000, description="Hard cap for Mapbox requests per month (TSD 10)")
     TURNSTILE_PREVIEW_HOSTNAME_SUFFIX: str = Field("-arnonis-projects.vercel.app", description="Suffix for allowed preview Turnstile hostnames")
