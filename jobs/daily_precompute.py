@@ -195,7 +195,10 @@ async def run_precompute():
     # 1. Fetch ALL POIs
     # In a real heavy production system, we'd paginate or stream. 
     # For MVP (Da Nang), fetching all is likely fine (thousands of rows).
-    FETCH_ALL_SQL = text("SELECT id, name, category, ST_Y(geom::geometry) as lat, ST_X(geom::geometry) as lon FROM pois")
+    FETCH_ALL_SQL = text(
+        "SELECT id, name, category, activity_status, noise_level, expected_time_to_complete, "
+        "ST_Y(geom::geometry) as lat, ST_X(geom::geometry) as lon FROM pois"
+    )
     
     raw_pois = []
     try:
@@ -218,14 +221,25 @@ async def run_precompute():
     cells: Dict[str, List[Tuple]] = {}
 
     for row in raw_pois:
-        pid, name, category, lat, lon = row
+        pid, name, category, activity_status, noise_level, expected_time_to_complete, lat, lon = row
         if not lat or not lon:
             continue
 
         cell_id = BucketEngine.get_cell_id(lat, lon)
         if cell_id not in cells:
             cells[cell_id] = []
-        cells[cell_id].append((pid, name, category, lat, lon))
+        cells[cell_id].append(
+            (
+                pid,
+                name,
+                category,
+                activity_status,
+                noise_level,
+                expected_time_to_complete,
+                lat,
+                lon,
+            )
+        )
 
     logger.info("bucketed_cells", count=len(cells))
 
@@ -237,13 +251,18 @@ async def run_precompute():
             continue
         candidate_list = []
         for p in pois:
-            pid, name, category, lat, lon = p
+            pid, name, category, activity_status, noise_level, expected_time_to_complete, lat, lon = p
             cand = {
                 "id": str(pid),
                 "lat": lat,
                 "lon": lon,
                 "category": category or "Uncategorized",
                 "name": name,
+                "activity_status": activity_status,
+                "noise_level": noise_level,
+                "expected_time_to_complete": (
+                    expected_time_to_complete.isoformat() if expected_time_to_complete else None
+                ),
             }
             candidate_list.append(cand)
 

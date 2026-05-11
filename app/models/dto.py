@@ -1,8 +1,10 @@
 # Implements TSD Section 4.2: Data Models
 # Implements TSD Section 7.2: Type hints mandatory
 
-from pydantic import BaseModel, Field, HttpUrl, ConfigDict, model_validator
-from typing import List, Optional
+from datetime import date
+from typing import List, Literal, Optional
+
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
 # --- Precompute Models ---
 
@@ -13,6 +15,9 @@ class PrecomputeCandidate(BaseModel):
     lon: float
     category: str
     name: Optional[str] = None
+    activity_status: Literal["pending", "active", "paused", "completed"] | None = None
+    noise_level: int | None = Field(default=None, ge=0, le=100)
+    expected_time_to_complete: date | None = None
 
 # --- Public Data Transfer Objects (DTOs) ---
 

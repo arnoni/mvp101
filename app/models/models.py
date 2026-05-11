@@ -1,18 +1,20 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from geoalchemy2 import Geography
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKey,
     Index,
     Integer,
     SmallInteger,
+    String,
     Text,
     UniqueConstraint,
     func,
@@ -101,6 +103,9 @@ class POI(Base):
     source: Mapped[str | None] = mapped_column(Text)
     confidence: Mapped[int | None] = mapped_column(SmallInteger)
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    noise_level: Mapped[int | None] = mapped_column(SmallInteger, nullable=True)
+    expected_time_to_complete: Mapped[date | None] = mapped_column(Date, nullable=True)
+    activity_status: Mapped[str | None] = mapped_column(String, nullable=True)
 
     __table_args__ = (Index("idx_pois_geom", "geom", postgresql_using="gist"),)
 
