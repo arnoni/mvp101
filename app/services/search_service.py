@@ -32,6 +32,7 @@ class SearchService:
 
     def __init__(self, deps: SearchDependencies):
         self._deps = deps
+        self._last_tier_counts: list[int] | None = None
 
     @staticmethod
     def _coord_key(lat: float, lon: float) -> str:
@@ -51,10 +52,11 @@ class SearchService:
         lon: float,
         cell_id: str,
         candidates: list,
-    ) -> tuple[int, str]:
+        target: str,
+    ) -> tuple[int, str, float | None]:
         """Compute construction score using tier-weighted + ambient density."""
         start_ms = time.time()
-        fallback = (min(100, len(candidates) * 10), "legacy_fallback")
+        fallback = (min(100, len(candidates) * 10), "legacy_fallback", None)
 
         if self._deps.poi_service is None:
             logger.info(
@@ -79,13 +81,35 @@ class SearchService:
             return fallback
 
         try:
-            bins = await self._deps.poi_service.get_construction_distance_bins(lat, lon)
+            bins, min_dist_m = await self._deps.poi_service.get_construction_distance_bins(lat, lon)
             tier_counts = [
                 int(bins.get("0_10", 0)),
                 int(bins.get("10_20", 0)),
                 int(bins.get("20_30", 0)),
                 int(bins.get("30_40", 0)),
             ]
+            self._last_tier_counts = tier_counts
+            min_dist_for_log = round(min_dist_m, 2) if min_dist_m != float("inf") else None
+            logger.debug(
+                "construction_tier_counts",
+                tier_counts=tier_counts,
+                min_dist_m=min_dist_for_log,
+                cell_id=cell_id,
+                lat=round(lat, 5),
+                lon=round(lon, 5),
+            )
+            total_tier = sum(tier_counts)
+            if total_tier > 20:
+                logger.warning(
+                    "construction_tier_counts_anomaly",
+                    tier_counts=tier_counts,
+                    total=total_tier,
+                    cell_id=cell_id,
+                    lat=round(lat, 5),
+                    lon=round(lon, 5),
+                    detail="tier_counts sum exceeds 20. Spatial query likely returning "
+                    "duplicate/cartesian rows.",
+                )
 
             cell_stats = await self._deps.precompute_repo.get_cell_stats(cell_id)
             grid_count = int(cell_stats.get("grid_poi_count", 0))
@@ -99,34 +123,46 @@ class SearchService:
             score = construction_score(tier_counts, grid_count, grid_p99, grid_sample_size)
             duration_ms = round((time.time() - start_ms) * 1000, 1)
 
+            score_source = "new_algorithm"
+            logger.info(
+                "search_result_scored",
+                score=score,
+                tier_counts=tier_counts,
+                min_dist_m=min_dist_for_log,
+                cell_id=cell_id,
+                target=target,
+                source=score_source,
+            )
             logger.info(
                 "construction_score_computed",
                 tier_counts=tier_counts,
                 grid_count=grid_count,
                 grid_p99=grid_p99,
                 grid_sample_size=grid_sample_size,
+                min_dist_m=min_dist_for_log,
                 score=score,
                 cell_id=cell_id,
                 lat=round(lat, 5),
                 lon=round(lon, 5),
                 duration_ms=duration_ms,
-                source="new_algorithm",
+                source=score_source,
             )
             capture(
                 user_id=cell_id or "unknown",
                 event="construction_score_computed_v2",
                 properties={
                     "score": score,
-                    "source": "new_algorithm",
+                    "source": score_source,
                     "tier_counts": tier_counts,
                     "grid_count": grid_count,
                     "grid_p99": grid_p99,
                     "grid_sample_size": grid_sample_size,
+                    "min_dist_m": min_dist_for_log,
                     "cell_id": cell_id,
                     "duration_ms": duration_ms,
                 },
             )
-            return score, "new_algorithm"
+            return score, score_source, min_dist_for_log
 
         except Exception as exc:
             duration_ms = round((time.time() - start_ms) * 1000, 1)
@@ -172,6 +208,7 @@ class SearchService:
         lock_key = self._lock_key(target, tier, request.lat, request.lon)
         lock_acquired = False
         lock_acquire_error = False
+        self._last_tier_counts = None
 
         logger.info(
             "search_service_request_started",
@@ -213,6 +250,7 @@ class SearchService:
                             anon_id=anon_id,
                             session_id=session_id,
                             attempt_id=attempt_id,
+                            min_dist_m=None,
                         )
                     payload.message_code = "CACHE_HIT"
                     payload.message = "Served from cache"
@@ -290,15 +328,22 @@ class SearchService:
         try:
             coord_key = self._coord_key(request.lat, request.lon)
             candidates = await self._deps.precompute_repo.get_candidates(cell_id)
+            logger.debug(
+                "search_candidates",
+                cell_id=cell_id,
+                candidate_count=len(candidates),
+                target=request.target.value,
+            )
 
             construction = None
             demand = None
             if request.target in (SearchTarget.CONSTRUCTION, SearchTarget.BOTH):
-                construction_score_value, score_source = await self._compute_construction_score(
+                construction_score_value, score_source, min_dist_m = await self._compute_construction_score(
                     lat=request.lat,
                     lon=request.lon,
                     cell_id=cell_id,
                     candidates=candidates,
+                    target=target,
                 )
                 construction = GaugeResult(
                     score=construction_score_value,
@@ -314,6 +359,7 @@ class SearchService:
                     anon_id=anon_id,
                     session_id=session_id,
                     attempt_id=attempt_id,
+                    min_dist_m=min_dist_m,
                 )
 
             if request.target in (SearchTarget.DEMAND, SearchTarget.BOTH):
@@ -354,6 +400,17 @@ class SearchService:
                         description="Failed to write search cache; response still returned.",
                     )
                     sentry_sdk.capture_exception(exc)
+            logger.info(
+                "search_result_complete",
+                construction_score=construction.score if construction else None,
+                construction_source=construction.score_source if construction else None,
+                demand_score=demand.score if demand else None,
+                tier_counts=self._last_tier_counts,
+                cell_id=cell_id,
+                cache_hit=False,
+                target=target,
+                tier=tier,
+            )
             self._log_completion(
                 request=request,
                 tier=tier,
@@ -400,6 +457,7 @@ class SearchService:
         anon_id: str | None,
         session_id: str | None,
         attempt_id: str | None,
+        min_dist_m: float | None = None,
     ) -> None:
         user_key = user_id or anon_id
         if user_key is None:
@@ -419,10 +477,22 @@ class SearchService:
                 current_attempt_id=attempt_id,
                 previous_attempt_id=prev.get("attempt_id"),
             )
+            previous_min_dist = prev.get("min_dist_m")
+            if previous_min_dist is not None and min_dist_m is not None:
+                distance_difference = abs(float(previous_min_dist) - float(min_dist_m))
+                if distance_difference > 10:
+                    logger.info(
+                        "identical_score_different_distance",
+                        score_difference=0,
+                        distance_difference=round(distance_difference, 1),
+                        detail="Same score, different nearest POI distances — "
+                        "ring binning masks proximity differences",
+                    )
         _previous_scores[user_key] = {
             "score": score,
             "cell_id": cell_id,
             "attempt_id": attempt_id,
+            "min_dist_m": min_dist_m,
         }
 
     def _log_completion(
@@ -450,4 +520,5 @@ class SearchService:
             quota_remaining=quota_remaining,
             checks_today=checks_today,
             cached=getattr(payload, "message_code", "") == "CACHE_HIT",
+            construction_tier_counts=self._last_tier_counts,
         )

@@ -50,7 +50,7 @@ class POIService:
         self,
         user_lat: float,
         user_lon: float,
-    ) -> Dict[str, int]:
+    ) -> tuple[Dict[str, int], float]:
         """Query raw `pois` and return COUNT(*) per km-distance tier from the user's GPS."""
         start_ms = time.time()
         zero_bins = ZERO_DISTANCE_BINS.copy()
@@ -63,44 +63,74 @@ class POIService:
                 user_lon=round(user_lon, 5),
                 duration_ms=duration_ms,
             )
-            return zero_bins
+            return zero_bins, float("inf")
 
         stmt = text(
             """
             WITH origin AS (
                 SELECT ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography AS g
-            ),
-            nearby AS (
-                SELECT ST_Distance(p.geom, o.g) AS dist_m
-                FROM pois p
-                CROSS JOIN origin o
-                WHERE ST_DWithin(p.geom, o.g, 40000)
             )
-            SELECT
-                COUNT(*) FILTER (WHERE dist_m >=     0 AND dist_m < 10000) AS c0_10,
-                COUNT(*) FILTER (WHERE dist_m >= 10000 AND dist_m < 20000) AS c10_20,
-                COUNT(*) FILTER (WHERE dist_m >= 20000 AND dist_m < 30000) AS c20_30,
-                COUNT(*) FILTER (WHERE dist_m >= 30000 AND dist_m < 40000) AS c30_40
-            FROM nearby
+            SELECT ST_Distance(p.geom, o.g) AS dist_m
+            FROM pois p
+            CROSS JOIN origin o
+            WHERE ST_DWithin(p.geom, o.g, 40000)
             """
         )
 
         try:
             async with self.engine.connect() as conn:
                 query_result = await conn.execute(stmt, {"lat": user_lat, "lon": user_lon})
-                row = query_result.mappings().first()
-            result = zero_bins if not row else {
-                "0_10": int(row.get("c0_10") or 0),
-                "10_20": int(row.get("c10_20") or 0),
-                "20_30": int(row.get("c20_30") or 0),
-                "30_40": int(row.get("c30_40") or 0),
-            }
+                rows = query_result.mappings().all()
+
+            raw_sample = [
+                {"dist_m": round(float(row.get("dist_m")), 2)}
+                for row in rows[:5]
+                if row.get("dist_m") is not None
+            ]
+            logger.debug(
+                "distance_bins_raw_result",
+                user_lat=user_lat,
+                user_lon=user_lon,
+                raw_row_count=len(rows),
+                raw_sample=raw_sample,
+            )
+
+            result = zero_bins.copy()
+            min_distance_m = float("inf")
+            for row in rows:
+                dist_m_value = row.get("dist_m")
+                if dist_m_value is None:
+                    continue
+                dist_m = float(dist_m_value)
+                min_distance_m = min(min_distance_m, dist_m)
+                if 0 <= dist_m < 10:
+                    result["0_10"] += 1
+                elif 10 <= dist_m < 20:
+                    result["10_20"] += 1
+                elif 20 <= dist_m < 30:
+                    result["20_30"] += 1
+                elif 30 <= dist_m < 40:
+                    result["30_40"] += 1
+
+            total = sum(result.values())
+            if total > 20:
+                logger.warning(
+                    "distance_bins_anomaly",
+                    total_pois=total,
+                    bins=result,
+                    user_lat=user_lat,
+                    user_lon=user_lon,
+                    detail="Bin count far exceeds expected POI density. "
+                    "Likely SQL duplication, bad GROUP BY, or missing parameter binding.",
+                )
+
             duration_ms = round((time.time() - start_ms) * 1000, 1)
             logger.info(
                 "distance_bins_queried",
                 user_lat=round(user_lat, 5),
                 user_lon=round(user_lon, 5),
                 tier_counts=result,
+                min_dist_m=None if min_distance_m == float("inf") else round(min_distance_m, 2),
                 duration_ms=duration_ms,
             )
             capture(
@@ -111,9 +141,10 @@ class POIService:
                     "lat": round(user_lat, 5),
                     "lon": round(user_lon, 5),
                     "duration_ms": duration_ms,
+                    "min_dist_m": None if min_distance_m == float("inf") else round(min_distance_m, 2),
                 },
             )
-            return result
+            return result, min_distance_m
         except Exception as exc:
             duration_ms = round((time.time() - start_ms) * 1000, 1)
             logger.error(
@@ -136,4 +167,4 @@ class POIService:
                     "duration_ms": duration_ms,
                 },
             )
-            return zero_bins
+            return zero_bins, float("inf")
