@@ -1,19 +1,20 @@
-"""Construction confidence scoring — tier-weighted + ambient density.
+"""Construction confidence scoring — per-ring piecewise-linear + ambient density.
 
 Formula
 -------
-1. Tier-weighted component (0-70 points):
-   raw_weight = tier_counts[0]*4 + tier_counts[1]*3 + tier_counts[2]*2 + tier_counts[3]*1
-   tier_score = min(70, raw_weight * 10)
+1. Tier component (0-100 points before overall cap):
+   Each distance ring has its own first-POI score, per-POI increment, and hard cap.
+   tier_score = sum(_ring_score(tier_counts[i], i) for i in 0..3)
 
-2. Ambient component (0-30 points):
+2. Ambient component (0-15 points):
    If grid_p99 > 0:
-       ambient_score = min(30, round(30 * grid_count / grid_p99))
+       ambient_score = min(15, round(15 * grid_count / grid_p99))
    Else:
        ambient_score = 0
 
 3. Final:
-   score = min(100, tier_score + ambient_score)
+   raw_total = tier_score + ambient_score
+   final_score = min(100, round(raw_total))
 
 The tier_counts represent COUNT(*) per distance ring measured from the
 user's exact raw GPS coordinate. This is computed at query time by
@@ -36,6 +37,28 @@ import structlog
 from app.core.analytics import capture
 
 logger = structlog.get_logger(__name__)
+
+# Tier 0 (0-10 m):  first POI = 90, +5 per extra, cap 100
+# Tier 1 (10-20 m): first POI = 50, +10 per extra, cap 80
+# Tier 2 (20-30 m): first POI = 20, +5 per extra, cap 35
+# Tier 3 (30-40 m): first POI =  8, +2 per extra, cap 14
+#
+# First three values (90, 50, 20, 8) are tuned to match ground-truth
+# field data. The increments (5, 10, 5, 2) produce diminishing returns
+# per additional POI within the same ring.
+TIER_FIRST_SCORE: list[float] = [90.0, 50.0, 20.0, 8.0]
+TIER_INCREMENT: list[float] = [5.0, 10.0, 5.0, 2.0]
+TIER_MAX: list[float] = [100.0, 80.0, 35.0, 14.0]
+
+
+def _ring_score(count: int, ring_index: int) -> float:
+    """Score for a single ring. Zero count returns 0."""
+    if count <= 0:
+        return 0.0
+    first = TIER_FIRST_SCORE[ring_index]
+    incr = TIER_INCREMENT[ring_index]
+    max_s = TIER_MAX[ring_index]
+    return min(max_s, first + (count - 1) * incr)
 
 
 def construction_score(
@@ -61,16 +84,28 @@ def construction_score(
 
     >>> construction_score([0, 0, 0, 0], 0, 0.0)
     0
+    >>> construction_score([1, 0, 0, 0], 0, 0.0)
+    90
+    >>> construction_score([2, 0, 0, 0], 0, 0.0)
+    95
+    >>> construction_score([3, 0, 0, 0], 0, 0.0)
+    100
+    >>> construction_score([0, 1, 0, 0], 0, 0.0)
+    50
+    >>> construction_score([0, 2, 0, 0], 0, 0.0)
+    60
+    >>> construction_score([0, 3, 0, 0], 0, 0.0)
+    70
+    >>> construction_score([0, 0, 1, 0], 0, 0.0)
+    20
+    >>> construction_score([0, 0, 0, 1], 0, 0.0)
+    8
     >>> construction_score([100, 100, 100, 100], 500, 100.0)
     100
-    >>> construction_score([5, 0, 0, 0], 0, 0.0)
-    70
     >>> construction_score([0, 0, 0, 0], 50, 100.0)
-    15
-    >>> construction_score([0, 0, 0, 0], 300, 100.0)
-    30
-    >>> construction_score([0, 0, 0, 0], 0, 50.0)
-    0
+    8
+    >>> construction_score([0, 1, 0, 0], 50, 100.0)
+    58
     """
     logger.debug(
         "construction_score_input",
@@ -103,6 +138,13 @@ def construction_score(
         while len(tier_counts) < 4:
             tier_counts.append(0)
 
+    score = 0
+    tier_score = 0.0
+    ambient_score = 0
+    raw_total = 0.0
+    ring_scores: list[float] = [0.0, 0.0, 0.0, 0.0]
+    ring_breakdown: list[dict[str, float | int]] = []
+
     try:
         if grid_count < 0:
             logger.warning("construction_score_clamping_grid_count", grid_count=grid_count)
@@ -131,21 +173,32 @@ def construction_score(
                 "rather than area genuinely empty",
             )
 
-        weights: List[int] = [4, 3, 2, 1]
-        raw_weight: int = sum(t * w for t, w in zip(tier_counts, weights))
-        tier_score: int = min(70, raw_weight * 10)
+        for ring_index, count in enumerate(tier_counts):
+            ring_score = _ring_score(count, ring_index)
+            ring_scores[ring_index] = ring_score
+            breakdown = {
+                "ring_index": ring_index,
+                "count": count,
+                "first_score": TIER_FIRST_SCORE[ring_index],
+                "increment": TIER_INCREMENT[ring_index],
+                "ring_max": TIER_MAX[ring_index],
+                "ring_score": ring_score,
+            }
+            ring_breakdown.append(breakdown)
+            logger.debug("construction_score_ring_breakdown", **breakdown)
+
+        tier_score = sum(ring_scores)
         logger.debug(
             "construction_score_tier",
-            raw_weight=raw_weight,
             tier_score=tier_score,
-            tier_cap_applied=(tier_score < raw_weight * 10),
+            ring_scores=ring_scores,
         )
 
         if grid_p99 > 0:
-            ambient_score: int = min(30, round(30.0 * grid_count / grid_p99))
+            ambient_score = min(15, round(15.0 * grid_count / grid_p99))
         else:
             if grid_sample_size == 0:
-                logger.debug(
+                logger.warning(
                     "construction_score_grid_data_missing",
                     grid_p99=grid_p99,
                     grid_sample_size=grid_sample_size,
@@ -154,24 +207,31 @@ def construction_score(
             ambient_score = 0
         logger.debug(
             "construction_score_ambient",
+            grid_count=grid_count,
+            grid_p99=grid_p99,
             ambient_score=ambient_score,
-            grid_p99_zero=(grid_p99 <= 0),
             grid_sample_size=grid_sample_size,
         )
 
-        score = min(100, tier_score + ambient_score)
+        raw_total = tier_score + ambient_score
+        score = min(100, round(raw_total))
         logger.info(
             "construction_score_result",
-            score=score,
             tier_score=tier_score,
             ambient_score=ambient_score,
+            raw_total=raw_total,
+            final_score=score,
+            score=score,
+            was_capped=(raw_total > 100),
+            ring_scores=ring_scores,
+            ring_breakdown=ring_breakdown,
             tier_counts=tier_counts,
             grid_count=grid_count,
             grid_p99=grid_p99,
             grid_sample_size=grid_sample_size,
         )
 
-    except (TypeError, ValueError, ArithmeticError) as exc:
+    except (TypeError, ValueError, ArithmeticError, ZeroDivisionError) as exc:
         logger.error(
             "construction_score_computation_failed",
             error_type=type(exc).__name__,
@@ -189,6 +249,9 @@ def construction_score(
         event="construction_score_computed",
         properties={
             "score": score,
+            "tier_score": tier_score,
+            "ambient_score": ambient_score,
+            "ring_scores": ring_scores,
             "tier_counts": tier_counts,
             "grid_count": grid_count,
             "grid_p99": grid_p99,
