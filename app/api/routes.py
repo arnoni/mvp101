@@ -823,6 +823,7 @@ async def search(
             anon_id=anon_id,
             session_id=request.cookies.get(settings.SESSION_COOKIE_NAME),
             attempt_id=getattr(request.state, "request_id", None),
+            locale=request.cookies.get("dd_lang") or "en",
         )
         if response_payload.message_code == "IN_FLIGHT":
             raise HTTPException(

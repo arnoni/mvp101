@@ -1,5 +1,6 @@
 # app/services/poi_service.py
 import time
+from datetime import date, datetime
 from typing import Any, Dict, List, Tuple
 
 import sentry_sdk
@@ -50,7 +51,8 @@ class POIService:
         self,
         user_lat: float,
         user_lon: float,
-    ) -> tuple[Dict[str, int], float]:
+        include_nearest_completion: bool = False,
+    ) -> tuple[Dict[str, int], float] | tuple[Dict[str, int], float, date | None]:
         """Query raw `pois` and return COUNT(*) per km-distance tier from the user's GPS."""
         start_ms = time.time()
         zero_bins = ZERO_DISTANCE_BINS.copy()
@@ -63,6 +65,8 @@ class POIService:
                 user_lon=round(user_lon, 5),
                 duration_ms=duration_ms,
             )
+            if include_nearest_completion:
+                return zero_bins, float("inf"), None
             return zero_bins, float("inf")
 
         stmt = text(
@@ -70,7 +74,10 @@ class POIService:
             WITH origin AS (
                 SELECT ST_SetSRID(ST_MakePoint(:lon, :lat), 4326)::geography AS g
             )
-            SELECT ST_Distance(p.geom, o.g) AS dist_m
+            SELECT
+                ST_Distance(p.geom, o.g) AS dist_m,
+                p.activity_status,
+                p.expected_time_to_complete
             FROM pois p
             CROSS JOIN origin o
             WHERE ST_DWithin(p.geom, o.g, 40000)
@@ -97,12 +104,33 @@ class POIService:
 
             result = zero_bins.copy()
             min_distance_m = float("inf")
+            nearest_relevant_completion_date = None
+            nearest_relevant_completion_distance_m = float("inf")
+            today = date.today()
             for row in rows:
                 dist_m_value = row.get("dist_m")
                 if dist_m_value is None:
                     continue
                 dist_m = float(dist_m_value)
                 min_distance_m = min(min_distance_m, dist_m)
+                expected_completion_raw = row.get("expected_time_to_complete")
+                if expected_completion_raw is not None:
+                    expected_completion = (
+                        expected_completion_raw.date()
+                        if isinstance(expected_completion_raw, datetime)
+                        else expected_completion_raw
+                    )
+                else:
+                    expected_completion = None
+                activity_status = (row.get("activity_status") or "").lower()
+                if (
+                    activity_status == "active"
+                    and expected_completion is not None
+                    and expected_completion > today
+                    and dist_m < nearest_relevant_completion_distance_m
+                ):
+                    nearest_relevant_completion_date = expected_completion
+                    nearest_relevant_completion_distance_m = dist_m
                 if 0 <= dist_m < 10:
                     result["0_10"] += 1
                 elif 10 <= dist_m < 20:
@@ -142,8 +170,11 @@ class POIService:
                     "lon": round(user_lon, 5),
                     "duration_ms": duration_ms,
                     "min_dist_m": None if min_distance_m == float("inf") else round(min_distance_m, 2),
+                    "has_nearest_relevant_completion": nearest_relevant_completion_date is not None,
                 },
             )
+            if include_nearest_completion:
+                return result, min_distance_m, nearest_relevant_completion_date
             return result, min_distance_m
         except Exception as exc:
             duration_ms = round((time.time() - start_ms) * 1000, 1)
@@ -167,4 +198,6 @@ class POIService:
                     "duration_ms": duration_ms,
                 },
             )
+            if include_nearest_completion:
+                return zero_bins, float("inf"), None
             return zero_bins, float("inf")

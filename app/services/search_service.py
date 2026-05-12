@@ -1,6 +1,7 @@
 import json
 import time
 from dataclasses import dataclass
+from datetime import date
 from typing import Optional
 
 import sentry_sdk
@@ -9,6 +10,7 @@ import structlog
 from app.core.analytics import capture
 from app.schemas.search import GaugeResult, SearchRequest, SearchResponse, SearchTarget
 from app.services.bucket_engine import BucketEngine
+from app.services.construction_messages import get_construction_completion_message
 from app.services.construction_score import construction_score
 from app.services.report_renderer import ReportRenderer
 
@@ -33,18 +35,19 @@ class SearchService:
     def __init__(self, deps: SearchDependencies):
         self._deps = deps
         self._last_tier_counts: list[int] | None = None
+        self._last_nearest_relevant_poi_completion_date: date | None = None
 
     @staticmethod
     def _coord_key(lat: float, lon: float) -> str:
         return f"{lat:.4f},{lon:.4f}"
 
     @classmethod
-    def _cache_key(cls, target: str, tier: str, lat: float, lon: float) -> str:
-        return f"search:v2:{target}:{tier}:{lat:.4f}:{lon:.4f}"
+    def _cache_key(cls, target: str, tier: str, lat: float, lon: float, locale: str = "en") -> str:
+        return f"search:v3:{target}:{tier}:{locale}:{lat:.4f}:{lon:.4f}"
 
     @classmethod
-    def _lock_key(cls, target: str, tier: str, lat: float, lon: float) -> str:
-        return f"search:v2:lock:{target}:{tier}:{lat:.4f}:{lon:.4f}"
+    def _lock_key(cls, target: str, tier: str, lat: float, lon: float, locale: str = "en") -> str:
+        return f"search:v3:lock:{target}:{tier}:{locale}:{lat:.4f}:{lon:.4f}"
 
     async def _compute_construction_score(
         self,
@@ -52,11 +55,12 @@ class SearchService:
         lon: float,
         cell_id: str,
         candidates: list,
-        target: str,
+        target: str = "construction",
     ) -> tuple[int, str, float | None]:
         """Compute construction score using tier-weighted + ambient density."""
         start_ms = time.time()
         fallback = (min(100, len(candidates) * 10), "legacy_fallback", None)
+        self._last_nearest_relevant_poi_completion_date = None
 
         if self._deps.poi_service is None:
             logger.info(
@@ -81,7 +85,13 @@ class SearchService:
             return fallback
 
         try:
-            bins, min_dist_m = await self._deps.poi_service.get_construction_distance_bins(lat, lon)
+            bins, min_dist_m, nearest_relevant_poi_completion_date = (
+                await self._deps.poi_service.get_construction_distance_bins(
+                    lat,
+                    lon,
+                    include_nearest_completion=True,
+                )
+            )
             tier_counts = [
                 int(bins.get("0_10", 0)),
                 int(bins.get("10_20", 0)),
@@ -162,6 +172,7 @@ class SearchService:
                     "duration_ms": duration_ms,
                 },
             )
+            self._last_nearest_relevant_poi_completion_date = nearest_relevant_poi_completion_date
             return score, score_source, min_dist_for_log
 
         except Exception as exc:
@@ -201,14 +212,17 @@ class SearchService:
         anon_id: str | None = None,
         session_id: str | None = None,
         attempt_id: str | None = None,
+        locale: str = "en",
     ) -> SearchResponse:
         target = request.target.value
+        locale = locale or "en"
         cell_id = BucketEngine.get_cell_id(request.lat, request.lon)
-        cache_key = self._cache_key(target, tier, request.lat, request.lon)
-        lock_key = self._lock_key(target, tier, request.lat, request.lon)
+        cache_key = self._cache_key(target, tier, request.lat, request.lon, locale)
+        lock_key = self._lock_key(target, tier, request.lat, request.lon, locale=locale)
         lock_acquired = False
         lock_acquire_error = False
         self._last_tier_counts = None
+        self._last_nearest_relevant_poi_completion_date = None
 
         logger.info(
             "search_service_request_started",
@@ -345,12 +359,18 @@ class SearchService:
                     candidates=candidates,
                     target=target,
                 )
+                _completion_message = get_construction_completion_message(
+                    score=construction_score_value,
+                    nearest_relevant_poi_completion_date=self._last_nearest_relevant_poi_completion_date,
+                    now=date.today(),
+                    locale=locale,
+                )
                 construction = GaugeResult(
                     score=construction_score_value,
                     score_source=score_source,
                     coord_key=coord_key,
                     message_code="CONSTRUCTION_READY",
-                    message="Construction analysis complete",
+                    message=_completion_message,
                 )
                 self._record_previous_score(
                     score=construction_score_value,

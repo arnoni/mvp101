@@ -1,5 +1,5 @@
+import os
 from functools import lru_cache
-from app.core.config import settings
 
 TRANSLATIONS = {
     "en": {
@@ -76,6 +76,14 @@ TRANSLATIONS = {
         "check_construction": "Check Construction",
         "analyzing_signals": "Analyzing signals...",
         "construction_coming_soon": "Coming soon...",
+        "construction.message.quiet": "You found yourself a quiet place. Congratulations.",
+        "construction.message.very_livable": "A very livable place. Congratulations.",
+        "construction.message.moderate": "There is some noise around, but good soundproof windows should keep it livable.",
+        "construction.message.high": "Construction activity is clearly nearby. Visit during working hours before deciding.",
+        "construction.message.severe": "Heavy construction risk nearby. Do not rely on photos — inspect the place in person.",
+        "construction.message.poi_ending_days": "Some nearby work may finish in {days} days — waiting a little could make this quieter.",
+        "construction.message.poi_ending_tomorrow": "Some nearby work may finish tomorrow — waiting a little could make this quieter.",
+        "construction.message.complete_fallback": "Construction analysis complete.",
         "checking_demand": "Checking demand...",
         "pass_activated_toast": "🎉 Pass Activated! You now have full access.",
         "report_min_chars": "Report must be at least 10 characters.",
@@ -240,6 +248,14 @@ TRANSLATIONS = {
         "check_construction": "Verificar construcción",
         "analyzing_signals": "Analizando señales...",
         "construction_coming_soon": "Próximamente...",
+        "construction.message.quiet": "You found yourself a quiet place. Congratulations.",
+        "construction.message.very_livable": "A very livable place. Congratulations.",
+        "construction.message.moderate": "There is some noise around, but good soundproof windows should keep it livable.",
+        "construction.message.high": "Construction activity is clearly nearby. Visit during working hours before deciding.",
+        "construction.message.severe": "Heavy construction risk nearby. Do not rely on photos — inspect the place in person.",
+        "construction.message.poi_ending_days": "Some nearby work may finish in {days} days — waiting a little could make this quieter.",
+        "construction.message.poi_ending_tomorrow": "Some nearby work may finish tomorrow — waiting a little could make this quieter.",
+        "construction.message.complete_fallback": "Construction analysis complete.",
         "checking_demand": "Comprobando demanda...",
         "pass_activated_toast": "🎉 ¡Pase activado! Ahora tienes acceso completo.",
         "report_min_chars": "El reporte debe tener al menos 10 caracteres.",
@@ -402,6 +418,14 @@ TRANSLATIONS = {
         "check_construction": "Проверить строительство",
         "analyzing_signals": "Анализ сигналов...",
         "construction_coming_soon": "Скоро...",
+        "construction.message.quiet": "You found yourself a quiet place. Congratulations.",
+        "construction.message.very_livable": "A very livable place. Congratulations.",
+        "construction.message.moderate": "There is some noise around, but good soundproof windows should keep it livable.",
+        "construction.message.high": "Construction activity is clearly nearby. Visit during working hours before deciding.",
+        "construction.message.severe": "Heavy construction risk nearby. Do not rely on photos — inspect the place in person.",
+        "construction.message.poi_ending_days": "Some nearby work may finish in {days} days — waiting a little could make this quieter.",
+        "construction.message.poi_ending_tomorrow": "Some nearby work may finish tomorrow — waiting a little could make this quieter.",
+        "construction.message.complete_fallback": "Construction analysis complete.",
         "checking_demand": "Проверка спроса...",
         "pass_activated_toast": "🎉 Доступ активирован! Теперь у вас полный доступ.",
         "report_min_chars": "Отчёт должен содержать не менее 10 символов.",
@@ -564,6 +588,14 @@ TRANSLATIONS = {
         "check_construction": "공사 확인",
         "analyzing_signals": "신호 분석 중...",
         "construction_coming_soon": "곧 제공 예정...",
+        "construction.message.quiet": "You found yourself a quiet place. Congratulations.",
+        "construction.message.very_livable": "A very livable place. Congratulations.",
+        "construction.message.moderate": "There is some noise around, but good soundproof windows should keep it livable.",
+        "construction.message.high": "Construction activity is clearly nearby. Visit during working hours before deciding.",
+        "construction.message.severe": "Heavy construction risk nearby. Do not rely on photos — inspect the place in person.",
+        "construction.message.poi_ending_days": "Some nearby work may finish in {days} days — waiting a little could make this quieter.",
+        "construction.message.poi_ending_tomorrow": "Some nearby work may finish tomorrow — waiting a little could make this quieter.",
+        "construction.message.complete_fallback": "Construction analysis complete.",
         "checking_demand": "수요 확인 중...",
         "pass_activated_toast": "🎉 패스가 활성화되었습니다! 이제 전체 기능을 사용할 수 있습니다.",
         "report_min_chars": "신고 내용은 최소 10자 이상이어야 합니다.",
@@ -726,6 +758,14 @@ TRANSLATIONS = {
         "check_construction": "Vérifier les travaux",
         "analyzing_signals": "Analyse des signaux...",
         "construction_coming_soon": "Bientôt disponible...",
+        "construction.message.quiet": "You found yourself a quiet place. Congratulations.",
+        "construction.message.very_livable": "A very livable place. Congratulations.",
+        "construction.message.moderate": "There is some noise around, but good soundproof windows should keep it livable.",
+        "construction.message.high": "Construction activity is clearly nearby. Visit during working hours before deciding.",
+        "construction.message.severe": "Heavy construction risk nearby. Do not rely on photos — inspect the place in person.",
+        "construction.message.poi_ending_days": "Some nearby work may finish in {days} days — waiting a little could make this quieter.",
+        "construction.message.poi_ending_tomorrow": "Some nearby work may finish tomorrow — waiting a little could make this quieter.",
+        "construction.message.complete_fallback": "Construction analysis complete.",
         "checking_demand": "Vérification de la demande...",
         "pass_activated_toast": "🎉 Pass activé ! Vous avez maintenant un accès complet.",
         "report_min_chars": "Le signalement doit contenir au moins 10 caractères.",
@@ -888,6 +928,14 @@ TRANSLATIONS = {
         "check_construction": "Bau prüfen",
         "analyzing_signals": "Signale werden analysiert...",
         "construction_coming_soon": "Demnächst verfügbar...",
+        "construction.message.quiet": "You found yourself a quiet place. Congratulations.",
+        "construction.message.very_livable": "A very livable place. Congratulations.",
+        "construction.message.moderate": "There is some noise around, but good soundproof windows should keep it livable.",
+        "construction.message.high": "Construction activity is clearly nearby. Visit during working hours before deciding.",
+        "construction.message.severe": "Heavy construction risk nearby. Do not rely on photos — inspect the place in person.",
+        "construction.message.poi_ending_days": "Some nearby work may finish in {days} days — waiting a little could make this quieter.",
+        "construction.message.poi_ending_tomorrow": "Some nearby work may finish tomorrow — waiting a little could make this quieter.",
+        "construction.message.complete_fallback": "Construction analysis complete.",
         "checking_demand": "Nachfrage wird geprüft...",
         "pass_activated_toast": "🎉 Zugang aktiviert! Sie haben jetzt vollen Zugriff.",
         "report_min_chars": "Der Bericht muss mindestens 10 Zeichen enthalten.",
@@ -1050,6 +1098,14 @@ TRANSLATIONS = {
         "check_construction": "检查施工",
         "analyzing_signals": "正在分析信号...",
         "construction_coming_soon": "即将推出...",
+        "construction.message.quiet": "You found yourself a quiet place. Congratulations.",
+        "construction.message.very_livable": "A very livable place. Congratulations.",
+        "construction.message.moderate": "There is some noise around, but good soundproof windows should keep it livable.",
+        "construction.message.high": "Construction activity is clearly nearby. Visit during working hours before deciding.",
+        "construction.message.severe": "Heavy construction risk nearby. Do not rely on photos — inspect the place in person.",
+        "construction.message.poi_ending_days": "Some nearby work may finish in {days} days — waiting a little could make this quieter.",
+        "construction.message.poi_ending_tomorrow": "Some nearby work may finish tomorrow — waiting a little could make this quieter.",
+        "construction.message.complete_fallback": "Construction analysis complete.",
         "checking_demand": "正在检查需求...",
         "pass_activated_toast": "🎉 通行权限已激活！您现在拥有完整访问权限。",
         "report_min_chars": "报告内容至少需要 10 个字符。",
@@ -1212,6 +1268,14 @@ TRANSLATIONS = {
         "check_construction": "施工をチェック",
         "analyzing_signals": "シグナルを分析中...",
         "construction_coming_soon": "近日公開...",
+        "construction.message.quiet": "You found yourself a quiet place. Congratulations.",
+        "construction.message.very_livable": "A very livable place. Congratulations.",
+        "construction.message.moderate": "There is some noise around, but good soundproof windows should keep it livable.",
+        "construction.message.high": "Construction activity is clearly nearby. Visit during working hours before deciding.",
+        "construction.message.severe": "Heavy construction risk nearby. Do not rely on photos — inspect the place in person.",
+        "construction.message.poi_ending_days": "Some nearby work may finish in {days} days — waiting a little could make this quieter.",
+        "construction.message.poi_ending_tomorrow": "Some nearby work may finish tomorrow — waiting a little could make this quieter.",
+        "construction.message.complete_fallback": "Construction analysis complete.",
         "checking_demand": "需要を確認中...",
         "pass_activated_toast": "🎉 パスが有効化されました！すべての機能にアクセスできます。",
         "report_min_chars": "レポートは10文字以上で入力してください。",
@@ -1313,7 +1377,7 @@ LANG_META = {
     "ja": {"flag": "🇯🇵", "label": "Japanese", "native": "日本語"},
 }
 
-_I18N_MAX = getattr(settings, "I18N_LRU_MAX", 8)
+_I18N_MAX = int(os.getenv("I18N_LRU_MAX", "8"))
 
 @lru_cache(maxsize=_I18N_MAX)
 def _cached(lang: str = "en") -> dict:
@@ -1324,6 +1388,18 @@ def _cached(lang: str = "en") -> dict:
 def get_translations(lang: str = "en") -> dict:
     return _cached(lang)
 
-if getattr(settings, "I18N_WARMUP", True):
+
+def t(key: str, locale: str = "en", **kwargs) -> str:
+    translations = get_translations(locale)
+    template = translations.get(key) or get_translations("en").get(key) or key
+    if not kwargs:
+        return template
+    try:
+        return template.format(**kwargs)
+    except (KeyError, IndexError, ValueError):
+        return template
+
+
+if os.getenv("I18N_WARMUP", "true").lower() not in {"0", "false", "no"}:
     for _lang in list(TRANSLATIONS.keys()):
         _cached(_lang)
