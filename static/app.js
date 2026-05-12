@@ -1243,6 +1243,7 @@
     }); }
   function bindEvents() {
     $("locationInput")?.addEventListener("input", () => { resetHeroResultUi(); debouncedParseHeroLocation(); });
+    $("locationInput")?.addEventListener("paste", () => { resetHeroResultUi(); });
     $("coordForm")?.addEventListener("submit", (event) => { event.preventDefault(); fetchConstruction({ trigger: "form_submit" }); });
     $("mainActionBtn")?.addEventListener("click", (event) => { event.preventDefault(); fetchConstruction({ trigger: "main_button_click" }); });
     $("constructionGoBtn")?.addEventListener("click", (event) => { event.preventDefault(); fetchConstruction({ trigger: "construction_button_click" }); });
