@@ -819,6 +819,10 @@ async def search(
             tier=tier_str,
             quota_remaining=gate_result.remaining_after,
             checks_today=checks_today,
+            user_id=str(user_id) if user_id is not None else None,
+            anon_id=anon_id,
+            session_id=request.cookies.get(settings.SESSION_COOKIE_NAME),
+            attempt_id=getattr(request.state, "request_id", None),
         )
         if response_payload.message_code == "IN_FLIGHT":
             raise HTTPException(
@@ -989,6 +993,17 @@ async def search(
                     )
                 response_payload.quota_remaining = quota_result.remaining_quota
                 response_payload.checks_today = max(0, daily_limit - quota_result.remaining_quota)
+                logger.info(
+                    "quota_consumed",
+                    user_id=str(user_uuid),
+                    anon_id=anon_id,
+                    remaining_before=gate_result.remaining_after,
+                    remaining_after=quota_result.remaining_quota,
+                    checks_today_before=checks_today,
+                    checks_today_after=response_payload.checks_today,
+                    consumed=quota_result.consumed,
+                    reason=quota_result.reason,
+                )
                 response_payload.quota = QuotaMeta(
                     consumed=quota_result.consumed,
                     remaining=quota_result.remaining_quota,

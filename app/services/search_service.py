@@ -14,6 +14,8 @@ from app.services.report_renderer import ReportRenderer
 
 logger = structlog.get_logger(__name__)
 
+_previous_scores: dict[str, dict] = {}
+
 
 @dataclass
 class SearchDependencies:
@@ -92,8 +94,9 @@ class SearchService:
                 redis=getattr(self._deps, "redis", None)
             )
             grid_p99 = float(percentiles.get("p99", 0.0))
+            grid_sample_size = int(percentiles.get("sample_size", 0))
 
-            score = construction_score(tier_counts, grid_count, grid_p99)
+            score = construction_score(tier_counts, grid_count, grid_p99, grid_sample_size)
             duration_ms = round((time.time() - start_ms) * 1000, 1)
 
             logger.info(
@@ -101,6 +104,7 @@ class SearchService:
                 tier_counts=tier_counts,
                 grid_count=grid_count,
                 grid_p99=grid_p99,
+                grid_sample_size=grid_sample_size,
                 score=score,
                 cell_id=cell_id,
                 lat=round(lat, 5),
@@ -117,6 +121,7 @@ class SearchService:
                     "tier_counts": tier_counts,
                     "grid_count": grid_count,
                     "grid_p99": grid_p99,
+                    "grid_sample_size": grid_sample_size,
                     "cell_id": cell_id,
                     "duration_ms": duration_ms,
                 },
@@ -156,6 +161,10 @@ class SearchService:
         tier: str,
         quota_remaining: int,
         checks_today: int,
+        user_id: str | None = None,
+        anon_id: str | None = None,
+        session_id: str | None = None,
+        attempt_id: str | None = None,
     ) -> SearchResponse:
         target = request.target.value
         cell_id = BucketEngine.get_cell_id(request.lat, request.lon)
@@ -196,6 +205,15 @@ class SearchService:
                         payload.construction.cached = True
                     if payload.demand:
                         payload.demand.cached = True
+                    if payload.construction and payload.construction.score is not None:
+                        self._record_previous_score(
+                            score=payload.construction.score,
+                            cell_id=cell_id,
+                            user_id=user_id,
+                            anon_id=anon_id,
+                            session_id=session_id,
+                            attempt_id=attempt_id,
+                        )
                     payload.message_code = "CACHE_HIT"
                     payload.message = "Served from cache"
                     payload.quota_remaining = quota_remaining
@@ -289,6 +307,14 @@ class SearchService:
                     message_code="CONSTRUCTION_READY",
                     message="Construction analysis complete",
                 )
+                self._record_previous_score(
+                    score=construction_score_value,
+                    cell_id=cell_id,
+                    user_id=user_id,
+                    anon_id=anon_id,
+                    session_id=session_id,
+                    attempt_id=attempt_id,
+                )
 
             if request.target in (SearchTarget.DEMAND, SearchTarget.BOTH):
                 rolling = await self._deps.demand_service.get_demand_rolling(cell_id)
@@ -363,6 +389,41 @@ class SearchService:
                         description="Failed to release in-flight search lock.",
                     )
                     sentry_sdk.capture_exception(exc)
+
+
+    def _record_previous_score(
+        self,
+        *,
+        score: int,
+        cell_id: str,
+        user_id: str | None,
+        anon_id: str | None,
+        session_id: str | None,
+        attempt_id: str | None,
+    ) -> None:
+        user_key = user_id or anon_id
+        if user_key is None:
+            return
+
+        prev = _previous_scores.get(user_key)
+        if prev is not None and prev.get("score") == score:
+            logger.warning(
+                "consecutive_identical_score",
+                user_id=user_id,
+                anon_id=anon_id,
+                session_id=session_id,
+                current_score=score,
+                previous_score=prev.get("score"),
+                current_cell_id=cell_id,
+                previous_cell_id=prev.get("cell_id"),
+                current_attempt_id=attempt_id,
+                previous_attempt_id=prev.get("attempt_id"),
+            )
+        _previous_scores[user_key] = {
+            "score": score,
+            "cell_id": cell_id,
+            "attempt_id": attempt_id,
+        }
 
     def _log_completion(
         self,

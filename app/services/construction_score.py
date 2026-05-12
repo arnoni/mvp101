@@ -42,6 +42,7 @@ def construction_score(
     tier_counts: List[int],
     grid_count: int,
     grid_p99: float,
+    grid_sample_size: int = 0,
 ) -> int:
     """Compute a construction confidence score in the range [0, 100].
 
@@ -52,6 +53,8 @@ def construction_score(
         grid_count: Total POIs in the user's 50m x 50m cell (from cell_poi_stats).
         grid_p99:   99th percentile of grid_poi_count across all cells
                     (from cell_poi_percentiles, updated daily).
+        grid_sample_size: Number of grid percentile samples used to distinguish
+                    missing grid data from genuinely zero grid activity.
 
     Returns:
         Integer score between 0 and 100 inclusive.
@@ -69,6 +72,14 @@ def construction_score(
     >>> construction_score([0, 0, 0, 0], 0, 50.0)
     0
     """
+    logger.debug(
+        "construction_score_input",
+        tier_counts=tier_counts,
+        grid_count=grid_count,
+        grid_p99=grid_p99,
+        grid_sample_size=grid_sample_size,
+    )
+
     if (
         not isinstance(tier_counts, list)
         or len(tier_counts) != 4
@@ -109,16 +120,56 @@ def construction_score(
             )
             grid_p99 = 0.0
 
+        if all(c == 0 for c in tier_counts) and grid_count == 0:
+            logger.warning(
+                "construction_score_all_zero_input",
+                tier_counts=tier_counts,
+                grid_count=grid_count,
+                grid_p99=grid_p99,
+                grid_sample_size=grid_sample_size,
+                detail="All tier counts and grid count are zero — upstream data may be missing "
+                "rather than area genuinely empty",
+            )
+
         weights: List[int] = [4, 3, 2, 1]
         raw_weight: int = sum(t * w for t, w in zip(tier_counts, weights))
         tier_score: int = min(70, raw_weight * 10)
+        logger.debug(
+            "construction_score_tier",
+            raw_weight=raw_weight,
+            tier_score=tier_score,
+            tier_cap_applied=(tier_score < raw_weight * 10),
+        )
 
         if grid_p99 > 0:
             ambient_score: int = min(30, round(30.0 * grid_count / grid_p99))
         else:
+            if grid_sample_size == 0:
+                logger.debug(
+                    "construction_score_grid_data_missing",
+                    grid_p99=grid_p99,
+                    grid_sample_size=grid_sample_size,
+                    detail="Grid percentile sample size is zero; ambient score treated as zero",
+                )
             ambient_score = 0
+        logger.debug(
+            "construction_score_ambient",
+            ambient_score=ambient_score,
+            grid_p99_zero=(grid_p99 <= 0),
+            grid_sample_size=grid_sample_size,
+        )
 
         score = min(100, tier_score + ambient_score)
+        logger.info(
+            "construction_score_result",
+            score=score,
+            tier_score=tier_score,
+            ambient_score=ambient_score,
+            tier_counts=tier_counts,
+            grid_count=grid_count,
+            grid_p99=grid_p99,
+            grid_sample_size=grid_sample_size,
+        )
 
     except (TypeError, ValueError, ArithmeticError) as exc:
         logger.error(
@@ -128,6 +179,7 @@ def construction_score(
             tier_counts=tier_counts,
             grid_count=grid_count,
             grid_p99=grid_p99,
+            grid_sample_size=grid_sample_size,
         )
         sentry_sdk.capture_exception(exc)
         score = 0
@@ -140,6 +192,7 @@ def construction_score(
             "tier_counts": tier_counts,
             "grid_count": grid_count,
             "grid_p99": grid_p99,
+            "grid_sample_size": grid_sample_size,
             "source": "pure_function",
         },
     )
