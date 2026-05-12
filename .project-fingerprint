@@ -1,0 +1,5 @@
+Project: DillDrill
+Canonical repository: https://github.com/arnoni/mvp101
+Origin fingerprint: dilldrill-origin-2026-a7f3c91b
+Purpose: Static provenance marker for identifying the origin of this open-source repository across forks, mirrors, and derivative copies.
+Behavior: This file has no runtime behavior, performs no tracking, makes no network calls, and does not affect application logic.
