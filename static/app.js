@@ -54,6 +54,13 @@
   const DURATION = 800;
   const VERIFY_TIMEOUT_TEXT = "Verification unavailable. Please check your connection or disable ad blockers and try again.";
   const SEARCH_CHALLENGE_CODES = new Set(["CHALLENGE_REQUIRED", "INVALID_CHALLENGE", "TURNSTILE_REQUIRED", "TURNSTILE_INVALID"]);
+  const HANDLED_SEARCH_ERROR_CODES = new Set([
+    "FREE_DAILY_QUOTA_EXCEEDED",
+    "IP_RATE_LIMIT_EXCEEDED",
+    "SEARCH_IN_FLIGHT",
+    "SEARCH_TEMPORARILY_THROTTLED",
+    ...SEARCH_CHALLENGE_CODES
+  ]);
   window.dilldrillTurnstileToken = window.dilldrillTurnstileToken || null;
   let searchRequestInFlight = false;
   let parseAbortController = null;
@@ -549,7 +556,7 @@
     if (code === "FREE_DAILY_QUOTA_EXCEEDED") { captureEvent("search_quota_exceeded", props); openJoinResearchModal("quota_exceeded_search"); }
     if (code === "IP_RATE_LIMIT_EXCEEDED") captureEvent("search_rate_limited", props);
     if (code === "SEARCH_TEMPORARILY_THROTTLED") captureEvent("search_throttled", props);
-    return productSearchErrorMessage(code); }
+    return { message: productSearchErrorMessage(code), handled: HANDLED_SEARCH_ERROR_CODES.has(code) }; }
   function searchPayload(target) {
     return { lat: state.coords.lat,
       lon: state.coords.lng,
@@ -668,21 +675,21 @@
       setSearchState("render_result");
       setText("constructionMessage", result.message || document.body.dataset.labelReady || "Ready");
       return result;
-    } catch (err) { const message = handleStructuredSearchError(err, attemptId);
+    } catch (err) { const searchError = handleStructuredSearchError(err, attemptId);
       state.hero.constructionStatus = "error";
       setSearchState("request_failed");
-      setText("constructionMessage", message);
+      setText("constructionMessage", searchError.message);
       logSearchEvent("search_request_failed", {
         attempt_id: attemptId,
         error_code: err.errorCode || null,
         http_status: err.status || null
       });
-      logClientException("construction_search_failed", err, {
-        error_code: err.errorCode || null,
-        http_status: err.status || null,
-        coord_key: state.coords.key,
-        tier: AccessState.get().tier
-      });
+      if (!searchError.handled) { logClientException("construction_search_failed", err, {
+          error_code: err.errorCode || null,
+          http_status: err.status || null,
+          coord_key: state.coords.key,
+          tier: AccessState.get().tier
+        }); }
       return null;
     } finally {
       if (attemptId === state.hero.searchAttemptId) { state.hero.searchRequestInFlight = false; searchRequestInFlight = false; }
@@ -733,15 +740,15 @@
       state.hero.demandStatus = "ready";
       setText("demandMessage", result.message || document.body.dataset.labelReady || "Ready");
       return result;
-    } catch (err) { const message = handleStructuredSearchError(err, demandAttemptId);
+    } catch (err) { const searchError = handleStructuredSearchError(err, demandAttemptId);
       state.hero.demandStatus = "error";
-      setText("demandMessage", message);
-      logClientException("demand_search_failed", err, {
-        error_code: err.errorCode || null,
-        http_status: err.status || null,
-        coord_key: state.coords.key,
-        tier: AccessState.get().tier
-      });
+      setText("demandMessage", searchError.message);
+      if (!searchError.handled) { logClientException("demand_search_failed", err, {
+          error_code: err.errorCode || null,
+          http_status: err.status || null,
+          coord_key: state.coords.key,
+          tier: AccessState.get().tier
+        }); }
       try {
         window.posthog?.capture?.("demand_search_failed", {
           error_code: err.errorCode || null,
