@@ -417,6 +417,20 @@ async def root(request: Request, lang: str = "en"):
         turnstile_token=None,
         daily_limit=daily_limit,
     )
+    # Reset Turnstile cache on new page load per user request
+    try:
+        from app.utils.security import _turnstile_cache_key
+        cache_key = _turnstile_cache_key(
+            anon_id=anon_id if anon_id != "unknown_anon" else None, 
+            client_ip=client_ip, 
+            user_agent=request.headers.get("user-agent")
+        )
+        redis_cli = getattr(request.app.state, "redis", None)
+        if redis_cli and cache_key:
+            await redis_cli.delete(cache_key)
+    except Exception as exc:
+        logger.warning("failed_to_clear_turnstile_cache_on_pageload", error=str(exc))
+
     try:
         decision = await policy_engine.evaluate(context_eval)
     except Exception as exc:
