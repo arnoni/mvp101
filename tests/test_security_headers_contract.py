@@ -26,8 +26,8 @@ def test_csp_allows_turnstile_frames_and_telemetry_connects():
 
 def test_inline_and_external_scripts_have_csp_nonce():
     assert '<script nonce="{{ csp_nonce }}">' in INDEX_HTML
-    assert '<script nonce="{{ csp_nonce }}" src="https://browser.sentry-cdn.com/7.120.3/bundle.min.js"' in INDEX_HTML
-    assert '<script nonce="{{ csp_nonce }}" src="/static/app.js?v=1.2.2"' in INDEX_HTML
+    assert 'src="https://js.sentry-cdn.com/7080f4addf960fe055ab94dcf3e34005.min.js" nonce="{{ csp_nonce }}"' in INDEX_HTML
+    assert '<script nonce="{{ csp_nonce }}" src="/static/app.js?v=1.2.3"' in INDEX_HTML
     assert '<script nonce="{{ csp_nonce }}" src="https://challenges.cloudflare.com/turnstile/v0/api.js"' in INDEX_HTML
 
 

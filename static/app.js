@@ -57,6 +57,9 @@
   const QUIET_PLACE_MESSAGE = "You found yourself a quiet place. Congratulations.";
   const VERIFY_TIMEOUT_TEXT = "Verification unavailable. Please check your connection or disable ad blockers and try again.";
   const SEARCH_CHALLENGE_CODES = new Set(["CHALLENGE_REQUIRED", "INVALID_CHALLENGE", "TURNSTILE_REQUIRED", "TURNSTILE_INVALID"]);
+  const TURNSTILE_VISIBLE_WAIT_MS = 2500;
+  const TURNSTILE_ERROR_RETRY_MS = 650;
+  const TURNSTILE_MAX_ERROR_RETRIES = 2;
   const HANDLED_SEARCH_ERROR_CODES = new Set([
     "FREE_DAILY_QUOTA_EXCEEDED",
     "IP_RATE_LIMIT_EXCEEDED",
@@ -417,7 +420,6 @@
   function onTurnstileExpired() {
     setHeroTurnstileToken(null);
     showHeroTurnstileChallenge();
-    heroTurnstile.reset();
     recordTurnstileLifecycle("turnstile_expired", "warning");
     updateButtons();
   }
@@ -425,8 +427,8 @@
     setHeroTurnstileToken(null);
     showHeroTurnstileChallenge();
     recordTurnstileLifecycle("turnstile_error", "error", { code });
+    window.Sentry?.captureMessage?.("Turnstile widget error", { level: "warning", extra: { code } });
     updateButtons();
-    window.Sentry?.captureException?.(new Error("Turnstile error"), { extra: { code } });
   }
   window.onTurnstileRendered = onTurnstileRendered;
   window.onTurnstileSuccess = onTurnstileSuccess;
@@ -437,10 +439,49 @@
     let widgetId;
     let token = null;
     let initPromise = null;
+    let errorRetryCount = 0;
+    let errorRetryTimer = null;
     function container() { return $(containerId); }
     function statusEl() { return opts.statusElId ? $(opts.statusElId) : null; }
     function setStatus(message) { const el = statusEl(); if (el) el.textContent = message || ""; }
     function getSitekey(el) { return el?.dataset.sitekey || document.body?.dataset.turnstileSitekey || ""; }
+    function isVisibleForRender(el) {
+      if (!el?.isConnected) return false;
+      const slot = el.closest?.("[data-turnstile-container]") || el;
+      if (slot.hasAttribute?.("hidden") || slot.classList?.contains("hidden")) return false;
+      const style = window.getComputedStyle ? window.getComputedStyle(slot) : null;
+      if (style && (style.display === "none" || style.visibility === "hidden")) return false;
+      const rect = el.getBoundingClientRect?.();
+      return Boolean((rect?.width || el.offsetWidth) > 0 && (rect?.height || el.offsetHeight || slot.offsetHeight) > 0);
+    }
+    function waitForVisible(el) {
+      const startedAt = Date.now();
+      return new Promise((resolve, reject) => {
+        if (isVisibleForRender(el)) return resolve();
+        let observer = null;
+        let frameId = null;
+        let timeoutId = null;
+        const cleanup = () => {
+          if (observer) observer.disconnect();
+          if (frameId !== null) window.cancelAnimationFrame?.(frameId);
+          if (timeoutId !== null) window.clearTimeout(timeoutId);
+        };
+        const check = () => {
+          if (isVisibleForRender(el)) { cleanup(); resolve(); return; }
+          if (Date.now() - startedAt >= TURNSTILE_VISIBLE_WAIT_MS) { cleanup(); reject(new Error("turnstile_container_not_visible")); return; }
+          frameId = window.requestAnimationFrame ? window.requestAnimationFrame(check) : window.setTimeout(check, 50);
+        };
+        if (typeof ResizeObserver === "function") {
+          observer = new ResizeObserver(check);
+          observer.observe(el);
+          const slot = el.closest?.("[data-turnstile-container]");
+          if (slot && slot !== el) observer.observe(slot);
+        }
+        timeoutId = window.setTimeout(check, 50);
+        check();
+      });
+    }
+    function clearErrorRetry() { if (errorRetryTimer) window.clearTimeout(errorRetryTimer); errorRetryTimer = null; }
     function waitForTurnstile() {
       const startedAt = Date.now();
       let delay = 100;
@@ -467,25 +508,11 @@
       if (!sitekey) { setStatus(document.body?.dataset.labelVerificationUnavailableSitekeyMissing || "Verification unavailable: site key missing."); opts.onError?.(); return null; }
       try { const turnstile = await waitForTurnstile();
         if (widgetId !== undefined) { turnstile.reset(widgetId); token = null; return widgetId; }
-        // Wait for the container to be laid out and have non-zero dimensions.
-        // This is critical for <dialog> elements where showModal() and render()
-        // happen in the same task before the browser paints.
-        await new Promise((resolve) => {
-          if (el.offsetWidth > 0 || el.offsetHeight > 0) return resolve();
-          if (typeof ResizeObserver !== "function") {
-            window.setTimeout(resolve, 0);
-            return;
-          }
-          const observer = new ResizeObserver(() => {
-            if (el.offsetWidth > 0 || el.offsetHeight > 0) {
-              observer.disconnect();
-              resolve();
-            }
-          });
-          observer.observe(el);
-          window.setTimeout(() => { observer.disconnect(); resolve(); }, 2000);
-        });
-        widgetId = turnstile.render(el, { sitekey, theme: el.dataset.theme || "auto", "render-callback": () => opts.onRender?.(), callback: (newToken) => { token = newToken || null; setStatus(""); try { console.info(JSON.stringify({ level: "info", event: "turnstile_token_received", containerId, token_length: token?.length || 0 })); } catch (_) {} opts.onToken?.(token); }, "expired-callback": () => { token = null; opts.onExpire?.(); }, "error-callback": (code) => { token = null; opts.onError?.(code); } });
+        // Wait for a visible, laid-out container before rendering. Rendering into
+        // a hidden or zero-size slot can leave the widget invisible on first load,
+        // especially on mobile browsers that finish layout after deferred scripts.
+        await waitForVisible(el);
+        widgetId = turnstile.render(el, { sitekey, theme: el.dataset.theme || "auto", "render-callback": () => opts.onRender?.(), callback: (newToken) => { errorRetryCount = 0; clearErrorRetry(); token = newToken || null; setStatus(""); try { console.info(JSON.stringify({ level: "info", event: "turnstile_token_received", containerId, token_length: token?.length || 0 })); } catch (_) {} opts.onToken?.(token); }, "expired-callback": () => { token = null; opts.onExpire?.(); }, "error-callback": (code) => { token = null; opts.onError?.(code); if (errorRetryCount < TURNSTILE_MAX_ERROR_RETRIES) { errorRetryCount += 1; clearErrorRetry(); errorRetryTimer = window.setTimeout(() => { destroy(); init(); }, TURNSTILE_ERROR_RETRY_MS * errorRetryCount); } } });
         return widgetId;
       } catch (err) { setStatus(VERIFY_TIMEOUT_TEXT); opts.onError?.(err);
         logClientException("turnstile_init_failed", err, {
@@ -505,6 +532,8 @@
     }
     async function init() { if (initPromise) return initPromise; initPromise = runInit(); return initPromise; }
     function reset() {
+      clearErrorRetry();
+      errorRetryCount = 0;
       const hadWidget = widgetId !== undefined;
       try { if (hadWidget && window.turnstile?.reset) window.turnstile.reset(widgetId);
       } catch (err) { widgetId = undefined;
@@ -513,6 +542,7 @@
         setStatus("");
         opts.onReset?.(); } }
     function destroy() {
+      clearErrorRetry();
       try { if (widgetId !== undefined && window.turnstile?.remove) window.turnstile.remove(widgetId);
       } catch (err) { logClientException("turnstile_destroy_failed", err, { containerId }); }
       widgetId = undefined;
@@ -1468,7 +1498,7 @@
     bindEvents();
     restoreAfterMagicSuccess();
     initialGaugeRender();
-    if (document.body?.dataset.turnstileRequired === "true") heroTurnstile.init();
+    if (document.body?.dataset.turnstileRequired === "true") { showHeroTurnstileChallenge(); heroTurnstile.init(); }
     syncAccessUI();
     updateButtons();
     window.App = { AccessState, state, openModal, closeModal, openJoinResearchModal, fetchConstruction, fetchDemand, parseHeroLocation, heroTurnstile, unlockTurnstile, reportTurnstile, notify, captureEvent, logFlowEvent, logClientException, cancelQuietCelebration }; }
