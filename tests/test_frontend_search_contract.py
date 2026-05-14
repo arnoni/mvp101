@@ -38,6 +38,18 @@ def test_turnstile_token_logging_is_safe_length_only():
     assert 'console.info(token)' not in APP_JS
 
 
+def test_turnstile_renders_only_after_visible_and_recovers_from_widget_errors():
+    assert 'const TURNSTILE_VISIBLE_WAIT_MS = 2500;' in APP_JS
+    assert 'function isVisibleForRender(el)' in APP_JS
+    assert 'await waitForVisible(el);' in APP_JS
+    assert 'turnstile_container_not_visible' in APP_JS
+    assert 'TURNSTILE_MAX_ERROR_RETRIES = 2' in APP_JS
+    assert 'errorRetryTimer = window.setTimeout(() => { destroy(); init(); }' in APP_JS
+    assert 'window.Sentry?.captureMessage?.("Turnstile widget error"' in APP_JS
+    assert 'captureException?.(new Error("Turnstile error")' not in APP_JS
+    assert '#turnstileContainer, #unlock-turnstile-widget, #report-turnstile-widget { min-height: 65px;' in APP_CSS
+
+
 def test_sentry_dsn_is_exposed_and_placeholder_sri_removed():
     assert 'data-sentry-dsn="{{ sentry_frontend_dsn|default(\'\') }}"' in INDEX_HTML
     assert 'sha384-generic-placeholder' not in INDEX_HTML
