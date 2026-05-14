@@ -153,26 +153,50 @@
       quietCelebrationTimer = window.setTimeout(cleanupQuietCelebrationVisuals, QUIET_CELEBRATION_REDUCED_MOTION_DURATION);
       return; }
     const needle = $("constructionNeedle");
-    if (!needle?.animate) return;
+    if (!needle) return;
     try {
       setQuietCelebrationState("running");
       markQuietCelebrationShown(reportId);
       needle.style.willChange = "transform";
-      needle.style.transformOrigin = `${PIVOT_X}px ${PIVOT_Y}px`;
-      needle.style.transformBox = "view-box";
-      quietCelebrationAnimation = needle.animate([
-        { transform: `rotate(${finalAngleDeg}deg)` },
-        { transform: `rotate(${finalAngleDeg + 20}deg)`, offset: 0.25 },
-        { transform: `rotate(${finalAngleDeg + 60}deg)`, offset: 0.5 },
-        { transform: `rotate(${finalAngleDeg - 40}deg)`, offset: 0.75 },
-        { transform: `rotate(${finalAngleDeg}deg)` }
-      ], { duration: QUIET_CELEBRATION_DURATION, easing: "ease-in-out", fill: "forwards" });
-      quietCelebrationAnimation.onfinish = () => {
-        quietCelebrationAnimation = null;
+      // Avoid needle.animate([ ... ]) here: CSS transforms on SVG <g> lose the rotate(cx cy) pivot.
+      const startedAt = performance.now();
+      let frameId = null;
+      let cancelled = false;
+      const keyframes = [
+        { angle: finalAngleDeg, offset: 0 },
+        { angle: finalAngleDeg + 20, offset: 0.25 },
+        { angle: finalAngleDeg + 60, offset: 0.5 },
+        { angle: finalAngleDeg - 40, offset: 0.75 },
+        { angle: finalAngleDeg, offset: 1 }
+      ];
+      const setNeedleAngle = (angle) => needle.setAttribute("transform", `rotate(${angle} ${PIVOT_X} ${PIVOT_Y})`);
+      const finish = () => {
+        if (quietCelebrationAnimation?.cancel === cancel) quietCelebrationAnimation = null;
+        setNeedleAngle(finalAngleDeg);
         cleanupQuietCelebrationVisuals(); };
-      quietCelebrationAnimation.oncancel = () => {
-        quietCelebrationAnimation = null;
+      const cancel = () => {
+        cancelled = true;
+        if (frameId !== null) window.cancelAnimationFrame(frameId);
+        if (quietCelebrationAnimation?.cancel === cancel) quietCelebrationAnimation = null;
         cleanupQuietCelebrationVisuals(); };
+      const tick = (now) => {
+        if (cancelled) return;
+        const progress = Math.min(1, (now - startedAt) / QUIET_CELEBRATION_DURATION);
+        let previous = keyframes[0];
+        let next = keyframes[keyframes.length - 1];
+        for (let i = 1; i < keyframes.length; i += 1) {
+          if (progress <= keyframes[i].offset) {
+            next = keyframes[i];
+            previous = keyframes[i - 1];
+            break; } }
+        const span = Math.max(0.001, next.offset - previous.offset);
+        const localProgress = Math.max(0, Math.min(1, (progress - previous.offset) / span));
+        const eased = 0.5 - Math.cos(localProgress * Math.PI) / 2;
+        setNeedleAngle(previous.angle + (next.angle - previous.angle) * eased);
+        if (progress < 1) frameId = window.requestAnimationFrame(tick);
+        else finish(); };
+      quietCelebrationAnimation = { cancel };
+      frameId = window.requestAnimationFrame(tick);
       quietCelebrationTimer = window.setTimeout(cancelQuietCelebration, 5000);
     } catch (_) { cleanupQuietCelebrationVisuals(); } }
   function maybeRunQuietCelebration(result, score, attemptId) {
