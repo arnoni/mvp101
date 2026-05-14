@@ -8,6 +8,9 @@ from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.starlette import StarletteIntegration
 
+SENTRY_TAG_VALUE_MAX_LENGTH = 200
+SENTRY_TAG_KEY_MAX_LENGTH = 32
+
 _SENSITIVE_CONTEXT_KEYS = {
     "authorization",
     "cookie",
@@ -38,6 +41,70 @@ def _safe_context_value(value: Any) -> Any:
     return value
 
 
+def _bind_safe_context_to_scope(scope: Any, context: Mapping[str, Any]) -> None:
+    """Attach sanitized context as Sentry tags/extras without allowing bad values to fail reporting."""
+    for key, value in context.items():
+        key_text = str(key)
+        if isinstance(value, (str, int, float, bool)) or value is None:
+            scope.set_tag(
+                key_text[:SENTRY_TAG_KEY_MAX_LENGTH],
+                str(value)[:SENTRY_TAG_VALUE_MAX_LENGTH],
+            )
+        scope.set_extra(key_text, value)
+
+
+def _before_send(event: dict[str, Any], hint: dict[str, Any]) -> dict[str, Any] | None:
+    """Final Sentry scrubber for request/session contexts that may bypass our helpers."""
+    return _safe_context_value(event)
+
+
+def capture_message(
+    event: str,
+    *,
+    level: str = "warning",
+    logger: Any | None = None,
+    **context: Any,
+) -> None:
+    """Report a non-exception failure path to logs and Sentry without breaking the caller."""
+    safe_context = _safe_context_value({**get_vercel_context(), **context})
+    log = logger or logging.getLogger(__name__)
+
+    try:
+        if hasattr(log, "bind"):
+            getattr(
+                log,
+                level if level in {"debug", "info", "warning", "error", "critical"} else "warning",
+            )(
+                event,
+                **safe_context,
+            )
+        else:
+            getattr(
+                log,
+                level if level in {"debug", "info", "warning", "error", "critical"} else "warning",
+            )(
+                event,
+                extra=safe_context,
+            )
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "observability_structlog_message_failed",
+            extra={"event": event, "level": level},
+        )
+
+    try:
+        with sentry_sdk.push_scope() as scope:
+            scope.set_tag("event", event)
+            scope.set_tag("reported_kind", "message")
+            _bind_safe_context_to_scope(scope, safe_context)
+            sentry_sdk.capture_message(event, level=level)
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "observability_sentry_message_failed",
+            extra={"event": event, "level": level},
+        )
+
+
 def get_vercel_context() -> dict[str, str]:
     """Return deployment metadata that Vercel includes in function env vars."""
     keys = (
@@ -60,11 +127,13 @@ def init_sentry(dsn: str | None, env: str, release: str | None) -> None:
     """
     log = logging.getLogger(__name__)
     if not dsn:
-        log.info("sentry_dsn_missing_skipping_initialization", extra={"vercel": get_vercel_context()})
+        log.info(
+            "sentry_dsn_missing_skipping_initialization", extra={"vercel": get_vercel_context()}
+        )
         return
 
     sentry_logging = LoggingIntegration(
-        level=logging.INFO,        # Capture info and above as breadcrumbs
+        level=logging.INFO,  # Capture info and above as breadcrumbs
         event_level=logging.ERROR,  # Send errors as events
     )
     vercel_context = get_vercel_context()
@@ -80,6 +149,9 @@ def init_sentry(dsn: str | None, env: str, release: str | None) -> None:
         ],
         traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.0")),
         send_default_pii=False,
+        attach_stacktrace=True,
+        max_breadcrumbs=int(os.getenv("SENTRY_MAX_BREADCRUMBS", "100")),
+        before_send=_before_send,
     )
 
     with sentry_sdk.configure_scope() as scope:
@@ -88,7 +160,10 @@ def init_sentry(dsn: str | None, env: str, release: str | None) -> None:
         if vercel_context:
             scope.set_context("vercel", vercel_context)
 
-    log.info("sentry_initialized", extra={"environment": env, "release": release, "vercel": vercel_context})
+    log.info(
+        "sentry_initialized",
+        extra={"environment": env, "release": release, "vercel": vercel_context},
+    )
 
 
 def bind_request_to_sentry(
@@ -160,10 +235,7 @@ def report_exception(
         with sentry_sdk.push_scope() as scope:
             scope.set_tag("event", event)
             scope.set_tag("error_class", exc.__class__.__name__)
-            for key, value in safe_context.items():
-                if isinstance(value, (str, int, float, bool)) or value is None:
-                    scope.set_tag(str(key)[:32], str(value)[:200])
-                scope.set_extra(str(key), value)
+            _bind_safe_context_to_scope(scope, safe_context)
             sentry_sdk.capture_exception(exc)
             if flush:
                 sentry_sdk.flush(timeout=2.0)

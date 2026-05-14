@@ -264,6 +264,20 @@
       try { console.error("[DillDrill] logClientException itself threw", name); } catch (__) {}
     }
   }
+  function installGlobalErrorReporting() {
+    if (window.__DD_GLOBAL_ERROR_REPORTING_INSTALLED) return;
+    window.__DD_GLOBAL_ERROR_REPORTING_INSTALLED = true;
+    window.addEventListener("error", (event) => {
+      logClientException("frontend_unhandled_error", event.error || event.message, {
+        filename: event.filename || null,
+        lineno: event.lineno || null,
+        colno: event.colno || null
+      });
+    });
+    window.addEventListener("unhandledrejection", (event) => {
+      logClientException("frontend_unhandled_rejection", event.reason || "Unhandled promise rejection");
+    });
+  }
   function safeLogJoinResearchException(eventName, err, extra = {}) {
     try { if (typeof window.logJoinResearchException === "function") {
         window.logJoinResearchException(eventName, err, extra);
@@ -287,7 +301,7 @@
           event: eventName,
           ...(payload || {})
         }) });
-    } catch (_) {} }
+    } catch (err) { logClientException("client_flow_event_failed", err, { eventName }); } }
   function normalizeKey(k) {
     if (k === null || k === undefined || k === "") return null;
     const parts = String(k).split(",").map((part) => Number.parseFloat(part));
@@ -1414,6 +1428,7 @@
     animateGauge($("demandBand"), $("demandNeedle"), state.hero.demandScore || 0); }
   function init() {
     initFrontendSentry();
+    installGlobalErrorReporting();
     try {
       const initPayload = {
         level: "info",
