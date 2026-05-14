@@ -479,10 +479,10 @@ button { font-family: inherit; }
 }
 
 @keyframes quiet-arc-pulse {
-  0%, 100% { filter: none; }
-  20% { filter: drop-shadow(0 0 6px rgba(80, 255, 120, 0.35)); }
-  45% { filter: drop-shadow(0 0 10px rgba(120, 220, 255, 0.45)); }
-  70% { filter: drop-shadow(0 0 8px rgba(255, 220, 120, 0.35)); }
+  0%, 100% { filter: url(#glowCon) drop-shadow(0 0 0px rgba(80, 255, 120, 0)) !important; }
+  20% { filter: url(#glowCon) drop-shadow(0 0 6px rgba(80, 255, 120, 0.35)) !important; }
+  45% { filter: url(#glowCon) drop-shadow(0 0 10px rgba(120, 220, 255, 0.45)) !important; }
+  70% { filter: url(#glowCon) drop-shadow(0 0 8px rgba(255, 220, 120, 0.35)) !important; }
 }
 
 .message-board {
@@ -1620,7 +1620,7 @@ button:disabled {
   }
   .construction-gauge[data-celebration="running"] .gauge-arc {
     animation: none !important;
-    filter: drop-shadow(0 0 4px rgba(80, 255, 120, 0.3)) !important;
+    filter: url(#glowCon) drop-shadow(0 0 4px rgba(80, 255, 120, 0.3)) !important;
     transition: filter 1.8s ease-out;
   }
 
