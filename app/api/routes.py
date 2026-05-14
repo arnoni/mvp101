@@ -308,6 +308,21 @@ def _tier_to_funnel(tier: TierStatus) -> str:
 async def _emit_funnel_event(request: Request, **values) -> bool:
     db_engine = getattr(request.app.state, "db_engine", None)
     if not db_engine:
+        route_path = request.url.path if request.url else "unknown"
+        metadata = values.get("metadata_json") or {}
+        logger.warning(
+            "funnel_event_dropped_no_db_engine",
+            route=route_path,
+            event=values.get("event_name"),
+            user_id=getattr(request.state, "user_id", None),
+            session_id=request.cookies.get(settings.SESSION_COOKIE_NAME),
+            anon_id=getattr(request.state, "anon_id", None),
+            error_type="NoDatabaseEngine",
+            error_detail="db_engine is not configured",
+            attempt_id=metadata.get("attempt_id") or getattr(request.state, "request_id", None),
+            target=metadata.get("target"),
+        )
+        sentry_sdk.capture_message("Funnel event dropped: no db_engine", level="warning")
         return False
     payload = {
         "event_source": "api",
@@ -747,13 +762,22 @@ async def search(
 
         for check_type in check_types:
             ui_surface = "demand_level_page" if check_type == "demand" else "construction_level_page"
-            await _emit_funnel_event(
+            funnel_result = await _emit_funnel_event(
                 request,
                 event_name="check_attempted",
                 effective_tier=_tier_to_funnel(tier),
                 check_type=check_type,
                 ui_surface=ui_surface,
             )
+            if not funnel_result:
+                logger.warning(
+                    "funnel_event_failed",
+                    extra={
+                        "event": "check_attempted",
+                        "attempt_id": getattr(request.state, "request_id", None),
+                        "error_code": None,
+                    },
+                )
             if user_id is not None:
                 capture(str(user_id), "check_attempted", {"tier": _tier_to_funnel(tier)})
 
@@ -776,13 +800,22 @@ async def search(
         except HTTPException as exc:
             for check_type in check_types:
                 ui_surface = "demand_level_page" if check_type == "demand" else "construction_level_page"
-                await _emit_funnel_event(
+                funnel_result = await _emit_funnel_event(
                     request,
                     event_name="check_blocked_tier",
                     effective_tier=_tier_to_funnel(tier),
                     check_type=check_type,
                     ui_surface=ui_surface,
                 )
+                if not funnel_result:
+                    logger.warning(
+                        "funnel_event_failed",
+                        extra={
+                            "event": "check_blocked_tier",
+                            "attempt_id": getattr(request.state, "request_id", None),
+                            "error_code": getattr(exc, "error_code", None),
+                        },
+                    )
                 if user_id is not None:
                     capture(str(user_id), "check_blocked_tier", {"tier": _tier_to_funnel(tier)})
             return _search_http_exception_response(
@@ -1120,6 +1153,15 @@ async def search(
                     related_query_id=related_query_id,
                     metadata_json={"target": target_mode, "cell_id": demand_cell_id},
                 )
+                if not funnel_recorded:
+                    logger.warning(
+                        "funnel_event_failed",
+                        extra={
+                            "event": "check_completed",
+                            "attempt_id": getattr(request.state, "request_id", None),
+                            "error_code": None,
+                        },
+                    )
                 if funnel_recorded:
                     capture(
                         user_id=str(related_query_id or "unknown"),
@@ -1143,6 +1185,15 @@ async def search(
                     related_query_id=related_query_id,
                     metadata_json={"target": target_mode, "cell_id": demand_cell_id},
                 )
+                if not funnel_recorded:
+                    logger.warning(
+                        "funnel_event_failed",
+                        extra={
+                            "event": "check_completed",
+                            "attempt_id": getattr(request.state, "request_id", None),
+                            "error_code": None,
+                        },
+                    )
                 if funnel_recorded:
                     capture(
                         user_id=str(related_query_id or "unknown"),
