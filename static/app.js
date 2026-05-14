@@ -394,8 +394,11 @@
     const challenge = document.querySelector("[data-turnstile-container]");
     const badge = document.querySelector("[data-turnstile-verified]");
     if (challenge) {
-      challenge.toggleAttribute("hidden", Boolean(verified));
-      challenge.classList.toggle("hidden", Boolean(verified));
+      challenge.classList.toggle("sr-only", Boolean(verified));
+      if (!verified) {
+        challenge.classList.remove("hidden");
+        challenge.removeAttribute("hidden");
+      }
     }
     if (badge) badge.toggleAttribute("hidden", !verified);
   }
@@ -468,13 +471,13 @@
         // This is critical for <dialog> elements where showModal() and render()
         // happen in the same task before the browser paints.
         await new Promise((resolve) => {
-          if (el.offsetWidth > 0 && el.offsetHeight > 0) return resolve();
+          if (el.offsetWidth > 0 || el.offsetHeight > 0) return resolve();
           if (typeof ResizeObserver !== "function") {
             window.setTimeout(resolve, 0);
             return;
           }
           const observer = new ResizeObserver(() => {
-            if (el.offsetWidth > 0 && el.offsetHeight > 0) {
+            if (el.offsetWidth > 0 || el.offsetHeight > 0) {
               observer.disconnect();
               resolve();
             }
