@@ -3,6 +3,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 APP_JS = (ROOT / "static" / "app.js").read_text()
 INDEX_HTML = (ROOT / "templates" / "index.html").read_text()
+APP_CSS = (ROOT / "static" / "app.css").read_text()
 
 
 def test_main_search_button_is_explicit_button_not_native_submit():
@@ -64,3 +65,17 @@ def test_paid_search_dispatch_does_not_require_turnstile_token():
     assert 'if (turnstileRequiredForSearch && !payload.turnstile_token)' in APP_JS
     assert 'setSearchState(token ? "turnstile_verified" : "ready_without_turnstile");' in APP_JS
     assert 'if (turnstileRequiredForSearch && !demandPayload.turnstile_token)' in APP_JS
+
+
+def test_quiet_place_celebration_is_scoped_and_privacy_safe():
+    assert 'id="constructionGauge" data-celebration="idle"' in INDEX_HTML
+    assert 'class="gauge-band gauge-arc" id="constructionBand"' in INDEX_HTML
+    assert 'class="needle gauge-needle" id="constructionNeedle"' in INDEX_HTML
+    assert 'function runQuietCelebration(finalAngleDeg, reportId)' in APP_JS
+    assert 'needle.animate([' in APP_JS
+    assert 'QUIET_CELEBRATION_DURATION = 3400' in APP_JS
+    assert 'construction_score_bucket: "under_10"' in APP_JS
+    assert 'construction_score:' not in APP_JS[APP_JS.index('quiet_place_celebration_shown'):APP_JS.index('function markQuietCelebrationShown')]
+    assert 'cancelQuietCelebration();' in APP_JS
+    assert 'quiet-arc-pulse 3.4s ease-in-out forwards' in APP_CSS
+    assert '@media (prefers-reduced-motion: reduce)' in APP_CSS

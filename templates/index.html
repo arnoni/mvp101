@@ -173,7 +173,7 @@
     <!-- CONSTRUCTION GAUGE -->
     <section class="card gauge-card">
       <h2 class="section-title">{{ t.get('construction_activity', 'Construction Activity') }}</h2>
-      <div class="gauge-wrap">
+      <div class="gauge-wrap construction-gauge" id="constructionGauge" data-celebration="idle">
         <svg viewBox="0 0 320 220" class="gauge-svg" aria-hidden="true">
           <defs>
             <linearGradient id="gradCon" x1="0%" y1="0%" x2="100%" y2="0%">
@@ -201,9 +201,9 @@
           </defs>
           <path d="M40 180 A120 120 0 0 1 280 180" class="gauge-track" filter="url(#innerGlow)" />
           <path d="M40 180 A120 120 0 0 1 280 180" class="gauge-ticks" />
-          <path d="M40 180 A120 120 0 0 1 280 180" class="gauge-band" id="constructionBand" stroke="url(#gradCon)"
+          <path d="M40 180 A120 120 0 0 1 280 180" class="gauge-band gauge-arc" id="constructionBand" stroke="url(#gradCon)"
             stroke-dasharray="377" stroke-dashoffset="377" filter="url(#glowCon)" />
-          <g class="needle" id="constructionNeedle" transform="rotate(-82 160 180)">
+          <g class="needle gauge-needle" id="constructionNeedle" transform="rotate(-82 160 180)">
             <polygon points="154,207 166,207 166,182 154,182" fill="#000" opacity="0.28" />
             <polygon points="154,182 166,182 161,47 159,47" fill="#000" opacity="0.28" />
             <circle cx="160" cy="182" r="18" fill="#000" opacity="0.28" />
