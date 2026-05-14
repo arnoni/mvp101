@@ -1192,6 +1192,9 @@
           location_source: state.report.locationSource,
           tier: AccessState.get().tier
         });
+        window.posthog?.capture?.("report_sent", {
+          $current_url: window.location.href
+        });
         window.posthog?.flush?.();
       } catch (_) {}
       state.report.autoCloseTimer = window.setTimeout(() => closeModal("reportModalLayer"), 2000);
@@ -1396,7 +1399,16 @@
     $("userMenuBtn")?.addEventListener("click", openUserModal);
     $("userMenuBtn")?.addEventListener("keydown", (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); openUserModal(); } });
     $("reportBtn")?.addEventListener("click", (event) => { event.preventDefault(); resetReportModal(); openModal("reportModalLayer"); });
-    $("shareBtn")?.addEventListener("click", (event) => { event.preventDefault(); openShareModal(); });
+    $("shareBtn")?.addEventListener("click", (event) => { 
+      event.preventDefault(); 
+      openShareModal(); 
+      try {
+        window.posthog?.capture?.("share_clicked", {
+          $current_url: window.location.href
+        });
+        window.posthog?.flush?.();
+      } catch (_) {}
+    });
     $("aboutBtn")?.addEventListener("click", (event) => { event.preventDefault(); openAboutModal(); });
     $("langOpenBtn")?.addEventListener("click", (event) => { event.preventDefault(); openModal("langModalLayer"); });
     $("proceedToPaymentBtn")?.addEventListener("click", submitMagicLink);

@@ -149,6 +149,16 @@ class EntitlementService:
                     ),
                     {"user_id": user_id, "free_daily_limit": int(free_daily_limit)},
                 )
+            await EntitlementService._insert_funnel_event(
+                db_engine=db_engine,
+                user_id=user_id,
+                event_name="quota_reset",
+                effective_tier="free",
+                metadata={
+                    "new_daily_limit": free_daily_limit,
+                    "source": "reset_remaining_quota_on_expiry",
+                },
+            )
             struct_logger.info(
                 "remaining_quota_reset_on_expiry",
                 user_id=user_id,
@@ -394,7 +404,7 @@ class EntitlementService:
                     free_res = await conn.execute(
                         text(
                             """
-                            SELECT u.ab_cohort, fq.daily_limit
+                            SELECT u.ab_cohort, fq.daily_limit, u.remaining_quota
                             FROM users u
                             LEFT JOIN free_quotas fq ON fq.cohort = u.ab_cohort
                             WHERE u.id = :user_id
@@ -407,7 +417,7 @@ class EntitlementService:
                     free_res = await conn.execute(
                         text(
                             """
-                            SELECT u.ab_cohort, NULL::INTEGER AS daily_limit
+                            SELECT u.ab_cohort, NULL::INTEGER AS daily_limit, u.remaining_quota
                             FROM users u
                             WHERE u.id = :user_id
                             LIMIT 1
@@ -418,6 +428,20 @@ class EntitlementService:
 
                 free_row = free_res.mappings().first()
                 daily_limit = int(free_row["daily_limit"]) if free_row and free_row.get("daily_limit") else 3
+                
+                current_remaining = free_row.get("remaining_quota") if free_row else None
+                if current_remaining is not None and int(current_remaining) <= 0:
+                    await EntitlementService._insert_funnel_event(
+                        db_engine=db_engine,
+                        user_id=user_id,
+                        event_name="quota_expired",
+                        effective_tier="free",
+                        metadata={
+                            "reason": "session_quota_exhausted",
+                            "source": "db_entitlement_resolution",
+                            "daily_limit": daily_limit,
+                        },
+                    )
                 result = EntitlementResult(
                     tier=TierStatus.FREE,
                     active_plan_code=None,
@@ -436,6 +460,17 @@ class EntitlementService:
                 )
                 cached_tier = str(cached_payload.get("tier", ""))
                 if cached_tier == TierStatus.SIMULATED_PAID.value:
+                    await EntitlementService._insert_funnel_event(
+                        db_engine=db_engine,
+                        user_id=user_id,
+                        event_name="quota_expired",
+                        effective_tier="free",
+                        metadata={
+                            "prior_tier": cached_tier,
+                            "new_tier": "FREE",
+                            "source": "db_entitlement_resolution",
+                        },
+                    )
                     await EntitlementService._insert_funnel_event(
                         db_engine=db_engine,
                         user_id=user_id,
