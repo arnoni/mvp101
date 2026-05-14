@@ -159,14 +159,14 @@ async def lifespan(app: FastAPI):
                     await conn.commit()
                 logger.info("Database connectivity check passed.")
             except Exception as e:
-                logger.critical(f"Database connectivity check FAILED: {e}")
                 # Do NOT raise — let the app start so health checks work.
-                # But log it loudly so operators see it.
-                try:
-                    import sentry_sdk
-                    sentry_sdk.capture_exception(e)
-                except Exception:
-                    pass
+                # But report it through the resilient observability path so it cannot disappear.
+                report_exception(
+                    e,
+                    event="database_connectivity_check_failed",
+                    logger=logger,
+                    flush=settings.ENV == "production",
+                )
         else:
             logger.warning("DATABASE_URL not set — running without database connectivity.")
         app.state.poi_service = POIService(app.state.db_engine)
@@ -597,6 +597,7 @@ async def global_exception_handler(request: Request, exc: Exception):
             vercel_id=getattr(request.state, "vercel_id", None),
             **error_context,
         )
+        request.state.error_reported = True
     else:
         logger.critical("global_critical_failure_already_reported", **error_context)
 

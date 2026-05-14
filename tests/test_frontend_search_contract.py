@@ -44,6 +44,14 @@ def test_sentry_dsn_is_exposed_and_placeholder_sri_removed():
     assert 'frontend_sentry_missing' in APP_JS
 
 
+def test_frontend_global_errors_and_flow_telemetry_failures_are_reported():
+    assert 'function installGlobalErrorReporting()' in APP_JS
+    assert 'frontend_unhandled_error' in APP_JS
+    assert 'frontend_unhandled_rejection' in APP_JS
+    assert 'installGlobalErrorReporting();' in APP_JS
+    assert 'client_flow_event_failed' in APP_JS
+
+
 def test_template_does_not_use_inline_click_handlers():
     assert "onclick=" not in INDEX_HTML
 
