@@ -153,6 +153,22 @@ async def lifespan(app: FastAPI):
         app.state.db_engine = None
         if settings.DATABASE_URL:
             app.state.db_engine = build_async_engine()
+            try:
+                async with app.state.db_engine.connect() as conn:
+                    await conn.execute(text("SELECT 1"))
+                    await conn.commit()
+                logger.info("Database connectivity check passed.")
+            except Exception as e:
+                logger.critical(f"Database connectivity check FAILED: {e}")
+                # Do NOT raise — let the app start so health checks work.
+                # But log it loudly so operators see it.
+                try:
+                    import sentry_sdk
+                    sentry_sdk.capture_exception(e)
+                except Exception:
+                    pass
+        else:
+            logger.warning("DATABASE_URL not set — running without database connectivity.")
         app.state.poi_service = POIService(app.state.db_engine)
         logger.info("POI Service initialized.")
     except Exception as e:
