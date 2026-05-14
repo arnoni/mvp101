@@ -452,7 +452,7 @@
       const style = window.getComputedStyle ? window.getComputedStyle(slot) : null;
       if (style && (style.display === "none" || style.visibility === "hidden")) return false;
       const rect = el.getBoundingClientRect?.();
-      return Boolean((rect?.width || el.offsetWidth) > 0 && (rect?.height || el.offsetHeight || slot.offsetHeight) > 0);
+      return Boolean((rect?.width || el.offsetWidth) > 0 && (rect?.height || el.offsetHeight) > 0);
     }
     function waitForVisible(el) {
       const startedAt = Date.now();
@@ -1498,7 +1498,7 @@
     bindEvents();
     restoreAfterMagicSuccess();
     initialGaugeRender();
-    if (document.body?.dataset.turnstileRequired === "true") { showHeroTurnstileChallenge(); heroTurnstile.init(); }
+    { showHeroTurnstileChallenge(); heroTurnstile.init(); }
     syncAccessUI();
     updateButtons();
     window.App = { AccessState, state, openModal, closeModal, openJoinResearchModal, fetchConstruction, fetchDemand, parseHeroLocation, heroTurnstile, unlockTurnstile, reportTurnstile, notify, captureEvent, logFlowEvent, logClientException, cancelQuietCelebration }; }
