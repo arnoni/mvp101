@@ -52,6 +52,9 @@
   const PIVOT_X = 160;
   const PIVOT_Y = 180;
   const DURATION = 800;
+  const QUIET_CELEBRATION_DURATION = 3400;
+  const QUIET_CELEBRATION_REDUCED_MOTION_DURATION = 1800;
+  const QUIET_PLACE_MESSAGE = "You found yourself a quiet place. Congratulations.";
   const VERIFY_TIMEOUT_TEXT = "Verification unavailable. Please check your connection or disable ad blockers and try again.";
   const SEARCH_CHALLENGE_CODES = new Set(["CHALLENGE_REQUIRED", "INVALID_CHALLENGE", "TURNSTILE_REQUIRED", "TURNSTILE_INVALID"]);
   const HANDLED_SEARCH_ERROR_CODES = new Set([
@@ -68,16 +71,24 @@
   let _checkoutOpSeq = 0;
   let _resendOpSeq = 0;
   let resendTimer = null;
+  let quietCelebrationState = "idle";
+  let quietCelebrationAnimation = null;
+  let quietCelebrationTimer = null;
+  let lastQuietCelebrationReportId = null;
+  const shownQuietCelebrationReportIds = new Set();
   const $ = (id) => document.getElementById(id);
   function easeOutBack(t) {
     const c1 = 1.70158;
     const c3 = c1 + 1;
     return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2); }
+  function scoreToGaugeAngle(score) {
+    const value = Math.max(0, Math.min(100, Number(score) || 0));
+    return MIN_ANGLE + (MAX_SWEEP * value) / 100; }
   function animateGauge(bandEl, needleEl, score) {
     if (!bandEl || !needleEl) return;
     const value = Math.max(0, Math.min(100, Number(score) || 0));
     const targetOffset = ARC_LENGTH - (ARC_LENGTH * value) / 100;
-    const targetAngle = MIN_ANGLE + (MAX_SWEEP * value) / 100;
+    const targetAngle = scoreToGaugeAngle(value);
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
     if (reduceMotion) { bandEl.style.strokeDashoffset = String(targetOffset);
       needleEl.setAttribute("transform", `rotate(${targetAngle} ${PIVOT_X} ${PIVOT_Y})`);
@@ -95,6 +106,82 @@
       needleEl.setAttribute("transform", `rotate(${angle} ${PIVOT_X} ${PIVOT_Y})`);
       if (progress < 1) requestAnimationFrame(tick); }
     requestAnimationFrame(tick); }
+  function setQuietCelebrationState(next) {
+    quietCelebrationState = next === "running" ? "running" : "idle";
+    const gauge = $("constructionGauge");
+    if (gauge && quietCelebrationState === "running") gauge.dataset.celebration = "running";
+    else if (gauge) gauge.removeAttribute("data-celebration"); }
+  function cleanupQuietCelebrationVisuals() {
+    const needle = $("constructionNeedle");
+    if (needle) {
+      needle.style.willChange = "";
+      needle.style.transform = "";
+      needle.style.transformOrigin = "";
+      needle.style.transformBox = ""; }
+    window.clearTimeout(quietCelebrationTimer);
+    quietCelebrationTimer = null;
+    setQuietCelebrationState("idle"); }
+  function cancelQuietCelebration() {
+    try { quietCelebrationAnimation?.cancel?.(); } catch (_) {}
+    quietCelebrationAnimation = null;
+    cleanupQuietCelebrationVisuals(); }
+  function getQuietCelebrationReportId(result, score, attemptId) {
+    return String(result?.id || result?.report_id || result?.completed_at || result?.completion_timestamp || `${attemptId || "report"}:${normalizeKey(result?.coord_key || state.coords.key)}:${score}:${result?.result_tier || result?.message_code || ""}`); }
+  function isQuietPlaceCelebrationResult(result, score) {
+    if (!result || !Number.isFinite(score) || score < 0 || score >= 10) return false;
+    if (result.success === false || result.error || result.degraded || result.partial || result.cached) return false;
+    if (result.result_tier) return result.result_tier === "quiet_place_found";
+    if (score < 10) return true;
+    return result.message === QUIET_PLACE_MESSAGE; }
+  function captureQuietCelebrationShown() {
+    captureEvent("quiet_place_celebration_shown", {
+      surface: "construction_report",
+      result_tier: "quiet_place_found",
+      construction_score_bucket: "under_10"
+    }); }
+  function markQuietCelebrationShown(reportId) {
+    shownQuietCelebrationReportIds.add(reportId);
+    lastQuietCelebrationReportId = reportId;
+    captureQuietCelebrationShown(); }
+  function runQuietCelebration(finalAngleDeg, reportId) {
+    if (!reportId || shownQuietCelebrationReportIds.has(reportId)) return;
+    cancelQuietCelebration();
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    if (reduceMotion) {
+      setQuietCelebrationState("running");
+      markQuietCelebrationShown(reportId);
+      quietCelebrationTimer = window.setTimeout(cleanupQuietCelebrationVisuals, QUIET_CELEBRATION_REDUCED_MOTION_DURATION);
+      return; }
+    const needle = $("constructionNeedle");
+    if (!needle?.animate) return;
+    try {
+      setQuietCelebrationState("running");
+      markQuietCelebrationShown(reportId);
+      needle.style.willChange = "transform";
+      needle.style.transformOrigin = `${PIVOT_X}px ${PIVOT_Y}px`;
+      needle.style.transformBox = "view-box";
+      quietCelebrationAnimation = needle.animate([
+        { transform: `rotate(${finalAngleDeg}deg)` },
+        { transform: `rotate(${finalAngleDeg + 20}deg)`, offset: 0.25 },
+        { transform: `rotate(${finalAngleDeg + 60}deg)`, offset: 0.5 },
+        { transform: `rotate(${finalAngleDeg - 40}deg)`, offset: 0.75 },
+        { transform: `rotate(${finalAngleDeg}deg)` }
+      ], { duration: QUIET_CELEBRATION_DURATION, easing: "ease-in-out", fill: "forwards" });
+      quietCelebrationAnimation.onfinish = () => {
+        quietCelebrationAnimation = null;
+        cleanupQuietCelebrationVisuals(); };
+      quietCelebrationAnimation.oncancel = () => {
+        quietCelebrationAnimation = null;
+        cleanupQuietCelebrationVisuals(); };
+      quietCelebrationTimer = window.setTimeout(cancelQuietCelebration, 5000);
+    } catch (_) { cleanupQuietCelebrationVisuals(); } }
+  function maybeRunQuietCelebration(result, score, attemptId) {
+    if (!isQuietPlaceCelebrationResult(result, score)) {
+      cancelQuietCelebration();
+      return; }
+    const reportId = getQuietCelebrationReportId(result, score, attemptId);
+    if (reportId === lastQuietCelebrationReportId || shownQuietCelebrationReportIds.has(reportId)) return;
+    runQuietCelebration(scoreToGaugeAngle(score), reportId); }
   async function apiPost(url, body, options = {}) { let response;
     try { response = await fetch(url, {
         method: "POST",
@@ -242,6 +329,7 @@
   function setHidden(id, hidden) {
     $(id)?.classList.toggle("hidden", Boolean(hidden)); }
   function resetHeroResultUi() {
+    cancelQuietCelebration();
     state.hero.constructionScore = null;
     state.hero.demandScore = null;
     state.hero.constructionStatus = "idle";
@@ -622,6 +710,7 @@
       lat: Number.isFinite(state.coords.lat) ? Math.round(state.coords.lat * 1e5) / 1e5 : null,
       lng: Number.isFinite(state.coords.lng) ? Math.round(state.coords.lng * 1e5) / 1e5 : null
     });
+    cancelQuietCelebration();
     searchRequestInFlight = true;
     state.hero.searchRequestInFlight = true;
     state.hero.constructionStatus = "loading";
@@ -670,7 +759,8 @@
       if (Number.isFinite(score)) { const restored = Number(options.restoredScore);
         const shouldAnimate = !Number.isFinite(restored) || Math.abs(score - restored) > 2;
         if (shouldAnimate) animateGauge($("constructionBand"), $("constructionNeedle"), score);
-        state.hero.constructionScore = score; }
+        state.hero.constructionScore = score;
+        if (!Number.isFinite(restored)) maybeRunQuietCelebration(result, score, attemptId); } else { cancelQuietCelebration(); }
       state.hero.constructionStatus = "ready";
       setSearchState("render_result");
       setText("constructionMessage", result.message || document.body.dataset.labelReady || "Ready");
@@ -697,6 +787,7 @@
       updateButtons();
     } }
   async function fetchDemand() { const access = AccessState.get();
+    cancelQuietCelebration();
     if (searchRequestInFlight || state.hero.searchRequestInFlight) return null;
     if (!access.demandAllowed || access.tier === "free") { openJoinResearchModal("demand_level_page");
       return null; }
@@ -770,6 +861,7 @@
   function shouldUseDialogOpen(el) {
     return el?.tagName === "DIALOG" && !el.classList.contains("bottom-sheet") && !el.classList.contains("sheet-layer"); }
   function openModal(id, options = {}) {
+    cancelQuietCelebration();
     const el = $(id);
     if (!el) return;
     if (state.modals.active && state.modals.active !== id) closeModal(state.modals.active, { silent: true });
@@ -784,6 +876,7 @@
       el.dispatchEvent(new CustomEvent("modal:open", { detail: options }));
     } catch (err) { logClientException("modal_open_failed", err, { id }); } }
   function closeModal(id, options = {}) {
+    cancelQuietCelebration();
     const el = $(id);
     if (!el) return;
     try { if (shouldUseDialogOpen(el)) {
@@ -1237,6 +1330,8 @@
     ["supportModalLayer", "reportModalLayer", "shareModalLayer", "userModalLayer", "aboutModalLayer", "langModalLayer"].forEach((id) => { const el = $(id);
       el?.addEventListener("cancel", (event) => { event.preventDefault(); closeModal(id); });
       el?.addEventListener("click", (event) => { if (event.target === el) closeModal(id); }); });
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") cancelQuietCelebration(); });
+    window.addEventListener("pagehide", cancelQuietCelebration);
     document.addEventListener("keydown", (event) => {
       if (event.key !== "Escape") return;
       const active = state.modals.active;
@@ -1322,7 +1417,7 @@
     if (document.body?.dataset.turnstileRequired === "true") heroTurnstile.init();
     syncAccessUI();
     updateButtons();
-    window.App = { AccessState, state, openModal, closeModal, openJoinResearchModal, fetchConstruction, fetchDemand, parseHeroLocation, heroTurnstile, unlockTurnstile, reportTurnstile, notify, captureEvent, logFlowEvent, logClientException }; }
+    window.App = { AccessState, state, openModal, closeModal, openJoinResearchModal, fetchConstruction, fetchDemand, parseHeroLocation, heroTurnstile, unlockTurnstile, reportTurnstile, notify, captureEvent, logFlowEvent, logClientException, cancelQuietCelebration }; }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init, { once: true });
   else init();
 })();
