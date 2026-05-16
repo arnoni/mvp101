@@ -69,6 +69,7 @@
   ]);
   window.dilldrillTurnstileToken = window.dilldrillTurnstileToken || null;
   let searchRequestInFlight = false;
+  let verificationRequiredRetries = 0;
   let parseAbortController = null;
   let reportParseAbortController = null;
   let _checkoutOpSeq = 0;
@@ -696,6 +697,7 @@
     if (code === "TURNSTILE_REQUIRED" || code === "TURNSTILE_INVALID") return "Verification failed. Please try again.";
     if (code === "SEARCH_IN_FLIGHT") return "A search for this location is already running. Please wait.";
     if (code === "SEARCH_TEMPORARILY_THROTTLED") return "Service temporarily busy. Please try again in a moment.";
+    if (code === "verification_loop_detected") return "Verification could not complete. Please reload the page.";
     return "Something went wrong. Please try again."; }
   function handleStructuredSearchError(err, attemptId) {
     const code = err?.errorCode || null;
@@ -749,6 +751,7 @@
     try { console.info(JSON.stringify({ level: "info", event: name, ...payload })); } catch (_) {}
     captureEvent(name, payload);
     return payload; }
+  function setConstructionError(code) { setText("constructionMessage", productSearchErrorMessage(code)); }
   function blockSearchSubmit(blockReason, message, props = {}) {
     setSearchState("blocked");
     if (blockReason !== "request_in_flight") state.hero.constructionStatus = "error";
@@ -803,6 +806,12 @@
       const { data } = await apiPost("/api/search", payload);
       if (attemptId !== state.hero.searchAttemptId) return null;
       if (data?.verification_required) { showHeroTurnstileChallenge();
+        verificationRequiredRetries += 1;
+        if (verificationRequiredRetries > 2) {
+          setConstructionError("verification_loop_detected");
+          logSearchEvent("search_verification_loop", { attempt_id: attemptId, retries: verificationRequiredRetries });
+          return null;
+        }
         heroTurnstile.reset();
         await heroTurnstile.init();
         state.hero.constructionStatus = "idle";
@@ -810,6 +819,7 @@
         setText("constructionMessage", document.body.dataset.labelVerificationRequired || "Verification required");
         logSearchEvent("search_submit_blocked", { attempt_id: attemptId, block_reason: "verification_required" });
         return null; }
+      verificationRequiredRetries = 0;
       const result = data?.construction;
       if (!result) {
         logSearchEvent("search_ui_render_blocked_no_backend_response", { attempt_id: attemptId, block_reason: "missing_construction_result" });
@@ -890,10 +900,18 @@
       }
       const { data } = await apiPost("/api/search", demandPayload);
       if (data?.verification_required) { showHeroTurnstileChallenge();
+        verificationRequiredRetries += 1;
+        if (verificationRequiredRetries > 2) {
+          setText("demandMessage", productSearchErrorMessage("verification_loop_detected"));
+          logSearchEvent("search_verification_loop", { attempt_id: demandAttemptId, target: "demand", retries: verificationRequiredRetries });
+          return null;
+        }
+        heroTurnstile.reset();
         await heroTurnstile.init();
         setText("demandMessage", document.body.dataset.labelVerificationRequired || "Verification required");
         state.hero.demandStatus = "idle";
         return null; }
+      verificationRequiredRetries = 0;
       const result = data?.demand;
       if (!result || !resultIsCurrent(result)) return null;
       const score = Number(result.score);
@@ -1498,7 +1516,10 @@
     bindEvents();
     restoreAfterMagicSuccess();
     initialGaugeRender();
-    { showHeroTurnstileChallenge(); heroTurnstile.init(); }
+    if (isHeroTurnstileRequired()) {
+      showHeroTurnstileChallenge();
+      heroTurnstile.init();
+    }
     syncAccessUI();
     updateButtons();
     window.App = { AccessState, state, openModal, closeModal, openJoinResearchModal, fetchConstruction, fetchDemand, parseHeroLocation, heroTurnstile, unlockTurnstile, reportTurnstile, notify, captureEvent, logFlowEvent, logClientException, cancelQuietCelebration }; }
