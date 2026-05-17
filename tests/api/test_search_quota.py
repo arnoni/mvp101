@@ -111,10 +111,16 @@ class FakeQuotaRepo:
 
 
 class FakeSearchService:
+    last_run_inputs: dict | None = None
+
     def __init__(self, *_args, **_kwargs):
         pass
 
-    async def run(self, *, request, tier: str, quota_remaining: int, checks_today: int):
+    async def run(self, *, request, tier: str, quota_remaining: int, checks_today: int, **_kwargs):
+        type(self).last_run_inputs = {
+            "quota_remaining": quota_remaining,
+            "checks_today": checks_today,
+        }
         construction = None
         demand = None
         if request.target in (SearchTarget.CONSTRUCTION, SearchTarget.BOTH):
@@ -175,6 +181,7 @@ def quota_client(monkeypatch):
     quota_repo = FakeQuotaRepo(usage=0)
 
     FakeAsyncSession.db = db
+    FakeSearchService.last_run_inputs = None
     monkeypatch.setattr("app.api.routes.AsyncSession", FakeAsyncSession)
     monkeypatch.setattr("app.api.routes.SearchService", FakeSearchService)
     monkeypatch.setattr("app.api.routes._emit_funnel_event", _noop_async)
@@ -310,8 +317,9 @@ def test_anonymous_demand_no_quota_consumed(quota_client):
     assert quota_client.db.insert_count == 0
 
 
-def test_quota_exhausted_returns_402(quota_client):
+def test_authenticated_carryover_divergence_db_exhausted_redis_available_returns_402(quota_client):
     quota_client.db.remaining = 0
+    quota_client.quota_repo.usage = 1
 
     response = quota_client.client.post("/api/search", json=_payload("construction"), cookies=_auth_cookies())
 
@@ -327,7 +335,57 @@ def test_quota_exhausted_returns_402(quota_client):
     }
     assert quota_client.db.remaining == 0
     assert quota_client.db.insert_count == 0
+    assert quota_client.quota_repo.consume_calls == 0
+    assert FakeSearchService.last_run_inputs == {"quota_remaining": 5, "checks_today": 0}
 
+
+def test_authenticated_carryover_divergence_uses_db_after_redis_block(quota_client):
+    quota_client.db.remaining = 0
+    quota_client.quota_repo.usage = 5
+
+    response = quota_client.client.post("/api/search", json=_payload("construction"), cookies=_auth_cookies())
+
+    assert response.status_code == 402
+    assert response.json() == {
+        "error": "quota_exceeded",
+        "quota": {
+            "consumed": False,
+            "remaining": 0,
+            "effective_tier": "simulated_paid",
+            "reason": "insufficient_quota",
+        },
+    }
+    assert quota_client.db.commits == 1
+    assert quota_client.db.insert_count == 0
+    assert quota_client.quota_repo.consume_calls == 0
+    assert FakeSearchService.last_run_inputs == {"quota_remaining": 5, "checks_today": 0}
+
+
+def test_authenticated_available_quota_response_uses_db_remaining(quota_client):
+    quota_client.db.remaining = 3
+
+    response = quota_client.client.post("/api/search", json=_payload("construction"), cookies=_auth_cookies())
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["quota"]["remaining"] == 2
+    assert body["quota_remaining"] == 2
+    assert quota_client.db.remaining == 2
+    assert quota_client.quota_repo.consume_calls == 0
+    assert FakeSearchService.last_run_inputs == {"quota_remaining": 5, "checks_today": 0}
+
+
+def test_anonymous_redis_quota_block_still_enforced(quota_client):
+    quota_client.quota_repo.usage = 3
+
+    response = quota_client.client.post("/api/search", json=_payload("construction"))
+
+    assert response.status_code == 429
+    assert response.json()["error"] == "FREE_DAILY_QUOTA_EXCEEDED"
+    assert quota_client.db.insert_count == 0
+    assert quota_client.db.commits == 0
+    assert quota_client.quota_repo.consume_calls == 0
+    assert FakeSearchService.last_run_inputs is None
 
 def test_both_target_decrements_quota_by_one_only(quota_client):
     response = quota_client.client.post("/api/search", json=_payload("both"), cookies=_auth_cookies())

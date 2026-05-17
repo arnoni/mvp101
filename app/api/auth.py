@@ -782,6 +782,8 @@ async def magic_landing(
     app_origin = resolve_checkout_base(settings.APP_ORIGIN).rstrip("/")
     redis = service.redis
     db = service.db
+    request_id = getattr(request.state, "request_id", None)
+    anon_quota_key_to_clear: str | None = None
 
     if redis is None:
         return RedirectResponse(url=f"{app_origin}/?error=system_error&code=AUTH_MAGIC_SESSION_CACHE_UNAVAILABLE", status_code=303)
@@ -897,6 +899,12 @@ async def magic_landing(
                             redis_cli=redis,
                         )
                     initial_remaining = max(0, plan_daily_limit - (1 if carried_forward_credits else 0))
+                    remaining_quota_result = await conn.execute(
+                        select(User.remaining_quota)
+                        .where(User.id == user_id_uuid)
+                        .limit(1)
+                    )
+                    remaining_quota_initialized_this_join = remaining_quota_result.scalar_one_or_none() is None
                     try:
                         await conn.execute(
                             update(User)
@@ -922,6 +930,8 @@ async def magic_landing(
                                 "plan_daily_limit": plan_daily_limit,
                             },
                         )
+                        if carried_forward_credits and anon_id and remaining_quota_initialized_this_join:
+                            anon_quota_key_to_clear = KeyBuilder.quota_rolling24h("anon", anon_id)
                     except Exception as exc:
                         logger.error(
                             "remaining_quota_initialization_failed",
@@ -1027,6 +1037,29 @@ async def magic_landing(
         except Exception as e:
             logger.exception("AUTH_MAGIC_DB_ACTIVATION_FAILED", error_class=e.__class__.__name__, error_detail=str(e))
             return RedirectResponse(url=f"{app_origin}/?error=system_error&code=AUTH_MAGIC_DB_ERROR&msg={str(e)[:50]}", status_code=303)
+
+        if anon_quota_key_to_clear:
+            try:
+                await redis.delete(anon_quota_key_to_clear)
+                logger.info(
+                    "anon_quota_key_cleared_after_carryover",
+                    extra={
+                        "request_id": request_id,
+                        "user_id": str(user_id_uuid),
+                        "anon_id": anon_id,
+                        "anon_quota_key": anon_quota_key_to_clear,
+                    },
+                )
+            except Exception as exc:
+                logger.warning(
+                    "anon_quota_key_clear_failed",
+                    extra={
+                        "request_id": request_id,
+                        "user_id": str(user_id_uuid),
+                        "anon_id": anon_id,
+                        "error": str(exc),
+                    },
+                )
 
         # 4. Create durable session identifier for the browser
         session_id = secrets.token_urlsafe(32)

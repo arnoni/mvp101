@@ -28,7 +28,7 @@ from app.services.search_service import SearchService, SearchDependencies
 from app.services.area_bucketer import AreaBucketer
 from app.services.analytics import capture, posthog
 from app.services.entitlement_service import EntitlementService, TierStatus
-from app.services.policy_engine import PolicyEngine, RequestContext, PolicyVerdict, PolicyDecision, run_gate
+from app.services.policy_engine import GateResult, PolicyEngine, RequestContext, PolicyVerdict, PolicyDecision, run_gate
 from app.services.quota_repository import QuotaRepository
 from app.services.quota_service import (
     QuotaConcurrencyError,
@@ -781,6 +781,18 @@ async def search(
             if user_id is not None:
                 capture(str(user_id), "check_attempted", {"tier": _tier_to_funnel(tier)})
 
+        paid_quota_tiers = (
+            TierStatus.SIMULATED_PAID,
+            TierStatus.PASS_1_DAY,
+            TierStatus.PASS_3_DAY,
+        )
+        is_authenticated_tier = user_id is not None and tier in paid_quota_tiers
+        is_authenticated_construction_quota = (
+            is_authenticated_tier
+            and data.target in (SearchTarget.CONSTRUCTION, SearchTarget.BOTH)
+        )
+        identity_kind = "paid" if is_authenticated_tier else "anon"
+
         # Turnstile required: token enforced via run_gate()
         try:
             gate_result = await run_gate(
@@ -798,34 +810,76 @@ async def search(
                 consume_quota=False,
             )
         except HTTPException as exc:
-            for check_type in check_types:
-                ui_surface = "demand_level_page" if check_type == "demand" else "construction_level_page"
-                funnel_result = await _emit_funnel_event(
-                    request,
-                    event_name="check_blocked_tier",
-                    effective_tier=_tier_to_funnel(tier),
-                    check_type=check_type,
-                    ui_surface=ui_surface,
-                )
-                if not funnel_result:
-                    logger.warning(
-                        "funnel_event_failed",
-                        extra={
-                            "event": "check_blocked_tier",
-                            "attempt_id": getattr(request.state, "request_id", None),
-                            "error_code": getattr(exc, "error_code", None),
-                        },
-                    )
-                if user_id is not None:
-                    capture(str(user_id), "check_blocked_tier", {"tier": _tier_to_funnel(tier)})
-            return _search_http_exception_response(
-                request,
-                exc,
-                tier=tier,
-                quota_limit=daily_limit,
-                turnstile_present=turnstile_present,
-                turnstile_valid=(False if exc.status_code == http_status.HTTP_403_FORBIDDEN else None),
+            exc_detail = exc.detail if isinstance(exc.detail, dict) else {}
+            is_redis_quota_block = (
+                exc.status_code == http_status.HTTP_429_TOO_MANY_REQUESTS
+                and exc_detail.get("error") == "FREE_DAILY_QUOTA_EXCEEDED"
             )
+            # For authenticated construction users, DB quota via
+            # consume_construction_credit() is authoritative. Redis pre-gate
+            # quota can diverge when carried-forward credits reduced the DB
+            # initial remaining quota below the plan daily limit. Only suppress
+            # the Redis quota block; Turnstile and other HTTPException gates
+            # keep the existing early return path.
+            if is_authenticated_construction_quota and is_redis_quota_block:
+                quota_remaining = int(exc_detail.get("quota_remaining") or 0)
+                gate_result = GateResult(
+                    decision=PolicyDecision(
+                        verdict=PolicyVerdict.BLOCK,
+                        quota_remaining=quota_remaining,
+                        max_results=PolicyEngine.PAID_TIER_RESULTS,
+                        retry_after=exc_detail.get("retry_after_seconds"),
+                    ),
+                    remaining_after=quota_remaining,
+                    admin_bypass=False,
+                    quota_key=PolicyEngine.get_quota_key(user_id, anon_id, tier, entitlement_stale),
+                    quota_limit=daily_limit,
+                )
+            else:
+                for check_type in check_types:
+                    ui_surface = "demand_level_page" if check_type == "demand" else "construction_level_page"
+                    funnel_result = await _emit_funnel_event(
+                        request,
+                        event_name="check_blocked_tier",
+                        effective_tier=_tier_to_funnel(tier),
+                        check_type=check_type,
+                        ui_surface=ui_surface,
+                    )
+                    if not funnel_result:
+                        logger.warning(
+                            "funnel_event_failed",
+                            extra={
+                                "event": "check_blocked_tier",
+                                "attempt_id": getattr(request.state, "request_id", None),
+                                "error_code": getattr(exc, "error_code", None),
+                            },
+                        )
+                    if user_id is not None:
+                        capture(str(user_id), "check_blocked_tier", {"tier": _tier_to_funnel(tier)})
+                return _search_http_exception_response(
+                    request,
+                    exc,
+                    tier=tier,
+                    quota_limit=daily_limit,
+                    turnstile_present=turnstile_present,
+                    turnstile_valid=(False if exc.status_code == http_status.HTTP_403_FORBIDDEN else None),
+                )
+
+        logger.info(
+            "quota_gate_source",
+            extra={
+                "request_id": getattr(request.state, "request_id", None),
+                "user_id": str(user_id),
+                "identity_kind": identity_kind,
+                "effective_tier": tier.value,
+                "redis_quota_remaining": gate_result.remaining_after,
+                "quota_authority": "db" if is_authenticated_construction_quota else "redis",
+                "redis_block_suppressed": (
+                    gate_result.decision.verdict == PolicyVerdict.BLOCK
+                    and is_authenticated_construction_quota
+                ),
+            },
+        )
 
         if getattr(gate_result, "admin_bypass", False):
             logger.info(
@@ -835,8 +889,11 @@ async def search(
                 reason="admin_bypass",
             )
 
+        service_quota_remaining = (
+            daily_limit if is_authenticated_construction_quota else gate_result.remaining_after
+        )
         limit = daily_limit
-        checks_today = max(0, limit - gate_result.remaining_after)
+        checks_today = max(0, limit - service_quota_remaining)
         tier_str = tier_to_client(tier)
 
         service = SearchService(
@@ -850,7 +907,7 @@ async def search(
         response_payload = await service.run(
             request=data,
             tier=tier_str,
-            quota_remaining=gate_result.remaining_after,
+            quota_remaining=service_quota_remaining,
             checks_today=checks_today,
             user_id=str(user_id) if user_id is not None else None,
             anon_id=anon_id,
