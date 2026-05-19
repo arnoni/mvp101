@@ -115,6 +115,10 @@
     const gauge = $("constructionGauge");
     if (!gauge) return;
     if (quietCelebrationState === "running") {
+      // Always clear the trigger first, then re-apply it after a reflow.
+      // This guarantees selector re-match and keyframe restart across browsers.
+      gauge.removeAttribute("data-celebration");
+      void gauge.offsetWidth;
       // Force CSS animation restart on both animated elements before
       // re-applying the trigger attribute. Without this, completed
       // `forwards`-fill animations do not replay on attribute re-match.
@@ -123,7 +127,7 @@
         if (el) {
           el.style.animation = "none";
           void el.offsetWidth; // force reflow
-          el.style.animation = "";
+          el.style.removeProperty("animation");
         }
       }
       gauge.dataset.celebration = "running";
