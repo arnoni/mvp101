@@ -436,64 +436,63 @@ async def resolve_google_maps_short_url_async(
             max_redirects=8,
         )
         owns_client = http_client is None
-        try:
-            while True:
-                async with client.stream("GET", current_url, follow_redirects=True) as response:
-                    pass
-                response.raise_for_status()
+        while True:
+            async with client.stream("GET", current_url, follow_redirects=True) as response:
+                pass
+            response.raise_for_status()
 
-                for hop in response.history:
-                    hop_url = str(hop.url)
-                    hop_host, hop_path = _validate_redirect_target(hop_url, allow_short_hosts=True)
-                    if hop_host in _SHORT_HOSTS and not _is_supported_short_path(hop_host, hop_path):
-                        raise UnsupportedLocationInputError("This Google short link format is not supported.")
+            for hop in response.history:
+                hop_url = str(hop.url)
+                hop_host, hop_path = _validate_redirect_target(hop_url, allow_short_hosts=True)
+                if hop_host in _SHORT_HOSTS and not _is_supported_short_path(hop_host, hop_path):
+                    raise UnsupportedLocationInputError("This Google short link format is not supported.")
 
-                final_url = str(response.url)
-                final_host, _ = _validate_redirect_target(final_url, allow_short_hosts=False)
-                
-                body = getattr(response, "text", "")
-                html_redirect_url = _extract_html_redirect_url(body)
-                
-                if html_redirect_url:
-                    html_redirect_hops += 1
-                    if html_redirect_hops > max_html_redirects:
-                        _log_attempt(False, "max_html_redirects_exceeded", response.status_code)
-                        raise LocationResolutionBlockedError(_BLOCKED_RESOLUTION_MESSAGE)
-                    
-                    current_url = urljoin(final_url, html_redirect_url)
-                    _validate_redirect_target(current_url, allow_short_hosts=False)
-                    continue
-
-                body_lower = body.lower()
-                blocked_markers = ("consent.google", "unusual traffic", "detected unusual", "/sorry/")
-                if final_host == "consent.google.com" or "consent.google.com" in final_url or any(marker in body_lower for marker in blocked_markers):
-                    _log_attempt(False, "bot_page_encountered", response.status_code)
+            final_url = str(response.url)
+            final_host, _ = _validate_redirect_target(final_url, allow_short_hosts=False)
+            
+            body = getattr(response, "text", "")
+            html_redirect_url = _extract_html_redirect_url(body)
+            
+            if html_redirect_url:
+                html_redirect_hops += 1
+                if html_redirect_hops > max_html_redirects:
+                    _log_attempt(False, "max_html_redirects_exceeded", response.status_code)
                     raise LocationResolutionBlockedError(_BLOCKED_RESOLUTION_MESSAGE)
+                
+                current_url = urljoin(final_url, html_redirect_url)
+                _validate_redirect_target(current_url, allow_short_hosts=False)
+                continue
 
-                try:
-                    lat, lng, _ = extract_lat_lng_from_google_maps_url(final_url)
+            body_lower = body.lower()
+            blocked_markers = ("consent.google", "unusual traffic", "detected unusual", "/sorry/")
+            if final_host == "consent.google.com" or "consent.google.com" in final_url or any(marker in body_lower for marker in blocked_markers):
+                _log_attempt(False, "bot_page_encountered", response.status_code)
+                raise LocationResolutionBlockedError(_BLOCKED_RESOLUTION_MESSAGE)
+
+            try:
+                lat, lng, _ = extract_lat_lng_from_google_maps_url(final_url)
+                if _is_likely_google_block_page_coordinate_pair(lat, lng):
+                    _log_attempt(False, "bot_page_datacenter_coords", response.status_code)
+                    raise LocationResolutionBlockedError(_BLOCKED_RESOLUTION_MESSAGE)
+                _log_attempt(True, None, response.status_code)
+                if redis_client:
+                    try:
+                        ttl = int(_SHORT_URL_CACHE_TTL_SECONDS * (1 + random.uniform(-0.05, 0.05)))
+                        await redis_client.setex(cache_key, ttl, final_url)
+                    except Exception:
+                        logger.warning("maps_short_url_cache_write_failed", host=host, url_hash=digest, exc_info=True)
+                return final_url
+            except MalformedLocationInputError as exc:
+                html_pair = _extract_lat_lng_from_google_maps_html(body)
+                if html_pair:
+                    lat, lng, _ = html_pair
                     if _is_likely_google_block_page_coordinate_pair(lat, lng):
                         _log_attempt(False, "bot_page_datacenter_coords", response.status_code)
                         raise LocationResolutionBlockedError(_BLOCKED_RESOLUTION_MESSAGE)
                     _log_attempt(True, None, response.status_code)
-                    if redis_client:
-                        try:
-                            ttl = int(_SHORT_URL_CACHE_TTL_SECONDS * (1 + random.uniform(-0.05, 0.05)))
-                            await redis_client.setex(cache_key, ttl, final_url)
-                        except Exception:
-                            logger.warning("maps_short_url_cache_write_failed", host=host, url_hash=digest, exc_info=True)
-                    return final_url
-                except MalformedLocationInputError as exc:
-                    html_pair = _extract_lat_lng_from_google_maps_html(body)
-                    if html_pair:
-                        lat, lng, _ = html_pair
-                        if _is_likely_google_block_page_coordinate_pair(lat, lng):
-                            _log_attempt(False, "bot_page_datacenter_coords", response.status_code)
-                            raise LocationResolutionBlockedError(_BLOCKED_RESOLUTION_MESSAGE)
-                        _log_attempt(True, None, response.status_code)
-                        return f"https://www.google.com/maps/search/?api=1&query={lat},{lng}"
-                    _log_attempt(False, "coordinates_not_found", response.status_code)
-                    raise LocationResolutionBlockedError(_BLOCKED_RESOLUTION_MESSAGE) from exc
+                    return f"https://www.google.com/maps/search/?api=1&query={lat},{lng}"
+                _log_attempt(False, "coordinates_not_found", response.status_code)
+                raise LocationResolutionBlockedError(_BLOCKED_RESOLUTION_MESSAGE) from exc
     except httpx.TimeoutException as exc:
         _log_attempt(False, "timeout", None)
         raise ShortUrlResolutionError(
