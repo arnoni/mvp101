@@ -113,8 +113,23 @@
   function setQuietCelebrationState(next) {
     quietCelebrationState = next === "running" ? "running" : "idle";
     const gauge = $("constructionGauge");
-    if (gauge && quietCelebrationState === "running") gauge.dataset.celebration = "running";
-    else if (gauge) gauge.removeAttribute("data-celebration"); }
+    if (!gauge) return;
+    if (quietCelebrationState === "running") {
+      // Force CSS animation restart on both animated elements before
+      // re-applying the trigger attribute. Without this, completed
+      // `forwards`-fill animations do not replay on attribute re-match.
+      for (const sel of [".gauge-arc-glow", ".gauge-arc"]) {
+        const el = gauge.querySelector(sel);
+        if (el) {
+          el.style.animation = "none";
+          void el.offsetWidth; // force reflow
+          el.style.animation = "";
+        }
+      }
+      gauge.dataset.celebration = "running";
+    } else {
+      gauge.removeAttribute("data-celebration");
+    } }
   function cleanupQuietCelebrationVisuals() {
     const needle = $("constructionNeedle");
     if (needle) {
