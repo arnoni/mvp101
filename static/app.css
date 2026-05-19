@@ -478,6 +478,32 @@ button { font-family: inherit; }
   user-select: none;
 }
 
+/* Glow overlay — base state (off by default) */
+.gauge-arc-glow {
+  opacity: 0;
+  fill: none;
+  stroke: #39ff88;
+  stroke-width: 20;
+  stroke-linecap: round;
+  stroke-dasharray: 377;
+  stroke-dashoffset: 0;
+  filter: drop-shadow(0 0 8px rgba(57, 255, 136, 0.75));
+  pointer-events: none;
+  animation: none;
+}
+
+/* Glow overlay — active when celebration is running */
+.construction-gauge[data-celebration="running"] .gauge-arc-glow {
+  animation: gaugeArcGlowOnce 3s ease-out forwards;
+}
+
+@keyframes gaugeArcGlowOnce {
+  0%   { opacity: 0;    filter: drop-shadow(0 0 0px  rgba(57, 255, 136, 0));    }
+  20%  { opacity: 0.85; filter: drop-shadow(0 0 8px  rgba(57, 255, 136, 0.7));  }
+  70%  { opacity: 0.9;  filter: drop-shadow(0 0 14px rgba(57, 255, 136, 0.85)); }
+  100% { opacity: 0;    filter: drop-shadow(0 0 0px  rgba(57, 255, 136, 0));    }
+}
+
 @keyframes quiet-arc-pulse {
   0%, 100% { filter: url(#glowCon) drop-shadow(0 0 0px rgba(80, 255, 120, 0)) !important; }
   20% { filter: url(#glowCon) drop-shadow(0 0 6px rgba(80, 255, 120, 0.35)) !important; }
@@ -1623,6 +1649,10 @@ button:disabled {
     animation: none !important;
     filter: url(#glowCon) drop-shadow(0 0 4px rgba(80, 255, 120, 0.3)) !important;
     transition: filter 1.8s ease-out;
+  }
+  .gauge-arc-glow {
+    animation: none !important;
+    opacity: 0 !important;
   }
 
 }
