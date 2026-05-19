@@ -53,6 +53,7 @@
   const PIVOT_Y = 180;
   const DURATION = 800;
   const QUIET_CELEBRATION_DURATION = 3400;
+  const gaugeAnimationState = new WeakMap();
   const QUIET_CELEBRATION_REDUCED_MOTION_DURATION = 1800;
   const QUIET_PLACE_MESSAGE = "You found yourself a quiet place. Congratulations.";
   const VERIFY_TIMEOUT_TEXT = "Verification unavailable. Please check your connection or disable ad blockers and try again.";
@@ -94,22 +95,30 @@
     const targetOffset = ARC_LENGTH - (ARC_LENGTH * value) / 100;
     const targetAngle = scoreToGaugeAngle(value);
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    const previous = gaugeAnimationState.get(bandEl);
+    if (previous?.frameId != null) window.cancelAnimationFrame(previous.frameId);
     if (reduceMotion) { bandEl.style.strokeDashoffset = String(targetOffset);
       needleEl.setAttribute("transform", `rotate(${targetAngle} ${PIVOT_X} ${PIVOT_Y})`);
+      gaugeAnimationState.delete(bandEl);
       return; }
     const startOffset = Number.parseFloat(bandEl.style.strokeDashoffset || ARC_LENGTH);
     const currentTransform = needleEl.getAttribute("transform") || `rotate(${MIN_ANGLE} ${PIVOT_X} ${PIVOT_Y})`;
     const startAngle = Number.parseFloat((currentTransform.match(/rotate\((-?\d+(?:\.\d+)?)/) || [])[1] || MIN_ANGLE);
     const startedAt = performance.now();
+    const state = { frameId: null };
+    gaugeAnimationState.set(bandEl, state);
     function tick(now) {
+      const active = gaugeAnimationState.get(bandEl);
+      if (active !== state) return;
       const progress = Math.min(1, (now - startedAt) / DURATION);
       const eased = easeOutBack(progress);
       const offset = startOffset + (targetOffset - startOffset) * eased;
       const angle = startAngle + (targetAngle - startAngle) * eased;
       bandEl.style.strokeDashoffset = String(offset);
       needleEl.setAttribute("transform", `rotate(${angle} ${PIVOT_X} ${PIVOT_Y})`);
-      if (progress < 1) requestAnimationFrame(tick); }
-    requestAnimationFrame(tick); }
+      if (progress < 1) state.frameId = requestAnimationFrame(tick);
+      else gaugeAnimationState.delete(bandEl); }
+    state.frameId = requestAnimationFrame(tick); }
   function setQuietCelebrationState(next) {
     quietCelebrationState = next === "running" ? "running" : "idle";
     const gauge = $("constructionGauge");
@@ -806,6 +815,8 @@
     searchRequestInFlight = true;
     state.hero.searchRequestInFlight = true;
     state.hero.constructionStatus = "loading";
+    $("constructionBand")?.style.setProperty("stroke-dashoffset", String(ARC_LENGTH));
+    $("constructionNeedle")?.setAttribute("transform", `rotate(${MIN_ANGLE} ${PIVOT_X} ${PIVOT_Y})`);
     animateGauge($("constructionBand"), $("constructionNeedle"), 0);
     setSearchState("request_started");
     updateButtons();
