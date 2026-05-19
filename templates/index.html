@@ -143,18 +143,14 @@
     <!-- INPUT STATE -->
     <section class="card input-card">
       <h2 class="sr-only">Location Entry</h2>
-      <p class="helper">{{ t.get('input_label', 'Enter decimal lat, lon or full Google Maps URL') }}</p>
-      <p class="helper helper-warning">{{ t.get('input_warning', 'Short links and place names are not supported.') }}</p>
+      <p class="helper">{{ t.get('input_label', 'Enter decimal lat, lon or a Google Maps URL of the apartment to check') }}</p>
       <form id="coordForm" novalidate>
         <label class="field field-full">
-          <span>{{ t.get('location_input', 'Location') }}</span>
+          <span>{{ t.get('location_input', 'Apartment location') }}</span>
           <input id="locationInput" name="location_input" type="text" inputmode="text" autocomplete="off"
             autocapitalize="off" spellcheck="false" maxlength="2048" placeholder="16.0544, 108.2022 or Google Maps link"
-            aria-describedby="coordHelp coordError parsedPreview">
+            aria-describedby="coordError parsedPreview">
         </label>
-        <div class="field-help" id="coordHelp">
-          {{ t.get('location_input_help', 'Accepted: decimal coordinates, Google Maps link, or degree format.') }}
-        </div>
         <div class="parsed-preview hidden" id="parsedPreview" aria-live="polite"></div>
         <div class="inline-error" id="coordError" aria-live="polite"></div>
 
