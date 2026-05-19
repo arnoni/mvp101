@@ -148,7 +148,7 @@
     lastQuietCelebrationReportId = reportId;
     captureQuietCelebrationShown(); }
   function runQuietCelebration(finalAngleDeg, reportId) {
-    if (!reportId || shownQuietCelebrationReportIds.has(reportId)) return;
+    if (!reportId) return;
     cancelQuietCelebration();
     const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
     if (reduceMotion) {
@@ -208,7 +208,6 @@
       cancelQuietCelebration();
       return; }
     const reportId = getQuietCelebrationReportId(result, score, attemptId);
-    if (reportId === lastQuietCelebrationReportId || shownQuietCelebrationReportIds.has(reportId)) return;
     runQuietCelebration(scoreToGaugeAngle(score), reportId); }
   async function apiPost(url, body, options = {}) { let response;
     try { response = await fetch(url, {
