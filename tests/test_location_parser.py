@@ -49,7 +49,12 @@ from app.services.location_parser import (
     parse_google_maps_url,
     parse_location_input,
     resolve_google_maps_short_url,
+    parse_google_maps_url_async,
+    parse_location_input_async,
 )
+
+
+TASHI_BROWSER_URL = "https://www.google.com/maps/place/Tashi+Ocean+Garden+Hotel+%26+Apartment+Da+Nang/@16.077462,108.2419443,19z/data=!4m20!1m8!3m7!1s0x314217893f8ae817:0xb2eb103f179a78ed!2zMjEgUGjGsOG7m2MgVHLGsOG7nW5nIDExLCBBbiBI4bqjaSwgxJDDoCBO4bq1bmcgNTUwMDAwLCBWaWV0bmFt!3b1!8m2!3d16.0777299!4d108.242299!16s%2Fg%2F11jyly4fyb!3m10!1s0x31421714368a092b:0x318717f306c12aec!5m4!1s2026-05-23!2i3!4m1!1i2!8m2!3d16.0776236!4d108.2426482!16s%2Fg%2F11kbp5srhq!18m1!1e1?entry=ttu&g_ep=EgoyMDI2MDUxMy4wIKXMDSoASAFQAw%3D%3D"
 
 
 def test_parse_decimal_pair_comma():
@@ -441,3 +446,29 @@ def test_parse_google_short_url_failed_extract_includes_event_details(monkeypatc
     )
     with pytest.raises(MalformedLocationInputError, match="stage=extract_coordinates_failed_after_resolution"):
         parse_google_maps_url("https://maps.app.goo.gl/gPZ5VtapJLqfSBnZ9?g_st=aw")
+
+
+def test_regression_browser_format_url_coordinates_unchanged():
+    parsed = parse_google_maps_url(TASHI_BROWSER_URL)
+    assert parsed.latitude == pytest.approx(16.0777299)
+    assert parsed.longitude == pytest.approx(108.242299)
+
+
+@pytest.mark.asyncio
+async def test_short_url_handoff_to_existing_google_parser(monkeypatch):
+    final_url = "https://www.google.com/maps/place/Tashi+Ocean+Garden+Hotel+%26+Apartment+Da+Nang/@16.077462,108.2419443,19z/data=!4m11!3m10!1s0x31421714368a092b:0x318717f306c12aec!5m4!1s2026-05-23!2i3!4m1!1i2!8m2!3d16.0776236!4d108.2426482!16s%2Fg%2F11kbp5srhq!18m1!1e1?entry=tts&g_ep=EgoyMDI2MDUxMy4wIPu8ASoASAFQAw%3D%3D"
+    monkeypatch.setattr("app.services.location_parser.resolve_google_maps_short_url_async", Mock(return_value=final_url))
+    parsed = await parse_location_input_async("https://maps.app.goo.gl/gTP5u9ELrzyaCU37A")
+    expected = parse_google_maps_url(final_url)
+    assert parsed.latitude == pytest.approx(expected.latitude)
+    assert parsed.longitude == pytest.approx(expected.longitude)
+
+
+@pytest.mark.asyncio
+async def test_short_url_and_resolved_url_equivalence(monkeypatch):
+    final_url = TASHI_BROWSER_URL
+    monkeypatch.setattr("app.services.location_parser.resolve_google_maps_short_url_async", Mock(return_value=final_url))
+    direct = await parse_google_maps_url_async(final_url)
+    short = await parse_google_maps_url_async("https://maps.app.goo.gl/gTP5u9ELrzyaCU37A")
+    assert short.latitude == pytest.approx(direct.latitude)
+    assert short.longitude == pytest.approx(direct.longitude)

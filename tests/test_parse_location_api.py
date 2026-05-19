@@ -24,12 +24,12 @@ def test_parse_location_invalid_url_error():
 
 
 def test_parse_location_short_link_blocked_error(monkeypatch):
-    def _raise_blocked(_raw: str):
+    async def _raise_blocked(_raw: str, **_kwargs):
         raise LocationResolutionBlockedError(
             "This Google Maps short link could not be resolved automatically. Please paste the full address, coordinates, or open the link and share the location text."
         )
 
-    monkeypatch.setattr("app.api.routes.parse_location_input", _raise_blocked)
+    monkeypatch.setattr("app.api.routes.parse_location_input_async", _raise_blocked)
 
     with TestClient(app) as client:
         response = client.post("/api/parse-location", json={"location_input": "https://maps.app.goo.gl/blocked"})
@@ -39,10 +39,10 @@ def test_parse_location_short_link_blocked_error(monkeypatch):
 
 
 def test_parse_location_unexpected_parser_error_returns_422(monkeypatch):
-    def _raise_unexpected(_raw: str):
+    async def _raise_unexpected(_raw: str, **_kwargs):
         raise RuntimeError("unexpected parser failure")
 
-    monkeypatch.setattr("app.api.routes.parse_location_input", _raise_unexpected)
+    monkeypatch.setattr("app.api.routes.parse_location_input_async", _raise_unexpected)
 
     with TestClient(app) as client:
         response = client.post("/api/parse-location", json={"location_input": "broken-input"})
