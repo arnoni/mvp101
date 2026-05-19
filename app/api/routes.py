@@ -557,7 +557,6 @@ async def parse_location(request: Request, data: ParseLocationRequest):
         parsed = await parse_location_input_async(
             data.location_input,
             redis_client=getattr(request.app.state, "redis", None),
-            http_client=getattr(request.app.state, "maps_http_client", None),
         )
         return ParseLocationResponse(
             ok=True,
@@ -682,7 +681,6 @@ async def search(
                 parsed_input = await parse_location_input_async(
                     data.location_input,
                     redis_client=getattr(request.app.state, "redis", None),
-                    http_client=getattr(request.app.state, "maps_http_client", None),
                 )
             except ShortUrlResolutionError as exc:
                 _raise_location_parse_http_exception("SHORT_URL_RESOLUTION_FAILED")

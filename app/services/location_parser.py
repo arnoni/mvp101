@@ -371,7 +371,6 @@ async def resolve_google_maps_short_url_async(
             logger.warning("maps_short_url_cache_read_failed", host=host, url_hash=digest, exc_info=True)
 
     try:
-        current_url = normalized
         client = http_client or httpx.AsyncClient(
             timeout=httpx.Timeout(timeout_seconds, connect=3.0),
             follow_redirects=True,
@@ -379,32 +378,35 @@ async def resolve_google_maps_short_url_async(
             max_redirects=8,
         )
         owns_client = http_client is None
-        while True:
-            async with client.stream("GET", current_url, follow_redirects=True) as response:
-                pass
-            response.raise_for_status()
+        response = await client.get(
+            normalized,
+            follow_redirects=True,
+            headers=headers,
+            timeout=httpx.Timeout(timeout_seconds, connect=3.0),
+        )
+        response.raise_for_status()
 
-            for hop in response.history:
-                hop_url = str(hop.url)
-                hop_host, hop_path = _validate_redirect_target(hop_url, allow_short_hosts=True)
-                if hop_host in _SHORT_HOSTS and not _is_supported_short_path(hop_host, hop_path):
-                    raise UnsupportedLocationInputError("This Google short link format is not supported.")
+        for hop in response.history:
+            hop_url = str(hop.url)
+            hop_host, hop_path = _validate_redirect_target(hop_url, allow_short_hosts=True)
+            if hop_host in _SHORT_HOSTS and not _is_supported_short_path(hop_host, hop_path):
+                raise UnsupportedLocationInputError("This Google short link format is not supported.")
 
-            final_url = str(response.url)
-            final_host, _ = _validate_redirect_target(final_url, allow_short_hosts=False)
-            
-            blocked_markers = ("consent.google.com", "/sorry/")
-            if final_host == "consent.google.com" or any(marker in final_url for marker in blocked_markers):
-                _log_attempt(False, "short_url_redirect_failed", response.status_code)
-                raise LocationResolutionBlockedError(_BLOCKED_RESOLUTION_MESSAGE)
-            _log_attempt(True, None, response.status_code)
-            if redis_client:
-                try:
-                    ttl = int(_SHORT_URL_CACHE_TTL_SECONDS * (1 + random.uniform(-0.05, 0.05)))
-                    await redis_client.setex(cache_key, ttl, final_url)
-                except Exception:
-                    logger.warning("maps_short_url_cache_write_failed", host=host, url_hash=digest, exc_info=True)
-            return final_url
+        final_url = str(response.url)
+        final_host, _ = _validate_redirect_target(final_url, allow_short_hosts=False)
+        
+        blocked_markers = ("consent.google.com", "/sorry/")
+        if final_host == "consent.google.com" or any(marker in final_url for marker in blocked_markers):
+            _log_attempt(False, "short_url_redirect_failed", response.status_code)
+            raise LocationResolutionBlockedError(_BLOCKED_RESOLUTION_MESSAGE)
+        _log_attempt(True, None, response.status_code)
+        if redis_client:
+            try:
+                ttl = int(_SHORT_URL_CACHE_TTL_SECONDS * (1 + random.uniform(-0.05, 0.05)))
+                await redis_client.setex(cache_key, ttl, final_url)
+            except Exception:
+                logger.warning("maps_short_url_cache_write_failed", host=host, url_hash=digest, exc_info=True)
+        return final_url
     except httpx.TimeoutException as exc:
         _log_attempt(False, "short_url_timeout", None)
         raise ShortUrlResolutionError(
@@ -525,7 +527,7 @@ def parse_location_input(raw: str) -> ParsedLocationInput:
     elif "°" in normalized and re.search(r"[NSEW]", normalized, re.IGNORECASE):
         parsed = parse_degree_pair(normalized)
     elif re.match(r"^https?://", normalized, re.IGNORECASE):
-        raise UnsupportedLocationInputError("URL parsing requires async flow.")
+        parsed = parse_google_maps_url(normalized)
     else:
         raise UnsupportedLocationInputError("Unsupported location input format.")
 
@@ -551,7 +553,12 @@ async def parse_location_input_async(raw: str, *, redis_client=None, http_client
     elif "°" in normalized and re.search(r"[NSEW]", normalized, re.IGNORECASE):
         parsed = parse_degree_pair(normalized)
     elif re.match(r"^https?://", normalized, re.IGNORECASE):
-        parsed = await parse_google_maps_url_async(normalized, redis_client=redis_client, http_client=http_client)
+        parsed_url = urlparse(normalized)
+        host = (parsed_url.hostname or "").lower()
+        if host in _SHORT_HOSTS:
+            parsed = await parse_google_maps_url_async(normalized, redis_client=redis_client, http_client=http_client)
+        else:
+            parsed = parse_google_maps_url(normalized)
     else:
         raise UnsupportedLocationInputError("Unsupported location input format.")
     if not (15.9 <= parsed.latitude <= 16.3 and 107.8 <= parsed.longitude <= 108.4):

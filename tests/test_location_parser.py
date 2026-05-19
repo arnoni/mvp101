@@ -454,6 +454,19 @@ def test_regression_browser_format_url_coordinates_unchanged():
     assert parsed.longitude == pytest.approx(108.242299)
 
 
+def test_sync_parse_location_input_browser_format_url():
+    parsed = parse_location_input(TASHI_BROWSER_URL)
+    assert parsed.latitude == pytest.approx(16.0777299)
+    assert parsed.longitude == pytest.approx(108.242299)
+
+
+@pytest.mark.asyncio
+async def test_async_parse_location_input_browser_format_url():
+    parsed = await parse_location_input_async(TASHI_BROWSER_URL)
+    assert parsed.latitude == pytest.approx(16.0777299)
+    assert parsed.longitude == pytest.approx(108.242299)
+
+
 @pytest.mark.asyncio
 async def test_short_url_handoff_to_existing_google_parser(monkeypatch):
     final_url = "https://www.google.com/maps/place/Tashi+Ocean+Garden+Hotel+%26+Apartment+Da+Nang/@16.077462,108.2419443,19z/data=!4m11!3m10!1s0x31421714368a092b:0x318717f306c12aec!5m4!1s2026-05-23!2i3!4m1!1i2!8m2!3d16.0776236!4d108.2426482!16s%2Fg%2F11kbp5srhq!18m1!1e1?entry=tts&g_ep=EgoyMDI2MDUxMy4wIPu8ASoASAFQAw%3D%3D"
