@@ -53,6 +53,7 @@ from app.services.location_parser import (
     LocationNotSupportedError,
     LocationParseError,
     parse_location_input,
+    parse_location_input_async,
 )
 from app.services.location_input_classifier import classify_location_input
 from app.services.input_format_stats_service import increment_input_format_stats
@@ -551,9 +552,13 @@ async def status(
         )
 
 @router.post("/parse-location", response_model=ParseLocationResponse)
-async def parse_location(data: ParseLocationRequest):
+async def parse_location(request: Request, data: ParseLocationRequest):
     try:
-        parsed = parse_location_input(data.location_input)
+        parsed = await parse_location_input_async(
+            data.location_input,
+            redis_client=getattr(request.app.state, "redis", None),
+            http_client=getattr(request.app.state, "maps_http_client", None),
+        )
         return ParseLocationResponse(
             ok=True,
             normalized={
@@ -674,7 +679,11 @@ async def search(
             )
         if data.location_input:
             try:
-                parsed_input = parse_location_input(data.location_input)
+                parsed_input = await parse_location_input_async(
+                    data.location_input,
+                    redis_client=getattr(request.app.state, "redis", None),
+                    http_client=getattr(request.app.state, "maps_http_client", None),
+                )
             except ShortUrlResolutionError as exc:
                 _raise_location_parse_http_exception("SHORT_URL_RESOLUTION_FAILED")
             except LocationResolutionBlockedError as exc:

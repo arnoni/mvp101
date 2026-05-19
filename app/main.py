@@ -11,6 +11,7 @@ import os
 import uuid
 import secrets
 import structlog
+import httpx
 
 # Local imports
 from app.core.config import settings
@@ -238,6 +239,11 @@ async def lifespan(app: FastAPI):
         logger.info("MVP102 Services initialized successfully.")
     except Exception as e:
         report_exception(e, event="mvp102_services_init_failed", logger=logger, flush=settings.ENV == "production")
+    app.state.maps_http_client = httpx.AsyncClient(
+        timeout=httpx.Timeout(8.0, connect=3.0),
+        follow_redirects=True,
+        max_redirects=8,
+    )
 
     logger.info("Lifespan startup complete.")
 
@@ -267,6 +273,17 @@ async def lifespan(app: FastAPI):
             event="E_APP_SHUTDOWN_REDIS_CLOSE_FAILED",
             logger=logger,
             event_code="E_APP_SHUTDOWN_REDIS_CLOSE_FAILED",
+        )
+    try:
+        maps_http_client = getattr(app.state, "maps_http_client", None)
+        if maps_http_client:
+            await maps_http_client.aclose()
+    except Exception as exc:
+        report_exception(
+            exc,
+            event="E_APP_SHUTDOWN_MAPS_HTTP_CLIENT_CLOSE_FAILED",
+            logger=logger,
+            event_code="E_APP_SHUTDOWN_MAPS_HTTP_CLIENT_CLOSE_FAILED",
         )
 
 
