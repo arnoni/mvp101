@@ -413,8 +413,13 @@ async def resolve_google_maps_short_url_async(
         try:
             cached = await redis_client.get(cache_key)
             if isinstance(cached, str) and cached.startswith("https://"):
-                logger.info("maps_short_url_cache_hit", host=host, url_hash=digest)
-                return cached
+                try:
+                    extract_lat_lng_from_google_maps_url(cached)
+                    logger.info("maps_short_url_cache_hit", host=host, url_hash=digest)
+                    return cached
+                except MalformedLocationInputError:
+                    logger.info("maps_short_url_cache_invalid_coordinate_free", host=host, url_hash=digest)
+                    cached = None
             logger.info("maps_short_url_cache_miss", host=host, url_hash=digest)
         except Exception:
             logger.warning("maps_short_url_cache_read_failed", host=host, url_hash=digest, exc_info=True)
@@ -451,8 +456,11 @@ async def resolve_google_maps_short_url_async(
         _log_attempt(True, None, response.status_code)
         if redis_client:
             try:
+                extract_lat_lng_from_google_maps_url(final_url)
                 ttl = int(_SHORT_URL_CACHE_TTL_SECONDS * (1 + random.uniform(-0.05, 0.05)))
                 await redis_client.setex(cache_key, ttl, final_url)
+            except MalformedLocationInputError:
+                logger.info("maps_short_url_cache_skip_coordinate_free", host=host, url_hash=digest)
             except Exception:
                 logger.warning("maps_short_url_cache_write_failed", host=host, url_hash=digest, exc_info=True)
         return final_url

@@ -325,3 +325,44 @@ async def test_tracking_param_stripped_before_resolved_url_parsing(monkeypatch):
     b = await parse_google_maps_url_async("https://maps.app.goo.gl/without")
     assert a.latitude == pytest.approx(b.latitude)
     assert a.longitude == pytest.approx(b.longitude)
+
+
+@pytest.mark.asyncio
+async def test_resolver_bypasses_coordinate_free_cached_value_and_refetches():
+    from app.services.location_parser import _build_short_url_cache_key_input, resolve_google_maps_short_url_async
+    raw = "https://maps.app.goo.gl/T6vt1WLaSBz9JoTh6?g_st=aw"
+    cache_key_input = _build_short_url_cache_key_input(raw)
+    import hashlib
+    key = f"maps:expand:{hashlib.sha256(cache_key_input.encode('utf-8')).hexdigest()[:16]}"
+
+    class _Redis:
+        def __init__(self):
+            self.calls = 0
+            self.store = {
+                key: "https://www.google.com/maps/place/NoCoords/data=!4m2!3m1!1s0x3142110057160fd7:0x3ee5e169266ed6c2"
+            }
+        async def get(self, key):
+            self.calls += 1
+            return self.store.get(key)
+        async def setex(self, key, ttl, value):
+            self.store[key] = value
+
+    class _Resp:
+        def __init__(self, url):
+            self.url = url
+            self.status_code = 200
+            self.history = []
+        def raise_for_status(self):
+            return None
+
+    class _Client:
+        async def get(self, *_args, **_kwargs):
+            return _Resp("https://www.google.com/maps/place/x/@16.0101,108.2202,17z")
+
+    redis = _Redis()
+    resolved = await resolve_google_maps_short_url_async(
+        raw,
+        redis_client=redis,
+        http_client=_Client(),
+    )
+    assert "@16.0101,108.2202" in resolved
