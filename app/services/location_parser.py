@@ -21,6 +21,11 @@ _BLOCKED_RESOLUTION_MESSAGE = (
 )
 _SHORT_URL_CACHE_TTL_SECONDS = 30 * 24 * 3600
 _SHORT_URL_STRIPPED_CACHE_PARAMS = {"g_st", "g_st_aw"}
+_RESOLVED_SHORT_URL_STRIPPED_QUERY_PARAMS = {"g_st", "g_st_aw"}
+_PLACE_PAGE_NO_COORDS_MESSAGE = (
+    "This Google Maps link points to a place page that does not expose coordinates. "
+    "Please paste the full Google Maps URL or type the coordinates directly."
+)
 
 
 @dataclass(frozen=True)
@@ -300,6 +305,32 @@ def _build_short_url_cache_key_input(normalized_url: str) -> str:
     return urlunparse(canonical)
 
 
+def _strip_tracking_query_params(url: str, *, keys: set[str]) -> str:
+    parsed = urlparse(url)
+    q = parse_qs(parsed.query, keep_blank_values=True)
+    kept: list[tuple[str, str]] = []
+    for key in sorted(q.keys()):
+        if key in keys:
+            continue
+        for value in q[key]:
+            kept.append((key, value))
+    return urlunparse(parsed._replace(query=urlencode(kept, doseq=True)))
+
+
+def _detect_resolved_url_format(url: str) -> str:
+    decoded = unquote(url)
+    query = parse_qs(urlparse(url).query)
+    if _extract_pair(query.get("q", [None])[0]):
+        return "query_q"
+    if re.search(r"!3d([+-]?\d+(?:\.\d+)?)!4d([+-]?\d+(?:\.\d+)?)", decoded):
+        return "place_3d4d"
+    if re.search(r"@([+-]?\d+(?:\.\d+)?),([+-]?\d+(?:\.\d+)?)", decoded):
+        return "viewport"
+    if re.search(r"!1s0x[0-9a-f]+:0x[0-9a-f]+", decoded, re.IGNORECASE):
+        return "place_id_only"
+    return "unknown"
+
+
 def extract_lat_lng_from_google_maps_url(url: str) -> tuple[float, float, str]:
     decoded = unquote(url)
 
@@ -487,7 +518,6 @@ async def parse_google_maps_url_async(raw: str, *, redis_client=None, http_clien
     if host in _SHORT_HOSTS:
         input_url_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
         resolution_log: dict[str, object] = {
-            "event": "google_maps_short_url_resolution_attempted",
             "input_url_hash": input_url_hash,
             "had_query_params": bool(parsed.query),
             "short_url_host": host,
@@ -495,6 +525,7 @@ async def parse_google_maps_url_async(raw: str, *, redis_client=None, http_clien
             "final_url_hash": None,
             "final_url_host": None,
             "redirect_hop_count": None,
+            "resolved_url_format": "unknown",
             "resolution_result": "failed",
             "error_code": None,
             "parser_branch": "parse_google_maps_url_async_short_url",
@@ -536,8 +567,12 @@ async def parse_google_maps_url_async(raw: str, *, redis_client=None, http_clien
             raise
         resolution_log["final_url_hash"] = hashlib.sha256(resolved.encode("utf-8")).hexdigest()
         resolution_log["final_url_host"] = (urlparse(resolved).hostname or "").lower()
+        resolution_log["resolved_url_format"] = _detect_resolved_url_format(resolved)
         try:
-            lat, lng, method = extract_lat_lng_from_google_maps_url(resolved)
+            resolved_for_parse = _strip_tracking_query_params(
+                resolved, keys=_RESOLVED_SHORT_URL_STRIPPED_QUERY_PARAMS
+            )
+            lat, lng, method = extract_lat_lng_from_google_maps_url(resolved_for_parse)
         except MalformedLocationInputError as exc:
             resolved_host = (urlparse(resolved).hostname or "").lower()
             resolved_digest = hashlib.sha256(resolved.encode("utf-8")).hexdigest()[:16]
@@ -556,6 +591,11 @@ async def parse_google_maps_url_async(raw: str, *, redis_client=None, http_clien
                 short_url=normalized,
                 final_url=resolved,
             )
+            if resolution_log["resolved_url_format"] == "place_id_only":
+                resolution_log["resolution_result"] = "place_page_without_coordinates"
+                resolution_log["error_code"] = "RESOLVED_PLACE_PAGE_NO_COORDS"
+                _emit_resolution_log()
+                raise MalformedLocationInputError(_PLACE_PAGE_NO_COORDS_MESSAGE) from exc
             resolution_log["resolution_result"] = "non_parseable"
             resolution_log["error_code"] = "MALFORMED_LOCATION_INPUT"
             _emit_resolution_log()

@@ -268,3 +268,60 @@ async def test_short_url_resolution_structured_log_blocked(monkeypatch):
         and rec.get("error_code") == "SHORT_URL_RESOLUTION_BLOCKED"
         for lvl, rec in logs
     )
+
+
+@pytest.mark.asyncio
+async def test_short_url_non_parseable_path_logs_without_structlog_event_conflict(monkeypatch):
+    logs = []
+
+    class _Logger:
+        def info(self, _msg, **kwargs):
+            logs.append(("info", kwargs))
+        def warning(self, _msg, **kwargs):
+            logs.append(("warning", kwargs))
+
+    final_url = "https://www.google.com/maps/place/NoCoords/data=!4m2!3m1!1s0x3142110057160fd7:0x3ee5e169266ed6c2"
+    monkeypatch.setattr("app.services.location_parser.resolve_google_maps_short_url_async", Mock(return_value=final_url))
+    monkeypatch.setattr("app.services.location_parser.logger", _Logger())
+    with pytest.raises(MalformedLocationInputError):
+        await parse_google_maps_url_async("https://maps.app.goo.gl/ABC123")
+    assert any(rec.get("resolution_result") in {"non_parseable", "place_page_without_coordinates"} for _, rec in logs)
+
+
+@pytest.mark.asyncio
+async def test_short_url_place_page_without_coordinates(monkeypatch):
+    logs = []
+
+    class _Logger:
+        def info(self, _msg, **kwargs):
+            logs.append(("info", kwargs))
+        def warning(self, _msg, **kwargs):
+            logs.append(("warning", kwargs))
+
+    final_url = (
+        "https://www.google.com/maps/place/Tiny+Food+%26+Drink/data="
+        "!4m2!3m1!1s0x3142110057160fd7:0x3ee5e169266ed6c2!18m1!1e1"
+        "?utm_source=mstt_1&entry=gps&g_st=aw"
+    )
+    monkeypatch.setattr("app.services.location_parser.resolve_google_maps_short_url_async", Mock(return_value=final_url))
+    monkeypatch.setattr("app.services.location_parser.logger", _Logger())
+    with pytest.raises(MalformedLocationInputError, match="does not expose coordinates"):
+        await parse_google_maps_url_async("https://maps.app.goo.gl/T6vt1WLaSBz9JoTh6?g_st=aw")
+    assert any(
+        rec.get("resolution_result") == "place_page_without_coordinates"
+        and rec.get("error_code") == "RESOLVED_PLACE_PAGE_NO_COORDS"
+        and rec.get("resolved_url_format") == "place_id_only"
+        for _, rec in logs
+    )
+
+
+@pytest.mark.asyncio
+async def test_tracking_param_stripped_before_resolved_url_parsing(monkeypatch):
+    final_url_with = "https://www.google.com/maps/place/x/@16.0101,108.2202,17z?g_st=aw"
+    final_url_without = "https://www.google.com/maps/place/x/@16.0101,108.2202,17z"
+    monkeypatch.setattr("app.services.location_parser.resolve_google_maps_short_url_async", Mock(return_value=final_url_with))
+    a = await parse_google_maps_url_async("https://maps.app.goo.gl/with")
+    monkeypatch.setattr("app.services.location_parser.resolve_google_maps_short_url_async", Mock(return_value=final_url_without))
+    b = await parse_google_maps_url_async("https://maps.app.goo.gl/without")
+    assert a.latitude == pytest.approx(b.latitude)
+    assert a.longitude == pytest.approx(b.longitude)
