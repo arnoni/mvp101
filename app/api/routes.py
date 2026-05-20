@@ -72,6 +72,7 @@ logger = structlog.get_logger(__name__)
 USER_REPORT_DAILY_SUCCESS_LIMIT = int(os.getenv("USER_REPORT_DAILY_SUCCESS_LIMIT", "3"))
 UGC_DEDUP_TTL_SECONDS = 7 * 24 * 3600
 DEFAULT_CONSTRUCTION_RADIUS_M = 50
+SEARCH_OUT_OF_BOUNDS_EVENT_NAME = "search_out_of_bounds"
 UGC_INSERT_SQL = text("""
 INSERT INTO ugc_reports (
   public_id,
@@ -717,6 +718,34 @@ async def search(
                     target=target_mode,
                 )
             else:
+                bbox_min_lon, bbox_min_lat, bbox_max_lon, bbox_max_lat = settings.APP_BOUNDING_BOX
+                input_type_map = {
+                    "decimal_pair": "decimal_coordinates",
+                    "google_maps_url": "full_google_maps_url",
+                    "google_maps_short_url": "short_google_maps_url",
+                }
+                original_input = data.location_input or f"{data.lat},{data.lon}"
+                original_input_hash = hashlib.sha256(original_input.encode("utf-8")).hexdigest()
+                await _emit_funnel_event(
+                    request,
+                    event_name=SEARCH_OUT_OF_BOUNDS_EVENT_NAME,
+                    effective_tier=_tier_to_funnel(tier),
+                    check_type=target_mode if target_mode in {"construction", "demand"} else "construction",
+                    ui_surface="construction_level_page" if target_mode != "demand" else "demand_level_page",
+                    metadata_json={
+                        "parsed_latitude": data.lat,
+                        "parsed_longitude": data.lon,
+                        "input_type": input_type_map.get(getattr(parsed_input, "input_kind", None), "unknown"),
+                        "original_input_hash": original_input_hash,
+                        "rejection_reason": "outside_app_bounding_box",
+                        "bounding_box_min_lat": bbox_min_lat,
+                        "bounding_box_min_lon": bbox_min_lon,
+                        "bounding_box_max_lat": bbox_max_lat,
+                        "bounding_box_max_lon": bbox_max_lon,
+                        "target_check_type": target_mode,
+                        "ui_surface_source": "search_endpoint",
+                    },
+                )
                 raise HTTPException(
                     status_code=http_status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail=ErrorResponse(
