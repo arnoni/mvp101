@@ -40,6 +40,7 @@ except ImportError:
     sys.modules["httpx"] = httpx_stub
 
 from app.services.location_parser import (
+    _build_short_url_cache_key_input,
     LocationResolutionBlockedError,
     MalformedLocationInputError,
     ShortUrlResolutionError,
@@ -205,3 +206,65 @@ async def test_short_url_and_resolved_url_equivalence(monkeypatch):
     short = await parse_google_maps_url_async("https://maps.app.goo.gl/gTP5u9ELrzyaCU37A")
     assert short.latitude == pytest.approx(direct.latitude)
     assert short.longitude == pytest.approx(direct.longitude)
+
+
+def test_short_url_cache_key_strips_tracking_params_only():
+    with_tracking = _build_short_url_cache_key_input("https://maps.app.goo.gl/T6vt1WLaSBz9JoTh6?g_st=aw")
+    without_tracking = _build_short_url_cache_key_input("https://maps.app.goo.gl/T6vt1WLaSBz9JoTh6")
+    with_unknown = _build_short_url_cache_key_input("https://maps.app.goo.gl/T6vt1WLaSBz9JoTh6?foo=bar")
+    full_url = _build_short_url_cache_key_input("https://www.google.com/maps/place/x?g_st=aw")
+    assert with_tracking == without_tracking
+    assert with_unknown != without_tracking
+    assert full_url.endswith("?g_st=aw")
+
+
+@pytest.mark.asyncio
+async def test_short_url_resolution_structured_log_success(monkeypatch):
+    final_url = "https://www.google.com/maps/place/X/@16.0101,108.2202,17z"
+    logs = []
+
+    class _Logger:
+        def info(self, _msg, **kwargs):
+            logs.append(("info", kwargs))
+        def warning(self, _msg, **kwargs):
+            logs.append(("warning", kwargs))
+
+    monkeypatch.setattr("app.services.location_parser.resolve_google_maps_short_url_async", Mock(return_value=final_url))
+    monkeypatch.setattr("app.services.location_parser.logger", _Logger())
+    parsed = await parse_google_maps_url_async("https://maps.app.goo.gl/ABC123?g_st=aw")
+    assert parsed.latitude == pytest.approx(16.0101)
+    assert parsed.longitude == pytest.approx(108.2202)
+    assert any(
+        lvl == "info"
+        and rec.get("event") == "google_maps_short_url_resolution_attempted"
+        and rec.get("resolution_result") == "success"
+        and rec.get("parsed_lat") == pytest.approx(16.0101)
+        and rec.get("parsed_lon") == pytest.approx(108.2202)
+        for lvl, rec in logs
+    )
+
+
+@pytest.mark.asyncio
+async def test_short_url_resolution_structured_log_blocked(monkeypatch):
+    logs = []
+
+    class _Logger:
+        def info(self, _msg, **kwargs):
+            logs.append(("info", kwargs))
+        def warning(self, _msg, **kwargs):
+            logs.append(("warning", kwargs))
+
+    async def _blocked(*_args, **_kwargs):
+        raise LocationResolutionBlockedError("blocked")
+
+    monkeypatch.setattr("app.services.location_parser.resolve_google_maps_short_url_async", _blocked)
+    monkeypatch.setattr("app.services.location_parser.logger", _Logger())
+    with pytest.raises(LocationResolutionBlockedError):
+        await parse_google_maps_url_async("https://maps.app.goo.gl/ABC123")
+    assert any(
+        lvl == "warning"
+        and rec.get("event") == "google_maps_short_url_resolution_attempted"
+        and rec.get("resolution_result") == "blocked"
+        and rec.get("error_code") == "SHORT_URL_RESOLUTION_BLOCKED"
+        for lvl, rec in logs
+    )

@@ -6,7 +6,7 @@ import random
 from typing import Literal
 import ipaddress
 import re
-from urllib.parse import urlparse, parse_qs, unquote
+from urllib.parse import urlparse, parse_qs, unquote, urlencode, urlunparse
 
 import httpx
 import structlog
@@ -20,6 +20,7 @@ _BLOCKED_RESOLUTION_MESSAGE = (
     "or type-in the coordinates."
 )
 _SHORT_URL_CACHE_TTL_SECONDS = 30 * 24 * 3600
+_SHORT_URL_STRIPPED_CACHE_PARAMS = {"g_st", "g_st_aw"}
 
 
 @dataclass(frozen=True)
@@ -283,6 +284,22 @@ def _validate_redirect_target(url: str, *, allow_short_hosts: bool) -> tuple[str
     return host, parsed.path or "/"
 
 
+def _build_short_url_cache_key_input(normalized_url: str) -> str:
+    parsed = urlparse(normalized_url)
+    host = (parsed.hostname or "").lower()
+    if host != "maps.app.goo.gl":
+        return normalized_url
+    q = parse_qs(parsed.query, keep_blank_values=True)
+    kept: list[tuple[str, str]] = []
+    for key in sorted(q.keys()):
+        if key in _SHORT_URL_STRIPPED_CACHE_PARAMS:
+            continue
+        for value in q[key]:
+            kept.append((key, value))
+    canonical = parsed._replace(query=urlencode(kept, doseq=True))
+    return urlunparse(canonical)
+
+
 def extract_lat_lng_from_google_maps_url(url: str) -> tuple[float, float, str]:
     decoded = unquote(url)
 
@@ -358,7 +375,8 @@ async def resolve_google_maps_short_url_async(
             provider="google",
         )
 
-    digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+    cache_key_input = _build_short_url_cache_key_input(normalized)
+    digest = hashlib.sha256(cache_key_input.encode("utf-8")).hexdigest()[:16]
     cache_key = f"maps:expand:{digest}"
     if redis_client:
         try:
@@ -467,9 +485,57 @@ async def parse_google_maps_url_async(raw: str, *, redis_client=None, http_clien
         raise UnsupportedLocationInputError("Only Google Maps URLs are supported.")
 
     if host in _SHORT_HOSTS:
+        input_url_hash = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+        resolution_log: dict[str, object] = {
+            "event": "google_maps_short_url_resolution_attempted",
+            "input_url_hash": input_url_hash,
+            "had_query_params": bool(parsed.query),
+            "short_url_host": host,
+            "redis_cache_hit": None,
+            "final_url_hash": None,
+            "final_url_host": None,
+            "redirect_hop_count": None,
+            "resolution_result": "failed",
+            "error_code": None,
+            "parser_branch": "parse_google_maps_url_async_short_url",
+            "parsed_lat": None,
+            "parsed_lon": None,
+        }
+        def _emit_resolution_log() -> None:
+            level = "info" if resolution_log.get("resolution_result") == "success" else "warning"
+            getattr(logger, level)("google_maps_short_url_resolution_attempted", **resolution_log)
         if not _is_supported_short_path(host, parsed.path):
+            resolution_log["error_code"] = "UNSUPPORTED_LOCATION_INPUT"
+            _emit_resolution_log()
             raise UnsupportedLocationInputError("Only Google Maps short URLs are supported.")
-        resolved = await resolve_google_maps_short_url_async(normalized, redis_client=redis_client, http_client=http_client)
+        cache_key_digest = hashlib.sha256(_build_short_url_cache_key_input(normalized).encode("utf-8")).hexdigest()[:16]
+        cache_key = f"maps:expand:{cache_key_digest}"
+        resolution_log["redis_cache_hit"] = None
+        if redis_client:
+            try:
+                cached = await redis_client.get(cache_key)
+                resolution_log["redis_cache_hit"] = isinstance(cached, str) and cached.startswith("https://")
+            except Exception:
+                resolution_log["redis_cache_hit"] = None
+        try:
+            resolved = await resolve_google_maps_short_url_async(normalized, redis_client=redis_client, http_client=http_client)
+        except LocationResolutionBlockedError:
+            resolution_log["resolution_result"] = "blocked"
+            resolution_log["error_code"] = "SHORT_URL_RESOLUTION_BLOCKED"
+            _emit_resolution_log()
+            raise
+        except ShortUrlResolutionError as exc:
+            resolution_log["resolution_result"] = "timeout" if "timed out" in str(exc).lower() else "failed"
+            resolution_log["error_code"] = "SHORT_URL_RESOLUTION_FAILED"
+            _emit_resolution_log()
+            raise
+        except UnsupportedLocationInputError:
+            resolution_log["resolution_result"] = "failed"
+            resolution_log["error_code"] = "UNSUPPORTED_LOCATION_INPUT"
+            _emit_resolution_log()
+            raise
+        resolution_log["final_url_hash"] = hashlib.sha256(resolved.encode("utf-8")).hexdigest()
+        resolution_log["final_url_host"] = (urlparse(resolved).hostname or "").lower()
         try:
             lat, lng, method = extract_lat_lng_from_google_maps_url(resolved)
         except MalformedLocationInputError as exc:
@@ -490,10 +556,17 @@ async def parse_google_maps_url_async(raw: str, *, redis_client=None, http_clien
                 short_url=normalized,
                 final_url=resolved,
             )
+            resolution_log["resolution_result"] = "non_parseable"
+            resolution_log["error_code"] = "MALFORMED_LOCATION_INPUT"
+            _emit_resolution_log()
             raise MalformedLocationInputError(
                 "Could not extract coordinates from the resolved Google Maps short URL. "
                 f"Event details: {details}."
             ) from exc
+        resolution_log["resolution_result"] = "success"
+        resolution_log["parsed_lat"] = lat
+        resolution_log["parsed_lon"] = lng
+        _emit_resolution_log()
         return ParsedLocationInput(
             input_kind="google_maps_short_url",
             original_input=raw,
