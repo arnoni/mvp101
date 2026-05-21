@@ -62,6 +62,7 @@ import time
 import os
 import hashlib
 import json
+import random
 from datetime import datetime, timezone, timedelta
 
 router = APIRouter()
@@ -1300,6 +1301,29 @@ async def search(
                     )
                 if user_id is not None:
                     capture(str(user_id), "check_completed", {"tier": _tier_to_funnel(tier)})
+        if (
+            user_id is None
+            and tier == TierStatus.FREE
+            and response_payload.construction is not None
+            and response_payload.construction.score is not None
+        ):
+            original_score = response_payload.construction.score
+            try:
+                response_payload.construction.score = apply_anon_free_score_jitter(original_score)
+                logger.info(
+                    "anon_free_score_jitter_applied",
+                    original_score=original_score,
+                    jittered_score=response_payload.construction.score,
+                )
+            except Exception as exc:
+                sentry_sdk.capture_exception(exc)
+                logger.warning(
+                    "anon_free_score_jitter_apply_failed",
+                    score=original_score,
+                    error_class=exc.__class__.__name__,
+                    error_detail=str(exc),
+                )
+                response_payload.construction.score = original_score
         return response_payload
     except HTTPException:
         raise
@@ -1361,6 +1385,30 @@ def validate_report_location(lat: float, lon: float) -> str | None:
 
 def _hash_identifier(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()[:16]
+
+
+def apply_anon_free_score_jitter(score: int | float) -> int | float:
+    """Apply controlled random jitter for anonymous free users only."""
+    try:
+        if score < 15:
+            low, high = -score, 15.0
+        elif score > 85:
+            low, high = -15.0, 100.0 - score
+        else:
+            low, high = -15.0, 15.0
+
+        jittered = score + random.uniform(low, high)
+        clamped = max(0.0, min(100.0, jittered))
+        return int(round(clamped)) if isinstance(score, int) else clamped
+    except Exception as exc:
+        sentry_sdk.capture_exception(exc)
+        logger.warning(
+            "anon_free_score_jitter_failed",
+            score=score,
+            error_class=exc.__class__.__name__,
+            error_detail=str(exc),
+        )
+        return score
 
 
 def _normalize_ugc_text(value: str | None) -> str:
