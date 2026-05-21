@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from app.main import app
@@ -194,3 +195,57 @@ def test_simulated_paid_missing_turnstile_token_returns_result_without_challenge
     assert response.json()["construction"]["score"] == 5
     assert quota.get_usage_calls == 1
     assert quota.consume_calls == 1
+
+
+def test_anon_free_score_is_jittered_with_expected_uniform_bounds(client):
+    quota = FakeQuotaRepo(usage=0)
+    app.state.quota_repo = quota
+
+    with patch("app.api.routes.random.uniform", return_value=3.0) as mock_uniform:
+        response = client.post("/api/search", json=_payload())
+
+    assert response.status_code == 200
+    assert response.json()["construction"]["score"] == 8
+    mock_uniform.assert_called_once_with(-15.0, 15.0)
+
+
+def test_paid_simulated_and_signed_in_paths_do_not_apply_jitter(monkeypatch):
+    async def fake_get_tier(*_args, **_kwargs):
+        return EntitlementResult(tier=TierStatus.SIMULATED_PAID, daily_limit=5)
+
+    monkeypatch.setattr("app.core.middleware.EntitlementService.get_tier", fake_get_tier)
+    monkeypatch.setattr("app.api.routes.protect_mutation", lambda _request: _noop_async())
+    monkeypatch.setattr("app.api.routes._emit_funnel_event", lambda *_args, **_kwargs: _noop_async())
+    monkeypatch.setattr("app.api.routes.SearchService", FakeSearchService)
+    FakeSearchService.should_fail = False
+
+    with patch("app.api.routes.random.uniform") as mock_uniform:
+        with TestClient(app) as test_client:
+            app.state.quota_repo = FakeQuotaRepo(usage=0)
+            app.state.query_history_repo = FakeQueryHistoryRepo()
+            app.state.demand_service = FakeDemandService()
+            response = test_client.post("/api/search", json=_payload(turnstile_token=None))
+
+    assert response.status_code == 200
+    assert response.json()["construction"]["score"] == 5
+    mock_uniform.assert_not_called()
+
+
+def test_apply_anon_free_score_jitter_low_score_uses_expected_range_and_clamps():
+    from app.api.routes import apply_anon_free_score_jitter
+
+    with patch("app.api.routes.random.uniform", return_value=-8.0) as mock_uniform:
+        score = apply_anon_free_score_jitter(8)
+
+    assert score == 0
+    mock_uniform.assert_called_once_with(-8, 15.0)
+
+
+def test_apply_anon_free_score_jitter_high_score_uses_expected_range_and_clamps():
+    from app.api.routes import apply_anon_free_score_jitter
+
+    with patch("app.api.routes.random.uniform", return_value=6.0) as mock_uniform:
+        score = apply_anon_free_score_jitter(94)
+
+    assert score == 100
+    mock_uniform.assert_called_once_with(-15.0, 6.0)
