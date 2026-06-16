@@ -1,13 +1,15 @@
 import json
-import uuid
 import logging
 import random
+import uuid
+
 import sentry_sdk
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-from starlette.responses import Response
+
 from app.core.config import settings
 from app.core.keys import KeyBuilder
+from app.middleware.public_paths import is_public_asset
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +27,9 @@ class IdentityMiddleware(BaseHTTPMiddleware):
     """
     
     async def dispatch(self, request: Request, call_next):
+        if is_public_asset(request.url.path):
+            return await call_next(request)
+
         from app.services.redis_client import redis_client
         
         # 1. Try to resolve Session (Paid)

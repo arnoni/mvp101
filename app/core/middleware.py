@@ -1,13 +1,15 @@
+import hashlib
+import hmac
+import json
+import logging
+import uuid
+
 import sentry_sdk  # <--- NEW IMPORT
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
-import hashlib
-import hmac
-import uuid
-import json
-import logging
-from typing import Optional
+
 from app.core.config import settings
+from app.middleware.public_paths import is_public_asset
 from app.services.entitlement_service import EntitlementService
 from app.services.redis_client import redis_client
 
@@ -18,7 +20,7 @@ def sign_value(val: str) -> str:
     sig = hmac.new(settings.SECRET_KEY.encode(), val.encode(), hashlib.sha256).hexdigest()
     return f"{val}.{sig}"
 
-def unsign_value(val: str) -> Optional[str]:
+def unsign_value(val: str) -> str | None:
     try:
         payload, sig = val.rsplit(".", 1)
         expected_sig = hmac.new(settings.SECRET_KEY.encode(), payload.encode(), hashlib.sha256).hexdigest()
@@ -141,6 +143,9 @@ class SessionMiddleware(BaseHTTPMiddleware):
 
 class EntitlementMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
+        if is_public_asset(request.url.path):
+            return await call_next(request)
+
         identity_id = getattr(request.state, "identity_id", None)
         identity_kind = getattr(request.state, "identity_kind", None)
         ab_cohort = getattr(request.state, "ab_cohort", None)
