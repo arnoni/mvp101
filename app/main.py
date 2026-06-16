@@ -1,5 +1,6 @@
 # Implements TSD Section 4.1: Architecture & Design Patterns
 # Implements TSD Section 4.4: Business Logic (High-level)
+# ruff: noqa: E402
 
 from fastapi import FastAPI, Request, status, HTTPException
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -296,7 +297,7 @@ app.add_middleware(IdentityMiddleware)
 # --- Static Files and Templates ---
 # Implements TSD Section 7.1: /static/ and /templates/
 # Resolve static and templates directories relative to this file
-static_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "static"))
+static_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "public", "static"))
 templates_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "templates"))
 app.mount("/static", StaticFiles(directory=static_dir), name="static")
 templates = Jinja2Templates(directory=templates_dir)
@@ -361,17 +362,6 @@ async def offline(request: Request):
             path=request.url.path,
         )
         raise HTTPException(status_code=500, detail="offline page unavailable") from exc
-
-@app.get("/favicon.ico", include_in_schema=False)
-@app.get("/favicon.png", include_in_schema=False)
-async def favicon():
-    # To stop 404 spam in logs. In production, place a real favicon.png in /static
-    target = os.path.join(static_dir, "favicon.png")
-    if os.path.exists(target):
-        from fastapi.responses import FileResponse
-        return FileResponse(target)
-    from fastapi.responses import Response
-    return Response(status_code=204)
 
 # --- Root Endpoint (Landing Page) ---
 # Implements TSD FR-001: Landing Page & Address Input

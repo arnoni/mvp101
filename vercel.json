@@ -1,4 +1,11 @@
 {
+  "redirects": [
+    {
+      "source": "/favicon.ico",
+      "destination": "/dd_icon.png",
+      "permanent": true
+    }
+  ],
   "rewrites": [
     {
       "source": "/(.*)",

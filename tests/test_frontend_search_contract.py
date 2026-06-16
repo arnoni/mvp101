@@ -1,9 +1,9 @@
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-APP_JS = (ROOT / "static" / "app.js").read_text()
-INDEX_HTML = (ROOT / "templates" / "index.html").read_text()
-APP_CSS = (ROOT / "static" / "app.css").read_text()
+APP_JS = (ROOT / "public" / "static" / "app.js").read_text(encoding="utf-8")
+INDEX_HTML = (ROOT / "templates" / "index.html").read_text(encoding="utf-8")
+APP_CSS = (ROOT / "public" / "static" / "app.css").read_text(encoding="utf-8")
 
 
 def test_main_search_button_is_explicit_button_not_native_submit():

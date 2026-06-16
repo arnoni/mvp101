@@ -2,10 +2,10 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN_PY = (ROOT / "app" / "main.py").read_text()
-INDEX_HTML = (ROOT / "templates" / "index.html").read_text()
+INDEX_HTML = (ROOT / "templates" / "index.html").read_text(encoding="utf-8")
 PYPROJECT = (ROOT / "pyproject.toml").read_text()
 REQUIREMENTS = (ROOT / "requirements.txt").read_text()
-APP_JS = (ROOT / "static" / "app.js").read_text()
+APP_JS = (ROOT / "public" / "static" / "app.js").read_text(encoding="utf-8")
 
 
 def test_csp_allows_sentry_turnstile_and_posthog_scripts_with_nonce():

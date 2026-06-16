@@ -1,6 +1,6 @@
 from pathlib import Path
 
-APP_JS = Path("static/app.js").read_text(encoding="utf-8")
+APP_JS = Path("public/static/app.js").read_text(encoding="utf-8")
 
 
 def test_frontend_search_errors_use_product_copy_and_observability_events():
