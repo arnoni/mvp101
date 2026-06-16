@@ -1,3 +1,4 @@
+import asyncio
 import time
 import secrets
 import json
@@ -134,6 +135,7 @@ return 1
 
 ANON_QUOTA_CARRY_FORWARD_SCRIPT_SHA: str | None = None
 ANON_QUOTA_CARRY_FORWARD_SCRIPT_SHA_ATTR = "anon_quota_carry_forward_script_sha"
+_anon_quota_carry_forward_script_lock = asyncio.Lock()
 
 
 def set_anon_quota_carry_forward_script_sha(script_sha: str | None) -> None:
@@ -150,12 +152,13 @@ async def load_anon_quota_carry_forward_script(redis_cli) -> str | None:
         )
         return None
 
-    script_sha = str(await script_load(ANON_QUOTA_CARRY_FORWARD_LUA_SCRIPT))
-    set_anon_quota_carry_forward_script_sha(script_sha)
-    try:
-        setattr(redis_cli, ANON_QUOTA_CARRY_FORWARD_SCRIPT_SHA_ATTR, script_sha)
-    except Exception:
-        pass
+    async with _anon_quota_carry_forward_script_lock:
+        script_sha = str(await script_load(ANON_QUOTA_CARRY_FORWARD_LUA_SCRIPT))
+        set_anon_quota_carry_forward_script_sha(script_sha)
+        try:
+            setattr(redis_cli, ANON_QUOTA_CARRY_FORWARD_SCRIPT_SHA_ATTR, script_sha)
+        except Exception:
+            pass
     logger.info("anon_quota_carry_forward_script_loaded", script_sha=script_sha)
     return script_sha
 
@@ -176,6 +179,35 @@ async def _call_redis_evalsha(evalsha_command, script_sha: str, keys: list[str],
     except TypeError:
         # redis.asyncio shape: evalsha(sha, numkeys, *keys_and_args)
         return await evalsha_command(script_sha, len(keys), *(keys + [str(arg) for arg in args]))
+
+
+async def _load_and_evalsha_anon_quota_carry_forward_script(
+    redis_cli,
+    *,
+    keys: list[str],
+    args: list[int],
+    stale_sha: str | None = None,
+):
+    script_load = getattr(redis_cli, "script_load", None)
+    evalsha_command = getattr(redis_cli, "evalsha", None)
+    if not script_load or not evalsha_command:
+        raise RuntimeError("ANON_QUOTA_CARRY_FORWARD_REDIS_UNAVAILABLE")
+
+    async with _anon_quota_carry_forward_script_lock:
+        script_sha = (
+            getattr(redis_cli, ANON_QUOTA_CARRY_FORWARD_SCRIPT_SHA_ATTR, None)
+            or ANON_QUOTA_CARRY_FORWARD_SCRIPT_SHA
+        )
+        if not script_sha or script_sha == stale_sha:
+            script_sha = str(await script_load(ANON_QUOTA_CARRY_FORWARD_LUA_SCRIPT))
+            set_anon_quota_carry_forward_script_sha(script_sha)
+            try:
+                setattr(redis_cli, ANON_QUOTA_CARRY_FORWARD_SCRIPT_SHA_ATTR, script_sha)
+            except Exception:
+                pass
+            logger.warning("anon_quota_carry_forward_script_loaded_lazy")
+
+        return await _call_redis_evalsha(evalsha_command, str(script_sha), keys, args)
 
 
 async def _carry_forward_anon_quota_usage(
@@ -202,7 +234,6 @@ async def _carry_forward_anon_quota_usage(
     args = [safe_ttl_seconds]
 
     try:
-        result = None
         script_sha = (
             getattr(redis_cli, ANON_QUOTA_CARRY_FORWARD_SCRIPT_SHA_ATTR, None)
             or ANON_QUOTA_CARRY_FORWARD_SCRIPT_SHA
@@ -218,13 +249,21 @@ async def _carry_forward_anon_quota_usage(
                     "anon_quota_carry_forward_evalsha_noscript",
                     anon_id=anon_id,
                     user_id=user_id,
-                    script_sha=str(script_sha),
                 )
-                set_anon_quota_carry_forward_script_sha(None)
-                try:
-                    setattr(redis_cli, ANON_QUOTA_CARRY_FORWARD_SCRIPT_SHA_ATTR, None)
-                except Exception:
-                    pass
+                result = await _load_and_evalsha_anon_quota_carry_forward_script(
+                    redis_cli,
+                    keys=keys,
+                    args=args,
+                    stale_sha=str(script_sha),
+                )
+        elif evalsha_command and getattr(redis_cli, "script_load", None):
+            result = await _load_and_evalsha_anon_quota_carry_forward_script(
+                redis_cli,
+                keys=keys,
+                args=args,
+            )
+        else:
+            result = None
 
         if result is None:
             eval_command = getattr(redis_cli, "eval", None)
@@ -235,7 +274,7 @@ async def _carry_forward_anon_quota_usage(
                     user_id=user_id,
                     reason="redis_eval_missing",
                 )
-                return 0
+                raise RuntimeError("ANON_QUOTA_CARRY_FORWARD_REDIS_UNAVAILABLE")
             result = await _call_redis_eval(eval_command, ANON_QUOTA_CARRY_FORWARD_LUA_SCRIPT, keys, args)
 
         if result is None:
@@ -245,7 +284,7 @@ async def _carry_forward_anon_quota_usage(
                 user_id=user_id,
                 reason="redis_eval_returned_none",
             )
-            return 0
+            raise RuntimeError("ANON_QUOTA_CARRY_FORWARD_REDIS_UNAVAILABLE")
 
         result_code = int(result)
         if result_code not in {0, 1}:
@@ -265,7 +304,7 @@ async def _carry_forward_anon_quota_usage(
             user_id=user_id,
             error=str(exc),
         )
-        return 0
+        raise
     except Exception as exc:
         logger.error(
             "anon_quota_carry_forward_lua_failed",
@@ -273,7 +312,7 @@ async def _carry_forward_anon_quota_usage(
             user_id=user_id,
             error=str(exc),
         )
-        return 0
+        raise
 
 
 async def _fetch_dodo_checkout_status(checkout_id: str) -> dict | None:

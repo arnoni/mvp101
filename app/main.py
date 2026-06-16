@@ -173,20 +173,7 @@ async def lifespan(app: FastAPI):
         app.state.db_engine = None
         if settings.DATABASE_URL:
             app.state.db_engine = build_async_engine()
-            try:
-                async with app.state.db_engine.connect() as conn:
-                    await conn.execute(text("SELECT 1"))
-                    await conn.commit()
-                logger.info("Database connectivity check passed.")
-            except Exception as e:
-                # Do NOT raise — let the app start so health checks work.
-                # But report it through the resilient observability path so it cannot disappear.
-                report_exception(
-                    e,
-                    event="database_connectivity_check_failed",
-                    logger=logger,
-                    flush=settings.ENV == "production",
-                )
+            logger.info("Database engine constructed; connectivity deferred until first use.")
         else:
             logger.warning("DATABASE_URL not set — running without database connectivity.")
         app.state.poi_service = POIService(app.state.db_engine)
@@ -220,27 +207,8 @@ async def lifespan(app: FastAPI):
     if settings.ENABLE_REDIS and rest_url and rest_token:
         try:
             app.state.redis = Redis(url=rest_url, token=rest_token)
-            import asyncio
-            pong = await asyncio.wait_for(app.state.redis.ping(), timeout=10)
-            if pong != "PONG":
-                # Upstash might return True or "PONG" depending on client
-                if not pong:
-                    raise RuntimeError("Redis ping failed")
-
             app.state.quota_repo = QuotaRepository(app.state.redis)
-            await app.state.quota_repo.load_lua_scripts()
-            try:
-                from app.api.auth import load_anon_quota_carry_forward_script
-
-                await load_anon_quota_carry_forward_script(app.state.redis)
-            except Exception as script_err:
-                report_exception(
-                    script_err,
-                    event="anon_quota_carry_forward_script_load_failed",
-                    logger=logger,
-                    flush=settings.ENV == "production",
-                )
-            logger.info("Upstash Redis (REST) connected and QuotaRepository ready")
+            logger.info("Upstash Redis (REST) client constructed and QuotaRepository ready")
         except Exception as e:
             report_exception(e, event="redis_initialization_failed", logger=logger, flush=settings.ENV == "production")
             app.state.redis = None

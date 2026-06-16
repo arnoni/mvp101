@@ -1,3 +1,4 @@
+import asyncio
 from typing import Any, Optional
 
 import structlog
@@ -9,6 +10,8 @@ QUOTA_IDEMPOTENT_REPLAY_SENTINEL = 0
 QUOTA_CONSUMED_SENTINEL = 1
 DEFAULT_QUOTA_TTL_SECONDS = 60 * 60 * 24
 DEFAULT_IDEMPOTENCY_TTL_SECONDS = 60 * 5
+_quota_sha: str | None = None
+_quota_script_lock = asyncio.Lock()
 
 ATOMIC_QUOTA_LUA_SCRIPT = """
 -- Atomically check and consume a quota unit.
@@ -87,10 +90,20 @@ class QuotaRepository:
 
     def __init__(self, redis_client: Optional[Any] = None, *, quota_script_sha: Optional[str] = None):
         self.redis_client: Optional[Any] = redis_client
-        self.quota_script_sha = quota_script_sha
+        if quota_script_sha:
+            self.quota_script_sha = quota_script_sha
+
+    @property
+    def quota_script_sha(self) -> str | None:
+        return _quota_sha
+
+    @quota_script_sha.setter
+    def quota_script_sha(self, value: str | None) -> None:
+        global _quota_sha
+        _quota_sha = str(value) if value else None
 
     async def load_lua_scripts(self) -> None:
-        """Load and cache Lua script SHAs during application startup when supported."""
+        """Load and cache Lua script SHAs when explicitly requested."""
         if not self.redis_client:
             raise RuntimeError("QUOTA_REDIS_UNAVAILABLE")
 
@@ -100,8 +113,9 @@ class QuotaRepository:
             return
 
         try:
-            sha = await script_load(ATOMIC_QUOTA_LUA_SCRIPT)
-            self.quota_script_sha = str(sha)
+            async with _quota_script_lock:
+                sha = await script_load(ATOMIC_QUOTA_LUA_SCRIPT)
+                self.quota_script_sha = str(sha)
             logger.info("quota_lua_script_loaded", script_sha=self.quota_script_sha)
         except Exception as exc:
             logger.error("quota_lua_script_load_failed", error=str(exc))
@@ -231,14 +245,23 @@ class QuotaRepository:
             raise RuntimeError("QUOTA_REDIS_UNAVAILABLE")
 
         evalsha = getattr(self.redis_client, "evalsha", None)
-        if self.quota_script_sha and evalsha:
+        script_sha = self.quota_script_sha
+        if script_sha and evalsha:
             try:
-                return await self._call_evalsha(evalsha, self.quota_script_sha, keys, args)
+                return await self._call_evalsha(evalsha, script_sha, keys, args)
             except Exception as exc:
                 if "NOSCRIPT" not in str(exc).upper():
                     raise
-                logger.warning("quota_lua_evalsha_noscript", script_sha=self.quota_script_sha)
-                self.quota_script_sha = None
+                logger.warning("quota_lua_evalsha_noscript")
+                return await self._load_and_evalsha_quota_script(
+                    keys=keys,
+                    args=args,
+                    stale_sha=script_sha,
+                )
+
+        script_load = getattr(self.redis_client, "script_load", None)
+        if evalsha and script_load:
+            return await self._load_and_evalsha_quota_script(keys=keys, args=args)
 
         eval_command = getattr(self.redis_client, "eval", None)
         if eval_command:
@@ -248,6 +271,30 @@ class QuotaRepository:
         # but do not implement EVAL. Production Upstash/Redis clients support EVAL.
         return await self._command_fallback_for_non_eval_fake(keys=keys, args=args)
 
+    async def _load_and_evalsha_quota_script(
+        self,
+        *,
+        keys: list[str],
+        args: list[int],
+        stale_sha: str | None = None,
+    ) -> Any:
+        script_load = getattr(self.redis_client, "script_load", None)
+        evalsha = getattr(self.redis_client, "evalsha", None)
+        if not script_load or not evalsha:
+            raise RuntimeError("QUOTA_REDIS_UNAVAILABLE")
+
+        async with _quota_script_lock:
+            script_sha = self.quota_script_sha
+            if not script_sha or script_sha == stale_sha:
+                try:
+                    script_sha = str(await script_load(ATOMIC_QUOTA_LUA_SCRIPT))
+                except Exception as exc:
+                    logger.error("quota_lua_script_load_failed", error=str(exc))
+                    raise
+                self.quota_script_sha = script_sha
+                logger.warning("quota_lua_script_loaded_lazy")
+
+            return await self._call_evalsha(evalsha, script_sha, keys, args)
 
     @staticmethod
     async def _call_eval(eval_command: Any, script: str, keys: list[str], args: list[int]) -> Any:
