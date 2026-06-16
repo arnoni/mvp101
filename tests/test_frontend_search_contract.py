@@ -44,8 +44,13 @@ def test_turnstile_renders_only_after_visible_and_recovers_from_widget_errors():
     assert 'await waitForVisible(el);' in APP_JS
     assert 'turnstile_container_not_visible' in APP_JS
     assert 'TURNSTILE_MAX_ERROR_RETRIES = 2' in APP_JS
+    assert 'const willRetry = errorRetryCount < TURNSTILE_MAX_ERROR_RETRIES;' in APP_JS
+    assert 'opts.onError?.(code, { willRetry, retryCount: nextRetryCount' in APP_JS
+    assert 'if (!meta.willRetry) window.Sentry?.captureMessage?.("Turnstile widget error"' in APP_JS
     assert 'errorRetryTimer = window.setTimeout(() => { destroy(); init(); }' in APP_JS
+    assert 'if (!meta.willRetry)' in APP_JS
     assert 'window.Sentry?.captureMessage?.("Turnstile widget error"' in APP_JS
+    assert 'function onTurnstileError(code, meta = {})' in APP_JS
     assert 'captureException?.(new Error("Turnstile error")' not in APP_JS
     assert '#turnstileContainer, #unlock-turnstile-widget, #report-turnstile-widget { min-height: 65px;' in APP_CSS
 

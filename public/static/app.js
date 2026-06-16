@@ -451,11 +451,11 @@
     recordTurnstileLifecycle("turnstile_expired", "warning");
     updateButtons();
   }
-  function onTurnstileError(code) {
+  function onTurnstileError(code, meta = {}) {
     setHeroTurnstileToken(null);
     showHeroTurnstileChallenge();
-    recordTurnstileLifecycle("turnstile_error", "error", { code });
-    window.Sentry?.captureMessage?.("Turnstile widget error", { level: "warning", extra: { code } });
+    recordTurnstileLifecycle("turnstile_error", "error", { code, will_retry: Boolean(meta.willRetry), retry_count: meta.retryCount || 0 });
+    if (!meta.willRetry) window.Sentry?.captureMessage?.("Turnstile widget error", { level: "warning", extra: { code, retry_count: meta.retryCount || 0 } });
     updateButtons();
   }
   window.onTurnstileRendered = onTurnstileRendered;
@@ -540,7 +540,7 @@
         // a hidden or zero-size slot can leave the widget invisible on first load,
         // especially on mobile browsers that finish layout after deferred scripts.
         await waitForVisible(el);
-        widgetId = turnstile.render(el, { sitekey, theme: el.dataset.theme || "auto", "render-callback": () => opts.onRender?.(), callback: (newToken) => { errorRetryCount = 0; clearErrorRetry(); token = newToken || null; setStatus(""); try { console.info(JSON.stringify({ level: "info", event: "turnstile_token_received", containerId, token_length: token?.length || 0 })); } catch (_) {} opts.onToken?.(token); }, "expired-callback": () => { token = null; opts.onExpire?.(); }, "error-callback": (code) => { token = null; opts.onError?.(code); if (errorRetryCount < TURNSTILE_MAX_ERROR_RETRIES) { errorRetryCount += 1; clearErrorRetry(); errorRetryTimer = window.setTimeout(() => { destroy(); init(); }, TURNSTILE_ERROR_RETRY_MS * errorRetryCount); } } });
+        widgetId = turnstile.render(el, { sitekey, theme: el.dataset.theme || "auto", "render-callback": () => opts.onRender?.(), callback: (newToken) => { errorRetryCount = 0; clearErrorRetry(); token = newToken || null; setStatus(""); try { console.info(JSON.stringify({ level: "info", event: "turnstile_token_received", containerId, token_length: token?.length || 0 })); } catch (_) {} opts.onToken?.(token); }, "expired-callback": () => { token = null; opts.onExpire?.(); }, "error-callback": (code) => { token = null; const willRetry = errorRetryCount < TURNSTILE_MAX_ERROR_RETRIES; const nextRetryCount = willRetry ? errorRetryCount + 1 : errorRetryCount; opts.onError?.(code, { willRetry, retryCount: nextRetryCount, maxRetries: TURNSTILE_MAX_ERROR_RETRIES }); if (willRetry) { errorRetryCount = nextRetryCount; clearErrorRetry(); errorRetryTimer = window.setTimeout(() => { destroy(); init(); }, TURNSTILE_ERROR_RETRY_MS * errorRetryCount); } } });
         return widgetId;
       } catch (err) { setStatus(VERIFY_TIMEOUT_TEXT); opts.onError?.(err);
         logClientException("turnstile_init_failed", err, {
@@ -588,7 +588,7 @@
   const heroTurnstile = TurnstileManager("turnstileContainer", { onRender: () => onTurnstileRendered(),
     onToken: (token) => onTurnstileSuccess(token),
     onExpire: () => onTurnstileExpired(),
-    onError: (code) => onTurnstileError(code),
+    onError: (code, meta) => onTurnstileError(code, meta),
     onReset: () => setHeroTurnstileToken(null) });
   const unlockTurnstile = TurnstileManager("unlock-turnstile-widget", { statusElId: "unlockTurnstileStatusMsg",
     onToken: () => syncResendButtonState(),
