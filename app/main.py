@@ -45,6 +45,23 @@ logger = structlog.get_logger(__name__)
 _POOLER_WARNING_EMITTED = False
 
 
+def _static_dir_candidates(project_root: str | None = None) -> list[str]:
+    if project_root is None:
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    return [
+        os.path.abspath(os.path.join(project_root, "public", "static")),
+        os.path.abspath(os.path.join(project_root, "static")),
+    ]
+
+
+def _resolve_static_dir(project_root: str | None = None) -> str | None:
+    candidates = _static_dir_candidates(project_root)
+    for candidate in candidates:
+        if os.path.isdir(candidate):
+            return candidate
+    return None
+
+
 def _build_content_security_policy(nonce: str) -> str:
     """Build the production CSP used by the FastAPI app.
 
@@ -297,9 +314,10 @@ app.add_middleware(IdentityMiddleware)
 # --- Static Files and Templates ---
 # Implements TSD Section 7.1: /static/ and /templates/
 # Resolve static and templates directories relative to this file
-static_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "public", "static"))
+static_dir = _resolve_static_dir()
 templates_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "templates"))
-app.mount("/static", StaticFiles(directory=static_dir), name="static")
+if static_dir is not None:
+    app.mount("/static", StaticFiles(directory=static_dir), name="static")
 templates = Jinja2Templates(directory=templates_dir)
 
 # --- API Routes ---

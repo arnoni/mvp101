@@ -43,6 +43,26 @@ def test_browser_asset_urls_remain_unchanged():
     assert '"public", "static"' in MAIN_PY
 
 
+def test_static_dir_resolution_falls_back_when_public_static_missing(tmp_path):
+    from app.main import _resolve_static_dir
+
+    legacy_static = tmp_path / "static"
+    legacy_static.mkdir()
+
+    assert _resolve_static_dir(str(tmp_path)) == str(legacy_static)
+
+
+def test_static_dir_resolution_prefers_public_static(tmp_path):
+    from app.main import _resolve_static_dir
+
+    public_static = tmp_path / "public" / "static"
+    legacy_static = tmp_path / "static"
+    public_static.mkdir(parents=True)
+    legacy_static.mkdir()
+
+    assert _resolve_static_dir(str(tmp_path)) == str(public_static)
+
+
 def test_dd_icon_is_preserved_and_copied_byte_for_byte():
     root_icon = ROOT / "dd_icon.png"
     public_icon = ROOT / "public" / "dd_icon.png"
