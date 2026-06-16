@@ -83,6 +83,7 @@ def _build_content_security_policy(nonce: str) -> str:
             "https://challenges.cloudflare.com",
             "https://*.i.posthog.com",
             "https://cdn.tailwindcss.com",
+            "https://cdn.vercel-insights.com",
         ],
         "connect-src": [
             "'self'",
@@ -91,6 +92,7 @@ def _build_content_security_policy(nonce: str) -> str:
             "https://*.posthog.com",
             "https://*.sentry.io",
             "https://*.ingest.sentry.io",
+            "https://*.vercel-insights.com",
         ],
         "frame-src": ["https://challenges.cloudflare.com"],
         "img-src": ["'self'", "data:", "blob:", "https:"],
