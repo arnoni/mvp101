@@ -1,7 +1,21 @@
 import asyncio
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import app
+from app.services.entitlement_service import EntitlementResult, TierStatus
+
+
+@pytest.fixture(autouse=True)
+def _allow_abuse_rate_limits(monkeypatch):
+    async def allow(*_args, **_kwargs):
+        return []
+
+    async def free_tier(*_args, **_kwargs):
+        return EntitlementResult(tier=TierStatus.FREE, daily_limit=3)
+
+    monkeypatch.setattr("app.api.billing.check_rate_limits", allow)
+    monkeypatch.setattr("app.core.middleware.EntitlementService.get_tier", free_tier)
 
 
 class _FakeResult:
@@ -27,10 +41,10 @@ class _FakeConnection:
         self._step += 1
         if self._step == 1:  # feature flag is_enabled
             return _FakeResult(True)
-        if self._step == 2:  # user upsert returning user id
-            return _FakeResult("user-123")
-        if self._step == 3:  # active simulated plan code
+        if self._step == 2:  # active simulated plan code
             return _FakeResult("1_day_test_a")
+        if self._step == 3:  # user upsert returning user id
+            return _FakeResult("user-123")
         return _FakeResult(None)
 
 
@@ -51,6 +65,9 @@ class _FakeEngine:
 
     def begin(self):
         return _FakeBeginCtx(self.conn)
+
+    async def dispose(self):
+        return None
 
 
 def test_unlock_intent_missing_turnstile_returns_structured_error_id(monkeypatch):
@@ -115,9 +132,9 @@ def test_unlock_intent_happy_path_returns_checkout_url(monkeypatch):
     monkeypatch.setattr("app.api.billing.protect_mutation", _noop_protect_mutation)
     monkeypatch.setattr("app.api.billing.verify_turnstile", _valid_turnstile)
     fake_engine = _FakeEngine()
-    monkeypatch.setattr(app.state, "db_engine", fake_engine, raising=False)
 
     with TestClient(app) as client:
+        monkeypatch.setattr(app.state, "db_engine", fake_engine, raising=False)
         response = client.post(
             "/api/billing/unlock-intent",
             json={
@@ -146,9 +163,9 @@ def test_unlock_intent_rejects_unsupported_sim_3_day(monkeypatch):
 
     monkeypatch.setattr("app.api.billing.protect_mutation", _noop_protect_mutation)
     monkeypatch.setattr("app.api.billing.verify_turnstile", _valid_turnstile)
-    monkeypatch.setattr(app.state, "db_engine", _FakeEngine(), raising=False)
 
     with TestClient(app) as client:
+        monkeypatch.setattr(app.state, "db_engine", _FakeEngine(), raising=False)
         response = client.post(
             "/api/billing/unlock-intent",
             json={
@@ -188,9 +205,9 @@ def test_unlock_intent_magic_link_timeout_returns_response(monkeypatch):
     monkeypatch.setattr("app.api.billing.MagicAuthService", _FakeAuthService)
     monkeypatch.setattr("app.api.billing.EmailService", _SlowEmailService)
     monkeypatch.setattr("app.api.billing.UNLOCK_INTENT_MAGIC_LINK_TIMEOUT_SECONDS", 0.01)
-    monkeypatch.setattr(app.state, "db_engine", _FakeEngine(), raising=False)
 
     with TestClient(app) as client:
+        monkeypatch.setattr(app.state, "db_engine", _FakeEngine(), raising=False)
         response = client.post(
             "/api/billing/unlock-intent",
             json={

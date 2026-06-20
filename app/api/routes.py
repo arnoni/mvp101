@@ -38,6 +38,14 @@ from app.services.quota_service import (
     has_construction_query,
 )
 from app.utils.security import verify_turnstile, verify_turnstile_dependency, get_client_ip, protect_mutation
+from app.utils.rate_limits import (
+    RateLimitBackendError,
+    RateLimitIdentity,
+    check_rate_limits,
+    denied_result,
+    log_rate_limit_backend_error,
+    log_rate_limit_exceeded,
+)
 from app.services.bucket_engine import BucketEngine
 from app.services.precompute_repo import PrecomputeRepository
 from app.services.demand_service import DemandService
@@ -604,7 +612,8 @@ async def search(
                     "message": "Enter coordinates or a Google Maps URL to generate a report.",
                 },
             )
-        anon_id = getattr(request.state, "anon_id", None) or "unknown_anon"
+        rate_limit_anon_id = getattr(request.state, "anon_id", None)
+        anon_id = rate_limit_anon_id or "unknown_anon"
         user_id = getattr(request.state, "user_id", None)
         tier = getattr(request.state, "tier", TierStatus.FREE)
         entitlement_stale = getattr(request.state, "entitlement_stale", False)
@@ -619,9 +628,57 @@ async def search(
                 reason="validation_error",
             )
 
-        # Aggregate telemetry first so blocked/challenged attempts are still counted.
-        classification = classify_location_input(data.location_input or "")
+        await protect_mutation(request)
+        client_ip = get_client_ip(request)
+        request.state.rate_limit_client_ip_present = bool(client_ip)
+        if settings.RATE_LIMITING_ENABLED:
+            identities = []
+            if user_id is not None:
+                identities.append(RateLimitIdentity("identity", "user", str(user_id)))
+            elif rate_limit_anon_id:
+                identities.append(RateLimitIdentity("identity", "anon", str(rate_limit_anon_id)))
+            if client_ip:
+                identities.append(RateLimitIdentity("ip", "ip", client_ip))
+            try:
+                rate_results = await check_rate_limits(
+                    getattr(request.app.state, "redis", None),
+                    route="/api/search",
+                    identities=identities,
+                    limit=settings.SEARCH_RATE_LIMIT_REQUESTS,
+                    window_seconds=settings.SEARCH_RATE_LIMIT_WINDOW_SECONDS,
+                )
+            except RateLimitBackendError as exc:
+                failure_policy = "fail_closed" if settings.is_production else "bypass_non_production"
+                log_rate_limit_backend_error(
+                    request,
+                    route="/api/search",
+                    dimension=exc.dimension,
+                    failure_policy=failure_policy,
+                    error=exc.error,
+                )
+                if settings.is_production:
+                    return JSONResponse(
+                        status_code=http_status.HTTP_503_SERVICE_UNAVAILABLE,
+                        content={
+                            "error": "RATE_LIMIT_UNAVAILABLE",
+                            "message": "Search is temporarily unavailable. Please try again later.",
+                        },
+                    )
+            else:
+                denied = denied_result(rate_results)
+                if denied:
+                    log_rate_limit_exceeded(request, denied)
+                    return JSONResponse(
+                        status_code=http_status.HTTP_429_TOO_MANY_REQUESTS,
+                        headers={"Retry-After": str(denied.retry_after_seconds)},
+                        content={
+                            "error": "RATE_LIMITED",
+                            "message": "Too many requests. Please try again later.",
+                            "retry_after_seconds": denied.retry_after_seconds,
+                        },
+                    )
 
+        classification = classify_location_input(data.location_input or "")
         target_mode = data.target.value if hasattr(data.target, "value") else str(data.target)
         if user_id is None:
             user_state = "anonymous"
@@ -656,7 +713,6 @@ async def search(
                     exc_info=True,
                 )
 
-        await protect_mutation(request)
         started_at = time.perf_counter()
         if tier == TierStatus.FREE and not turnstile_present:
             logger.warning(
@@ -1830,6 +1886,50 @@ async def set_language(request: Request, response: Response):
 @router.post("/telemetry/client-event")
 async def telemetry_client_event(request: Request, payload: ClientFlowEventRequest):
     await protect_mutation(request)
+    client_ip = get_client_ip(request)
+    request.state.rate_limit_client_ip_present = bool(client_ip)
+    if settings.RATE_LIMITING_ENABLED:
+        identities = []
+        user_id = getattr(request.state, "user_id", None)
+        anon_id = getattr(request.state, "anon_id", None)
+        session_id = request.cookies.get(settings.SESSION_COOKIE_NAME)
+        if user_id is not None:
+            identities.append(RateLimitIdentity("identity", "user", str(user_id)))
+        elif anon_id:
+            identities.append(RateLimitIdentity("identity", "anon", str(anon_id)))
+        elif session_id:
+            identities.append(RateLimitIdentity("identity", "session", session_id))
+        if client_ip:
+            identities.append(RateLimitIdentity("ip", "ip", client_ip))
+        try:
+            rate_results = await check_rate_limits(
+                getattr(request.app.state, "redis", None),
+                route="/api/telemetry/client-event",
+                identities=identities,
+                limit=settings.TELEMETRY_RATE_LIMIT_REQUESTS,
+                window_seconds=settings.TELEMETRY_RATE_LIMIT_WINDOW_SECONDS,
+            )
+        except RateLimitBackendError as exc:
+            log_rate_limit_backend_error(
+                request,
+                route="/api/telemetry/client-event",
+                dimension=exc.dimension,
+                failure_policy="drop_event_return_success",
+                error=exc.error,
+            )
+            return {"ok": True}
+        denied = denied_result(rate_results)
+        if denied:
+            log_rate_limit_exceeded(request, denied)
+            return JSONResponse(
+                status_code=http_status.HTTP_429_TOO_MANY_REQUESTS,
+                headers={"Retry-After": str(denied.retry_after_seconds)},
+                content={
+                    "error": "RATE_LIMITED",
+                    "message": "Too many requests. Please try again later.",
+                    "retry_after_seconds": denied.retry_after_seconds,
+                },
+            )
     logger.info(
         payload.event,
         request_id=getattr(request.state, "request_id", None),

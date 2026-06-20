@@ -3,6 +3,7 @@
 # Implements TSD Section 8: Validate and sanitize all inputs
 
 import hashlib
+import ipaddress
 import logging
 
 import httpx
@@ -397,25 +398,29 @@ async def verify_turnstile_dependency(request: Request) -> bool:
     return True
 
 
-def get_client_ip(request: Request) -> str:
-    """
-    Extracts the client's IP address from the request.
-    Assumes a standard proxy setup (e.g., Vercel/Render) where the
-    client IP is in the 'x-forwarded-for' header.
-    """
-    # Implements TSD FR-003: Rate Limiting (1 req/IP/24h)
-    # This is a critical security/cost control point.
+def _canonical_ip(value: str | None) -> str | None:
+    candidate = (value or "").strip()
+    if not candidate or len(candidate) > 64:
+        return None
+    try:
+        return ipaddress.ip_address(candidate).compressed
+    except ValueError:
+        return None
 
-    # Cloudflare canonical client IP header
-    cf_connecting_ip = request.headers.get("cf-connecting-ip")
-    if cf_connecting_ip:
-        return cf_connecting_ip.strip()
 
-    # Check for common proxy headers
-    x_forwarded_for = request.headers.get("x-forwarded-for")
-    if x_forwarded_for:
-        # The first IP is the client's IP
-        return x_forwarded_for.split(",")[0].strip()
+def get_client_ip(request: Request) -> str | None:
+    """Return a validated client address without creating an unknown-IP bucket."""
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded and len(forwarded) <= 512:
+        valid_chain = [
+            canonical
+            for part in forwarded.split(",")
+            if (canonical := _canonical_ip(part)) is not None
+        ]
+        if valid_chain:
+            # Trust boundary: without a repository-defined proxy allowlist, use the
+            # rightmost valid hop, which is the value closest to the platform proxy.
+            return valid_chain[-1]
 
-    # Fallback to direct client host
-    return request.client.host if request.client else "unknown_ip"
+    direct_host = request.client.host if request.client else None
+    return _canonical_ip(direct_host)

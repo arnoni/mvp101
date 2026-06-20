@@ -1,5 +1,18 @@
 class KeyBuilder:
     @staticmethod
+    def abuse_rate_limit(
+        route: str,
+        dimension: str,
+        identity_hash: str,
+        window_bucket: int,
+    ) -> str:
+        route_key = route.strip("/").replace("/", "_") or "root"
+        return (
+            f"dd:ratelimit:v1:{route_key}:{dimension}:"
+            f"{identity_hash}:{window_bucket}"
+        )
+
+    @staticmethod
     def quota_rolling60(identity_kind: str, identity_id: str) -> str:
         """identity_kind: 'anon' or 'paid' (paid uses user_id)"""
         return f"dd:quota:{identity_kind}:{identity_id}:rolling60"

@@ -56,6 +56,21 @@ class Settings(BaseSettings):
     ENABLE_REDIS: bool = Field(False, description="Feature flag for Redis")
     ENABLE_PAID_TIER: bool = Field(True, description="Feature flag for Paid Tier")
     SECRET_KEY: str = Field("dev_insecure_secret", description="Secret key for signing cookies")
+    RATE_LIMIT_HMAC_SECRET: Optional[str] = Field(
+        None,
+        description="Dedicated HMAC secret for opaque rate-limit identities",
+    )
+    RATE_LIMITING_ENABLED: bool = Field(True, description="Enable centralized abuse limiting")
+    SEARCH_RATE_LIMIT_REQUESTS: int = Field(20, ge=1)
+    SEARCH_RATE_LIMIT_WINDOW_SECONDS: int = Field(60, ge=1)
+    MAGIC_LINK_IP_RATE_LIMIT_REQUESTS: int = Field(10, ge=1)
+    MAGIC_LINK_IP_RATE_LIMIT_WINDOW_SECONDS: int = Field(3600, ge=1)
+    MAGIC_LINK_EMAIL_RATE_LIMIT_REQUESTS: int = Field(3, ge=1)
+    MAGIC_LINK_EMAIL_RATE_LIMIT_WINDOW_SECONDS: int = Field(900, ge=1)
+    UNLOCK_INTENT_RATE_LIMIT_REQUESTS: int = Field(5, ge=1)
+    UNLOCK_INTENT_RATE_LIMIT_WINDOW_SECONDS: int = Field(60, ge=1)
+    TELEMETRY_RATE_LIMIT_REQUESTS: int = Field(60, ge=1)
+    TELEMETRY_RATE_LIMIT_WINDOW_SECONDS: int = Field(60, ge=1)
     ADMIN_BYPASS_TOKEN: Optional[str] = Field(None, description="Signed admin token to bypass quotas/fallbacks")
     DATABASE_URL: Optional[str] = Field(None, description="PostgreSQL connection string (e.g., Neon) with sslmode=require")
     APP_ORIGIN: Optional[str] = Field(None, description="Allowed origin for CSRF checks, e.g. https://yourdomain.com")

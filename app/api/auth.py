@@ -11,7 +11,7 @@ import structlog
 from datetime import datetime, timezone
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Request, Response, Depends
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import insert, select, text, update, func
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -23,8 +23,17 @@ from app.models.models import FunnelEvent, MagicLinkToken, SimulatedBillingPlan,
 from app.services.analytics import capture
 from app.services.entitlement_service import TierStatus
 from app.services.magic_auth_service import MagicAuthService, PaymentGatewayFactory
-from app.utils.rate_limits import check_magic_link_rate_limit
-from app.utils.security import get_client_ip, verify_turnstile
+from app.utils.rate_limits import (
+    RateLimitBackendError,
+    RateLimitIdentity,
+    check_rate_limits,
+    denied_result,
+    hash_rate_limit_identity,
+    log_rate_limit_backend_error,
+    log_rate_limit_exceeded,
+    normalize_email,
+)
+from app.utils.security import get_client_ip, protect_mutation, verify_turnstile
 from app.utils.url import resolve_checkout_base, resolve_public_base_url
 from email_service import EmailService
 
@@ -334,6 +343,7 @@ async def _fetch_dodo_checkout_status(checkout_id: str) -> dict | None:
 
 
 async def _send_magic_link_email(*, email: str, request_ip: str | None, db_engine, redis_cli) -> bool:
+    email_hash = hash_rate_limit_identity("email", normalize_email(email))
     try:
         service = MagicAuthService(
             db=db_engine,
@@ -352,12 +362,12 @@ async def _send_magic_link_email(*, email: str, request_ip: str | None, db_engin
             )
         )
         if not sent:
-            logger.warning("magic_link_email_send_returned_false", email=email)
+            logger.warning("magic_link_email_send_returned_false", email_hash=email_hash)
         return sent
     except Exception as exc:
         logger.error(
             "magic_link_email_send_exception",
-            email=email,
+            email_hash=email_hash,
             error_class=exc.__class__.__name__,
             error_detail=str(exc),
         )
@@ -387,27 +397,58 @@ async def _resend_magic_link_impl(payload: MagicLinkRequest, request: Request, *
     request_id = getattr(request.state, "request_id", None)
     redis_cli = getattr(request.app.state, "redis", None)
     db_engine = getattr(request.app.state, "db_engine", None)
+    email = normalize_email(payload.email)
+    email_hash = hash_rate_limit_identity("email", email)
+    ip = get_client_ip(request)
+    request.state.rate_limit_client_ip_present = bool(ip)
     logger.info(
         "magic_link_resend_received",
         request_id=request_id,
-        email=payload.email.strip().lower(),
+        email_hash=email_hash,
         enforce_turnstile=enforce_turnstile,
         has_intent_id=bool(payload.intent_id),
     )
-    if not redis_cli or not db_engine:
-        logger.warning("magic_link_unavailable_services", has_redis=bool(redis_cli), has_db=bool(db_engine))
-        return generic_response
+    await protect_mutation(request)
 
-    email = payload.email.strip().lower()
-    ip = get_client_ip(request)
+    if settings.RATE_LIMITING_ENABLED and ip:
+        try:
+            ip_results = await check_rate_limits(
+                redis_cli,
+                route="/api/auth/magic-link",
+                identities=[RateLimitIdentity("ip", "ip", ip)],
+                limit=settings.MAGIC_LINK_IP_RATE_LIMIT_REQUESTS,
+                window_seconds=settings.MAGIC_LINK_IP_RATE_LIMIT_WINDOW_SECONDS,
+            )
+        except RateLimitBackendError as exc:
+            log_rate_limit_backend_error(
+                request,
+                route="/api/auth/magic-link",
+                dimension=exc.dimension,
+                failure_policy="generic_response_fail_closed",
+                error=exc.error,
+            )
+            return generic_response
+        denied = denied_result(ip_results)
+        if denied:
+            log_rate_limit_exceeded(request, denied)
+            return JSONResponse(
+                status_code=429,
+                headers={"Retry-After": str(denied.retry_after_seconds)},
+                content={
+                    "error": "RATE_LIMITED",
+                    "message": generic_response.message,
+                    "retry_after_seconds": denied.retry_after_seconds,
+                },
+            )
+
     if enforce_turnstile:
         if not payload.turnstile_token:
-            logger.info("magic_link_turnstile_missing", email=email)
+            logger.info("magic_link_turnstile_missing", email_hash=email_hash)
             import sentry_sdk
             with sentry_sdk.push_scope() as scope:
                 scope.set_tag("endpoint", "magic_link")
                 scope.set_tag("failure_reason", "turnstile_invalid")
-                scope.set_extra("ip", get_client_ip(request))
+                scope.set_extra("client_ip_present", bool(ip))
                 sentry_sdk.capture_message(
                     "Turnstile block on magic link request",
                     level="warning"
@@ -420,26 +461,65 @@ async def _resend_magic_link_impl(payload: MagicLinkRequest, request: Request, *
             user_agent=request.headers.get("user-agent"),
         )
         if not turnstile_ok:
-            logger.info("magic_link_turnstile_invalid", email=email, client_ip=ip)
+            logger.info(
+                "magic_link_turnstile_invalid",
+                email_hash=email_hash,
+                client_ip_present=bool(ip),
+            )
             import sentry_sdk
             with sentry_sdk.push_scope() as scope:
                 scope.set_tag("endpoint", "magic_link")
                 scope.set_tag("failure_reason", "turnstile_invalid")
-                scope.set_extra("ip", get_client_ip(request))
+                scope.set_extra("client_ip_present", bool(ip))
                 sentry_sdk.capture_message(
                     "Turnstile block on magic link request",
                     level="warning"
                 )
             return generic_response
-        logger.info("magic_link_turnstile_valid", request_id=request_id, email=email, client_ip=ip)
+        logger.info(
+            "magic_link_turnstile_valid",
+            request_id=request_id,
+            email_hash=email_hash,
+            client_ip_present=bool(ip),
+        )
 
-    try:
-        within_rate_limit = await check_magic_link_rate_limit(redis_cli, email, ip)
-        if not within_rate_limit:
-            logger.warning("magic_link_rate_limited", email=email, client_ip=ip)
+    if settings.RATE_LIMITING_ENABLED:
+        try:
+            email_results = await check_rate_limits(
+                redis_cli,
+                route="/api/auth/magic-link",
+                identities=[RateLimitIdentity("email", "email", email)],
+                limit=settings.MAGIC_LINK_EMAIL_RATE_LIMIT_REQUESTS,
+                window_seconds=settings.MAGIC_LINK_EMAIL_RATE_LIMIT_WINDOW_SECONDS,
+            )
+        except RateLimitBackendError as exc:
+            log_rate_limit_backend_error(
+                request,
+                route="/api/auth/magic-link",
+                dimension=exc.dimension,
+                failure_policy="generic_response_fail_closed",
+                error=exc.error,
+            )
             return generic_response
-    except Exception as exc:
-        logger.error("magic_link_rate_limit_check_failed", email=email, client_ip=ip, error=str(exc))
+        denied = denied_result(email_results)
+        if denied:
+            log_rate_limit_exceeded(request, denied)
+            return JSONResponse(
+                status_code=429,
+                headers={"Retry-After": str(denied.retry_after_seconds)},
+                content={
+                    "error": "RATE_LIMITED",
+                    "message": generic_response.message,
+                    "retry_after_seconds": denied.retry_after_seconds,
+                },
+            )
+
+    if not redis_cli or not db_engine:
+        logger.warning(
+            "magic_link_unavailable_services",
+            has_redis=bool(redis_cli),
+            has_db=bool(db_engine),
+        )
         return generic_response
 
     active_pass = None
@@ -465,7 +545,11 @@ async def _resend_magic_link_impl(payload: MagicLinkRequest, request: Request, *
             )
             ownership_row = ownership_result.mappings().first()
             if ownership_row and str(ownership_row["email"]).strip().lower() != email:
-                logger.warning("magic_link_simulated_intent_ownership_mismatch", email=email, intent_id=payload.intent_id)
+                logger.warning(
+                    "magic_link_simulated_intent_ownership_mismatch",
+                    email_hash=email_hash,
+                    intent_id=payload.intent_id,
+                )
                 return generic_response
 
         active_pass_result = await conn.execute(
@@ -515,15 +599,16 @@ async def _resend_magic_link_impl(payload: MagicLinkRequest, request: Request, *
             ownership_row = ownership_result.mappings().first()
             if ownership_row and str(ownership_row["email"]).strip().lower() != email:
                 logger.warning(
-                    "AUTH_RESEND_INTENT_OWNERSHIP_MISMATCH: "
-                    f"requested_email={email} intent_id={payload.intent_id}"
+                    "magic_link_intent_ownership_mismatch",
+                    email_hash=email_hash,
+                    intent_id=payload.intent_id,
                 )
                 return generic_response
 
     logger.info(
         "magic_link_resend_lookup_completed",
         request_id=request_id,
-        email=email,
+        email_hash=email_hash,
         has_simulated_intent=bool(simulated_intent),
         has_active_pass=bool(active_pass),
         has_pending_intent=bool(pending_intent),
@@ -531,10 +616,19 @@ async def _resend_magic_link_impl(payload: MagicLinkRequest, request: Request, *
 
     if simulated_intent:
         try:
-            logger.info("magic_link_resend_simulated_send_started", request_id=request_id, email=email, intent_id=str(simulated_intent["intent_id"]))
+            logger.info(
+                "magic_link_resend_simulated_send_started",
+                request_id=request_id,
+                email_hash=email_hash,
+                intent_id=str(simulated_intent["intent_id"]),
+            )
             sent = await _send_magic_link_email(email=email, request_ip=ip, db_engine=db_engine, redis_cli=redis_cli)
             if not sent:
-                logger.warning("magic_link_send_failed_simulated", email=email, intent_id=str(simulated_intent["intent_id"]))
+                logger.warning(
+                    "magic_link_send_failed_simulated",
+                    email_hash=email_hash,
+                    intent_id=str(simulated_intent["intent_id"]),
+                )
                 raise HTTPException(
                     status_code=502,
                     detail={
@@ -571,12 +665,22 @@ async def _resend_magic_link_impl(payload: MagicLinkRequest, request: Request, *
                         )
                     )
                     capture(str(simulated_intent["user_id"]), "simulated_magic_sent", {"path": "resend"})
-            logger.info("magic_link_resend_simulated_send_finished", request_id=request_id, email=email, intent_id=str(simulated_intent["intent_id"]), sent=True)
+            logger.info(
+                "magic_link_resend_simulated_send_finished",
+                request_id=request_id,
+                email_hash=email_hash,
+                intent_id=str(simulated_intent["intent_id"]),
+                sent=True,
+            )
             return generic_response
         except HTTPException:
             raise
         except Exception as exc:
-            logger.exception("magic_link_simulated_flow_failed", email=email, error=str(exc))
+            logger.exception(
+                "magic_link_simulated_flow_failed",
+                email_hash=email_hash,
+                error_class=exc.__class__.__name__,
+            )
             try:
                 import sentry_sdk
                 sentry_sdk.capture_exception(exc)
@@ -717,7 +821,11 @@ async def _resend_magic_link_impl(payload: MagicLinkRequest, request: Request, *
                 )
             )
     except Exception as exc:
-        logger.error("magic_link_token_insert_failed", email=email, error=str(exc))
+        logger.error(
+            "magic_link_token_insert_failed",
+            email_hash=email_hash,
+            error_class=exc.__class__.__name__,
+        )
         return generic_response
 
     app_origin = resolve_public_base_url()
@@ -730,7 +838,11 @@ async def _resend_magic_link_impl(payload: MagicLinkRequest, request: Request, *
             expire_minutes=10,
         )
         if not sent:
-            logger.warning("magic_link_send_failed_real", email=email, reason="provider_returned_false")
+            logger.warning(
+                "magic_link_send_failed_real",
+                email_hash=email_hash,
+                reason="provider_returned_false",
+            )
             raise HTTPException(
                 status_code=502,
                 detail={
@@ -738,19 +850,28 @@ async def _resend_magic_link_impl(payload: MagicLinkRequest, request: Request, *
                     "message": "We could not send your access link right now. Please try again.",
                 },
             )
-        logger.info("magic_link_resend_real_send_finished", request_id=request_id, email=email, sent=True)
+        logger.info(
+            "magic_link_resend_real_send_finished",
+            request_id=request_id,
+            email_hash=email_hash,
+            sent=True,
+        )
     except HTTPException:
         raise
     except Exception as exc:
         logger.error(
             "magic_link_send_failed_real",
-            email=email,
+            email_hash=email_hash,
             reason="exception",
             error_class=exc.__class__.__name__,
             error_detail=str(exc),
         )
         return generic_response
-    logger.info("magic_link_resend_response_ready", request_id=request_id, email=email)
+    logger.info(
+        "magic_link_resend_response_ready",
+        request_id=request_id,
+        email_hash=email_hash,
+    )
     return generic_response
 
 

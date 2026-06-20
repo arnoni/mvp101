@@ -1,7 +1,21 @@
 from fastapi.testclient import TestClient
+import pytest
 
 from app.main import app
 from app.api.auth import AuthResponse
+from app.services.entitlement_service import EntitlementResult, TierStatus
+
+
+@pytest.fixture(autouse=True)
+def _allow_abuse_rate_limits(monkeypatch):
+    async def allow(*_args, **_kwargs):
+        return []
+
+    async def free_tier(*_args, **_kwargs):
+        return EntitlementResult(tier=TierStatus.FREE, daily_limit=3)
+
+    monkeypatch.setattr("app.api.billing.check_rate_limits", allow)
+    monkeypatch.setattr("app.core.middleware.EntitlementService.get_tier", free_tier)
 
 
 class _Result:
@@ -37,10 +51,10 @@ class _UnlockConn:
             self.recorder["simulated_payment_intents_inserts"] += 1
         if self._step == 1:  # feature flag
             return _Result(scalar=True)
-        if self._step == 2:  # upserted user id
-            return _Result(scalar="user-123")
-        if self._step == 3:  # active plan code
+        if self._step == 2:  # active plan code
             return _Result(scalar="1_day")
+        if self._step == 3:  # upserted user id
+            return _Result(scalar="user-123")
         return _Result(scalar=None)
 
 
@@ -61,6 +75,9 @@ class _UnlockEngine:
 
     def begin(self):
         return _Ctx(_UnlockConn(self.recorder))
+
+    async def dispose(self):
+        return None
 
 
 class _FakeAuthService:
@@ -84,9 +101,9 @@ def test_unlock_intent_inserts_new_simulated_payment_intent_per_valid_submission
     engine = _UnlockEngine()
     monkeypatch.setattr("app.api.billing.protect_mutation", _noop_protect_mutation)
     monkeypatch.setattr("app.api.billing.verify_turnstile", _always_valid_turnstile)
-    monkeypatch.setattr(app.state, "db_engine", engine, raising=False)
 
     with TestClient(app) as client:
+        monkeypatch.setattr(app.state, "db_engine", engine, raising=False)
         for idx in range(2):
             response = client.post(
                 "/api/billing/unlock-intent",
@@ -109,7 +126,7 @@ def test_login_deprecated_wrapper_uses_unified_magic_link_logic(monkeypatch):
         captured["enforce_turnstile"] = enforce_turnstile
         return AuthResponse(message="If this email is eligible, we sent a new access link.")
 
-    async def _fake_get_auth_service(_request):
+    async def _fake_get_auth_service():
         return _FakeAuthService(_UnlockEngine())
 
     app.dependency_overrides = {__import__("app.api.auth", fromlist=["get_auth_service"]).get_auth_service: _fake_get_auth_service}
@@ -130,7 +147,7 @@ def test_login_deprecated_wrapper_preserves_generic_message(monkeypatch):
     async def _fake_resend_impl(payload, request, *, enforce_turnstile):
         return AuthResponse(message="If this email is eligible, we sent a new access link.")
 
-    async def _fake_get_auth_service(_request):
+    async def _fake_get_auth_service():
         return _FakeAuthService(_UnlockEngine())
 
     app.dependency_overrides = {__import__("app.api.auth", fromlist=["get_auth_service"]).get_auth_service: _fake_get_auth_service}

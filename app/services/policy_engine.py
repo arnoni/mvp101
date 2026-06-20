@@ -27,7 +27,7 @@ class RequestContext(BaseModel):
     anon_id: str
     paid_tier: TierStatus
     area_code: str
-    client_ip: str
+    client_ip: str | None
     turnstile_token: Optional[str] = None
     user_id: Optional[str] = None
     entitlement_stale: bool = False

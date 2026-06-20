@@ -49,3 +49,11 @@ def validate_startup_security_settings(settings: Settings) -> None:
             env=settings.ENV,
             vercel_env=settings.VERCEL_ENV,
         )
+
+    if settings.is_production and not (settings.RATE_LIMIT_HMAC_SECRET or "").strip():
+        logger.critical(
+            "unsafe_production_config",
+            unsafe_variable="RATE_LIMIT_HMAC_SECRET",
+            action="refusing_startup",
+        )
+        raise RuntimeError("RATE_LIMIT_HMAC_SECRET must be set in production")
