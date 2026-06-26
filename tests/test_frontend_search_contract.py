@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 APP_JS = (ROOT / "public" / "static" / "app.js").read_text(encoding="utf-8")
 INDEX_HTML = (ROOT / "templates" / "index.html").read_text(encoding="utf-8")
@@ -8,6 +10,45 @@ APP_CSS = (ROOT / "public" / "static" / "app.css").read_text(encoding="utf-8")
 
 def test_main_search_button_is_explicit_button_not_native_submit():
     assert 'id="mainActionBtn" type="button"' in INDEX_HTML
+
+
+@pytest.mark.parametrize(
+    ("viewport_width", "usable_width"),
+    [
+        (320, 199),
+        (360, 239),
+        (375, 255),
+        (390, 269),
+        (412, 291),
+    ],
+)
+def test_location_placeholder_mobile_font_size_fits_measured_widths(
+    viewport_width, usable_width
+):
+    rule = """@media (max-width: 430px) {
+  #locationInput::placeholder {
+    font-size: clamp(11px, calc(5.75vw - 7.2px), 17px);
+  }
+}"""
+    assert rule in APP_CSS
+    assert "input::placeholder" not in APP_CSS
+    assert ".field input::placeholder" not in APP_CSS
+    assert "font-size: 17px;" in APP_CSS[APP_CSS.index("input {"):APP_CSS.index("input:focus")]
+
+    baseline_placeholder_width = 296.0
+    baseline_font_size = 17.0
+    font_size = min(17.0, max(11.0, viewport_width * 0.0575 - 7.2))
+    estimated_width = baseline_placeholder_width * font_size / baseline_font_size
+
+    assert estimated_width <= usable_width - 2
+
+
+def test_location_placeholder_mobile_rule_does_not_apply_to_tablet_or_desktop():
+    assert "@media (max-width: 430px)" in APP_CSS
+    assert "@media (min-width: 431px)" not in APP_CSS
+    assert "#locationInput::placeholder" in APP_CSS
+    assert "768px" not in APP_CSS[APP_CSS.index("#locationInput::placeholder"):]
+    assert "1440px" not in APP_CSS[APP_CSS.index("#locationInput::placeholder"):]
 
 
 def test_search_submit_telemetry_and_request_lifecycle_are_instrumented():

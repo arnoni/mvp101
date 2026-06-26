@@ -79,6 +79,13 @@ input {
   transition: border-color 0.2s;
 }
 input:focus { outline: none; border-color: rgba(114, 178, 255, 0.5); }
+
+@media (max-width: 430px) {
+  #locationInput::placeholder {
+    font-size: clamp(11px, calc(5.75vw - 7.2px), 17px);
+  }
+}
+
 .inline-error { min-height: 20px; text-align: center; color: #ffb4a8; font-size: 13px; margin-top: 8px; }
 
 /* BUTTONS */
