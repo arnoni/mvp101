@@ -153,7 +153,7 @@
         <label class="field field-full">
           <span>{{ t.get('location_input', 'Apartment location') }}</span>
           <input id="locationInput" name="location_input" type="text" inputmode="text" autocomplete="off"
-            autocapitalize="off" spellcheck="false" maxlength="2048" placeholder="16.0544, 108.2022 or Google Maps link"
+            autocapitalize="off" spellcheck="false" maxlength="2048" placeholder="{{ t.get('placeholder', '16.0544, 108.2022 or Google Maps link') }}"
             aria-describedby="coordError parsedPreview">
         </label>
         <div class="parsed-preview hidden" id="parsedPreview" aria-live="polite"></div>
