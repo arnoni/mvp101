@@ -1,7 +1,6 @@
 import json
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 PUBLIC_STATIC = ROOT / "public" / "static"
 MAIN_PY = (ROOT / "app" / "main.py").read_text(encoding="utf-8")
@@ -63,21 +62,22 @@ def test_static_dir_resolution_prefers_public_static(tmp_path):
     assert _resolve_static_dir(str(tmp_path)) == str(public_static)
 
 
-def test_dd_icon_is_preserved_and_copied_byte_for_byte():
-    root_icon = ROOT / "dd_icon.png"
-    public_icon = ROOT / "public" / "dd_icon.png"
+def test_browser_icon_asset_is_present_under_public_root():
+    public_icon = ROOT / "public" / "dilldrill_new_logo_2026.png"
 
-    assert root_icon.is_file()
     assert public_icon.is_file()
-    assert root_icon.read_bytes() == public_icon.read_bytes()
+    assert public_icon.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
 
 
-def test_templates_reference_public_png_icon_without_missing_favicons():
+def test_templates_reference_public_png_logo_without_missing_favicons():
     active_templates = [INDEX_HTML, LEGAL_BASE_HTML]
 
     for template in active_templates:
-        assert '<link rel="icon" type="image/png" href="/dd_icon.png">' in template
-        assert '<link rel="apple-touch-icon" href="/dd_icon.png">' in template
+        assert (
+            '<link rel="icon" type="image/png" href="/dilldrill_new_logo_2026.png">'
+            in template
+        )
+        assert '<link rel="apple-touch-icon" href="/dilldrill_new_logo_2026.png">' in template
         assert "/favicon.ico" not in template
 
 
@@ -87,7 +87,7 @@ def test_favicon_redirect_is_configured_before_fastapi_catch_all():
 
     assert redirects[0] == {
         "source": "/favicon.ico",
-        "destination": "/dd_icon.png",
+        "destination": "/dilldrill_new_logo_2026.png",
         "permanent": True,
     }
     assert rewrites[-1] == {"source": "/(.*)", "destination": "app/main.py"}

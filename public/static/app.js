@@ -46,6 +46,7 @@
     unlock: { plan: "sim_1_day", email: "", step: 1, uiSurface: null, cooldownUntil: 0, submitting: false, resendSubmitting: false },
     report: { type: "active", note: "", locationRaw: "", locationParsed: null, locationError: null, locationSource: "manual_input", locationSourceLocked: false, uiState: "idle", quotaBlocked: false, submitAttemptId: 0, autoCloseTimer: null },
     modals: { active: null } };
+  state.report.extraTypes = [];
   const ARC_LENGTH = 377;
   const MIN_ANGLE = -82;
   const MAX_SWEEP = 164;
@@ -1190,6 +1191,7 @@
   function resetReportModal() {
     window.clearTimeout(state.report.autoCloseTimer);
     state.report = { type: "active", note: "", locationRaw: "", locationParsed: null, locationError: null, locationSource: "manual_input", locationSourceLocked: false, uiState: "idle", quotaBlocked: false, submitAttemptId: state.report.submitAttemptId + 1, autoCloseTimer: null };
+    state.report.extraTypes = [];
     setHidden("reportFormState", false);
     setHidden("reportSuccessState", true);
     setText("reportError", "");
@@ -1201,6 +1203,9 @@
     $("reportTypeGrid")?.querySelectorAll("[data-report-type]").forEach((pill) => { const active = REPORT_TYPE_VALUES[pill.dataset.reportType] === "active";
       pill.classList.toggle("active", active);
       pill.setAttribute("aria-checked", active ? "true" : "false"); });
+    $("noticedAlsoGrid")?.querySelectorAll("[data-extra-report-type]").forEach((pill) => {
+      pill.classList.remove("active");
+      pill.setAttribute("aria-pressed", "false"); });
     setButtonLoading($("reportSubmitBtn"), false);
     prefillReportLocation(); }
   async function parseReportLocation() { const raw = normalizeInput($("reportLocationInput")?.value || "");
@@ -1231,6 +1236,10 @@
     if (!token) { setText("reportError", document.body.dataset.labelSecurityCheckRequired || "Please complete the security check."); return; }
     const attemptId = ++state.report.submitAttemptId;
     setButtonLoading($("reportSubmitBtn"), true);
+    // TODO: Persist extra_report_types (state.report.extraTypes) once
+    // backend/database schema accepts this field. Not sent to
+    // /api/user-reports yet — both UGCReportRequest and UserReportRequest
+    // use extra="forbid" and will reject unknown fields.
     try { const { data } = await apiPost("/api/user-reports", {
         lat: parsed.lat,
         lon: parsed.lng,
@@ -1272,6 +1281,11 @@
         window.posthog?.capture?.("report_sent", {
           $current_url: window.location.href
         });
+        if (state.report.extraTypes.length > 0) {
+          window.posthog?.capture?.("noticed_also_selected", {
+            values: state.report.extraTypes,
+          });
+        }
         window.posthog?.flush?.();
       } catch (_) {}
       state.report.autoCloseTimer = window.setTimeout(() => closeModal("reportModalLayer"), 2000);
@@ -1508,6 +1522,20 @@
       $("reportTypeGrid")?.querySelectorAll("[data-report-type]").forEach((el) => { const active = el === pill;
         el.classList.toggle("active", active);
         el.setAttribute("aria-checked", active ? "true" : "false"); }); });
+    $("noticedAlsoGrid")?.addEventListener("click", (event) => {
+      const pill = event.target.closest?.("[data-extra-report-type]");
+      if (!pill) return;
+      const value = pill.dataset.extraReportType;
+      const idx = state.report.extraTypes.indexOf(value);
+      if (idx === -1) {
+        state.report.extraTypes.push(value);
+      } else {
+        state.report.extraTypes.splice(idx, 1);
+      }
+      const selected = state.report.extraTypes.includes(value);
+      pill.classList.toggle("active", selected);
+      pill.setAttribute("aria-pressed", selected ? "true" : "false");
+    });
     $("reportNote")?.addEventListener("input", () => { const text = $("reportNote")?.value || ""; state.report.note = text; setText("reportCharCount", `${text.length}/180`); });
     $("reportSubmitBtn")?.addEventListener("click", submitReport);
     $("shareText")?.addEventListener("input", updateShareCounter);

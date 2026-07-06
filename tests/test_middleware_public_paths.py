@@ -13,6 +13,7 @@ from app.services.entitlement_service import EntitlementResult, TierStatus
 def test_public_asset_predicate_allowlist_and_rejections():
     assert is_public_asset("/static/app.css") is True
     assert is_public_asset("/static/app.js") is True
+    assert is_public_asset("/dilldrill_new_logo_2026.png") is True
     assert is_public_asset("/dd_icon.png") is True
     assert is_public_asset("/favicon.ico") is True
     assert is_public_asset("/sw.js") is True

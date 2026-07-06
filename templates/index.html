@@ -6,8 +6,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#071935">
   <title>DillDrill – Construction & Demand Activity</title>
-  <link rel="icon" type="image/png" href="/dd_icon.png">
-  <link rel="apple-touch-icon" href="/dd_icon.png">
+  <link rel="icon" type="image/png" href="/dilldrill_new_logo_2026.png">
+  <link rel="apple-touch-icon" href="/dilldrill_new_logo_2026.png">
   <link rel="stylesheet" href="/static/app.css?v=1.2.3">
   
   <script nonce="{{ csp_nonce }}">
@@ -436,6 +436,19 @@
                 <button type="button" class="report-pill" data-report-type="construction_ended" role="radio"
                   aria-checked="false">
                   {{ t.get('construction_ended', 'Construction Ended') }}
+                </button>
+              </div>
+            </div>
+
+            <!-- NOTICED ALSO -->
+            <div class="report-card">
+              <div class="report-card__label">{{ t.get('noticed_also', 'Noticed Also') }}</div>
+              <div class="report-type-grid" id="noticedAlsoGrid">
+                <button type="button" class="report-pill" data-extra-report-type="poor_lighting" aria-pressed="false">
+                  {{ t.get('poor_lighting', 'Poor Lighting') }}
+                </button>
+                <button type="button" class="report-pill" data-extra-report-type="littered_street" aria-pressed="false">
+                  {{ t.get('littered_street', 'Littered Street') }}
                 </button>
               </div>
             </div>

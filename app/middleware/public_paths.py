@@ -6,7 +6,8 @@ def is_public_asset(path: str) -> bool:
     """Return True for approved state-independent public assets.
 
     Approved paths:
-    - /dd_icon.png: root icon fallback, no auth or tier logic.
+    - /dilldrill_new_logo_2026.png: root icon fallback, no auth or tier logic.
+    - /dd_icon.png: legacy root icon fallback, no auth or tier logic.
     - /favicon.ico: browser icon fallback, no auth or tier logic.
     - /static/: static mount assets, no auth or tier logic.
     - /sw.js: service worker route backed by static file, no auth or tier logic.
@@ -29,6 +30,7 @@ def is_public_asset(path: str) -> bool:
 
     exact_paths = frozenset({
         "/dd_icon.png",
+        "/dilldrill_new_logo_2026.png",
         "/favicon.ico",
         "/sw.js",
         "/offline.html",
