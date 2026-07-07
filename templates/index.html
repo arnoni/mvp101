@@ -397,10 +397,10 @@
               {{ t.get('submit_report', 'Submit Report') }}
             </h2>
             <p class="report-sheet__subtitle">
-              Help others avoid noisy surprises.
+              {{ t.get('report_subtitle', 'Help others avoid noisy surprises.') }}
             </p>
           </div>
-          <button class="report-sheet__close" type="button" data-close="reportModalLayer" aria-label="Close">✕</button>
+          <button class="report-sheet__close" type="button" data-close="reportModalLayer" aria-label="{{ t.get('modal_close', 'Close') }}">✕</button>
         </div>
 
         <div class="report-sheet__body">
@@ -414,7 +414,7 @@
                 class="report-card__value report-location-input"
                 id="reportLocationInput"
                 type="text"
-                placeholder="Paste coordinates or Google Maps link..."
+                placeholder="{{ t.get('location_placeholder', 'Paste coordinates or Google Maps link...') }}"
                 autocomplete="off"
                 spellcheck="false"
               />
