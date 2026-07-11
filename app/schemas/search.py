@@ -1,7 +1,7 @@
 from enum import Enum
 from typing import Optional
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 
 class SearchTarget(str, Enum):
@@ -11,8 +11,10 @@ class SearchTarget(str, Enum):
 
 
 class SearchRequest(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
     lat: Optional[float] = None
-    lon: Optional[float] = None
+    lon: Optional[float] = Field(default=None, validation_alias=AliasChoices("lon", "lng"))
     location_input: Optional[str] = Field(default=None, max_length=2048)
     target: SearchTarget = SearchTarget.BOTH
     turnstile_token: Optional[str] = None
