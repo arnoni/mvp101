@@ -81,6 +81,18 @@ def test_templates_reference_public_png_logo_without_missing_favicons():
         assert "/favicon.ico" not in template
 
 
+def test_homepage_open_graph_metadata_is_present():
+    assert '<meta property="og:title" content="DillDrill">' in INDEX_HTML
+    assert (
+        '<meta property="og:description" content="Check construction now, sleep better later.">'
+        in INDEX_HTML
+    )
+    assert (
+        '<meta property="og:image" '
+        'content="https://dilldrill.com/dilldrill_new_logo_2026.png">' in INDEX_HTML
+    )
+
+
 def test_favicon_redirect_is_configured_before_fastapi_catch_all():
     redirects = VERCEL_JSON.get("redirects", [])
     rewrites = VERCEL_JSON.get("rewrites", [])
