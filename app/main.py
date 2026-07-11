@@ -3,6 +3,7 @@
 # ruff: noqa: E402
 
 from fastapi import FastAPI, Request, status, HTTPException
+from fastapi.encoders import jsonable_encoder
 from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -536,7 +537,7 @@ async def http_exception_handler(request: Request, exc: StarletteHTTPException):
         content={
             "detail": {
                 "error": "HTTP_ERROR",
-                "detail": detail_payload,
+                "detail": jsonable_encoder(detail_payload),
                 "status_code": exc.status_code,
                 "error_id": error_id,
             }
@@ -558,7 +559,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
         content={
             "detail": {
                 "error": "VALIDATION_ERROR",
-                "detail": exc.errors(),
+                "detail": jsonable_encoder(exc.errors()),
                 "error_id": error_id
             }
         }
