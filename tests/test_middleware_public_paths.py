@@ -2,6 +2,7 @@ from unittest.mock import AsyncMock, patch
 
 from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
+from upstash_redis.asyncio import Redis
 
 from app.core.config import settings
 from app.core.middleware import EntitlementMiddleware
@@ -91,3 +92,23 @@ def test_entitlement_not_bypassed_for_api_search():
     assert response.status_code == 200
     assert response.json() == {"tier": "FREE"}
     get_tier.assert_called_once()
+
+
+def test_unmatched_non_public_path_reads_entitlement_without_rate_limit_eval():
+    app = FastAPI()
+    redis = AsyncMock(spec=Redis)
+    redis.get = AsyncMock(return_value=None)
+    redis.eval = AsyncMock()
+    app.state.redis = redis
+    app.state.db_engine = None
+    app.add_middleware(EntitlementMiddleware)
+    app.add_middleware(IdentityMiddleware)
+
+    with patch("app.services.redis_client.redis_client", AsyncMock()):
+        response = TestClient(app).get("/app/main.py")
+
+    assert response.status_code == 404
+    redis.get.assert_awaited_once()
+    entitlement_key = redis.get.await_args.args[0]
+    assert entitlement_key.startswith("dd:policy:entitlement:status:")
+    redis.eval.assert_not_awaited()

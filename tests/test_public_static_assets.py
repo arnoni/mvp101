@@ -93,16 +93,16 @@ def test_homepage_open_graph_metadata_is_present():
     )
 
 
-def test_favicon_redirect_is_configured_before_fastapi_catch_all():
+def test_favicon_redirect_does_not_clobber_fastapi_request_paths():
     redirects = VERCEL_JSON.get("redirects", [])
-    rewrites = VERCEL_JSON.get("rewrites", [])
 
     assert redirects[0] == {
         "source": "/favicon.ico",
         "destination": "/dilldrill_new_logo_2026.png",
         "permanent": True,
     }
-    assert rewrites[-1] == {"source": "/(.*)", "destination": "app/main.py"}
+    assert VERCEL_JSON.get("rewrites", []) == []
+    assert '@app.get("/", response_class=HTMLResponse)' in MAIN_PY
 
 
 def test_fastapi_no_longer_has_204_favicon_route():
