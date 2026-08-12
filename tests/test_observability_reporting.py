@@ -34,6 +34,20 @@ _install_sentry_stub()
 observability = importlib.import_module("app.core.observability")
 
 
+def test_init_sentry_disables_local_variable_capture(monkeypatch):
+    sentry_init = MagicMock()
+    monkeypatch.setattr(observability.sentry_sdk, "init", sentry_init)
+
+    observability.init_sentry(
+        dsn="https://public@example.invalid/1",
+        env="production",
+        release="test-release",
+    )
+
+    assert sentry_init.call_args.kwargs["include_local_variables"] is False
+    assert sentry_init.call_args.kwargs["attach_stacktrace"] is True
+
+
 def test_capture_message_sanitizes_context_and_sends_sentry_message(monkeypatch):
     pushed_scope = MagicMock()
     push_context = MagicMock()

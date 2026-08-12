@@ -149,6 +149,7 @@ def init_sentry(dsn: str | None, env: str, release: str | None) -> None:
         ],
         traces_sample_rate=float(os.getenv("SENTRY_TRACES_SAMPLE_RATE", "0.0")),
         send_default_pii=False,
+        include_local_variables=False,
         attach_stacktrace=True,
         max_breadcrumbs=int(os.getenv("SENTRY_MAX_BREADCRUMBS", "100")),
         before_send=_before_send,
