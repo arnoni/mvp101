@@ -1,5 +1,10 @@
+import asyncio
 import json
 from pathlib import Path
+
+import pytest
+from fastapi import HTTPException
+from starlette.requests import Request
 
 ROOT = Path(__file__).resolve().parents[1]
 PUBLIC_STATIC = ROOT / "public" / "static"
@@ -118,3 +123,37 @@ def test_service_worker_and_offline_urls_stay_stable():
     assert 'os.path.join(static_dir, "offline.html")' in MAIN_PY
     assert "navigator.serviceWorker.register" not in APP_JS
     assert "'/offline.html'" in SW_JS
+
+
+@pytest.mark.parametrize(
+    ("handler_name", "path", "detail"),
+    [
+        ("service_worker", "/sw.js", "service worker unavailable"),
+        ("offline", "/offline.html", "offline page unavailable"),
+    ],
+)
+def test_root_static_handlers_guard_missing_static_dir(
+    monkeypatch, handler_name, path, detail
+):
+    from app import main
+
+    monkeypatch.setattr(main, "static_dir", None)
+    request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": path,
+            "headers": [],
+            "query_string": b"",
+            "server": ("testserver", 80),
+            "client": ("testclient", 50000),
+            "scheme": "http",
+            "root_path": "",
+        }
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        asyncio.run(getattr(main, handler_name)(request))
+
+    assert exc_info.value.status_code == 500
+    assert exc_info.value.detail == detail

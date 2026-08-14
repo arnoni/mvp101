@@ -324,6 +324,9 @@ async def research_access(request: Request):
 
 @app.get("/sw.js", response_class=HTMLResponse)
 async def service_worker(request: Request):
+    if static_dir is None:
+        raise HTTPException(status_code=500, detail="service worker unavailable")
+
     try:
         with open(os.path.join(static_dir, "sw.js"), "r", encoding="utf-8") as f:
             return HTMLResponse(content=f.read(), media_type="application/javascript")
@@ -339,6 +342,9 @@ async def service_worker(request: Request):
         
 @app.get("/offline.html", response_class=HTMLResponse)
 async def offline(request: Request):
+    if static_dir is None:
+        raise HTTPException(status_code=500, detail="offline page unavailable")
+
     try:
         with open(os.path.join(static_dir, "offline.html"), "r", encoding="utf-8") as f:
             return HTMLResponse(content=f.read())
