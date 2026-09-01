@@ -474,48 +474,159 @@ button { font-family: inherit; }
 .gauge-btn.unlock-styled:hover:not(:disabled) { box-shadow: 0 0 32px rgba(99, 102, 241, 1), inset 0 2px 6px rgba(255, 255, 255, 0.6); }
 
 
-.construction-gauge[data-celebration="running"] .gauge-arc {
-  animation: quiet-arc-pulse 3.4s ease-in-out forwards;
+.construction-gauge .gauge-outcome-effects,
+.construction-gauge .gauge-outcome-indicator {
   pointer-events: none;
   user-select: none;
 }
-
-.construction-gauge[data-celebration="running"] .gauge-needle {
-  pointer-events: none;
-  user-select: none;
-}
-
-/* Glow overlay — base state (off by default) */
-.gauge-arc-glow {
-  opacity: 0;
+.construction-gauge .gauge-outcome-sweep {
   fill: none;
-  stroke: #39ff88;
-  stroke-width: 20;
+  stroke-width: 18;
   stroke-linecap: round;
-  stroke-dasharray: 377;
-  stroke-dashoffset: 0;
-  filter: drop-shadow(0 0 8px rgba(57, 255, 136, 0.75));
+  stroke-dasharray: 28 349;
+  stroke-dashoffset: 377;
+  opacity: 0;
+}
+.construction-gauge .gauge-outcome-ring {
+  fill: none;
+  stroke-width: 3;
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.construction-gauge .gauge-outcome-ring--positive { stroke: #55f5ba; }
+.construction-gauge .gauge-outcome-ring--warning { stroke: #ff6536; }
+.construction-gauge .gauge-positive-particles circle {
+  fill: #7bffd1;
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.construction-gauge .gauge-warning-lights circle {
+  fill: #ff5b2e;
+  stroke: #ffc247;
+  stroke-width: 2;
+  opacity: 0;
+}
+.construction-gauge .gauge-outcome-indicator {
+  opacity: 0;
+  transform-box: fill-box;
+  transform-origin: center;
+  transition: opacity 240ms ease, transform 240ms ease;
+}
+.construction-gauge .gauge-outcome-indicator--positive circle {
+  fill: rgba(18, 88, 68, 0.96);
+  stroke: #61ffc1;
+  stroke-width: 3;
+}
+.construction-gauge .gauge-outcome-indicator--positive path {
+  fill: none;
+  stroke: #eafff6;
+  stroke-width: 4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.construction-gauge .gauge-outcome-indicator--warning path {
+  fill: rgba(112, 32, 17, 0.96);
+  stroke: #ffb83f;
+  stroke-width: 3;
+  stroke-linejoin: round;
+}
+.construction-gauge .gauge-outcome-indicator--warning line,
+.construction-gauge .gauge-outcome-indicator--warning circle {
+  stroke: #fff2d6;
+  fill: #fff2d6;
+  stroke-width: 4;
+  stroke-linecap: round;
+}
+.construction-gauge[data-outcome="positive"] .gauge-outcome-indicator--positive,
+.construction-gauge[data-outcome="warning"] .gauge-outcome-indicator--warning {
+  opacity: 1;
+  transform: scale(1);
+}
+.construction-gauge[data-outcome="warning"]::before {
+  content: "";
+  position: absolute;
+  inset: 2px 0 10px;
+  border: 1px solid rgba(255, 101, 54, 0.58);
+  border-radius: 28px;
+  box-shadow: 0 0 16px rgba(255, 70, 30, 0.18), inset 0 0 12px rgba(255, 154, 46, 0.08);
   pointer-events: none;
-  animation: none;
+}
+.construction-gauge[data-outcome="warning"] .gauge-warning-lights circle { opacity: 0.42; }
+.construction-gauge[data-effect="positive"] .gauge-outcome-sweep--positive {
+  animation: construction-positive-arc-travel 10s ease-in-out forwards;
+}
+.construction-gauge[data-effect="warning"] .gauge-outcome-sweep--warning {
+  animation: construction-warning-arc-travel 10s ease-in-out forwards;
+}
+.construction-gauge[data-effect="positive"] .gauge-outcome-ring--one,
+.construction-gauge[data-effect="warning"] .gauge-outcome-ring--one {
+  animation: construction-outcome-ring 5s ease-out 2;
+}
+.construction-gauge[data-effect="positive"] .gauge-outcome-ring--two,
+.construction-gauge[data-effect="warning"] .gauge-outcome-ring--two {
+  animation: construction-outcome-ring 5s ease-out 1.8s 2;
+}
+.construction-gauge[data-effect="positive"] .gauge-positive-particles circle {
+  animation: construction-positive-particle 3.35s ease-in-out 3;
+}
+.construction-gauge[data-effect="positive"] .gauge-positive-particles circle:nth-child(2) { animation-delay: 0.28s; }
+.construction-gauge[data-effect="positive"] .gauge-positive-particles circle:nth-child(3) { animation-delay: 0.56s; }
+.construction-gauge[data-effect="positive"] .gauge-positive-particles circle:nth-child(4) { animation-delay: 0.18s; }
+.construction-gauge[data-effect="positive"] .gauge-positive-particles circle:nth-child(5) { animation-delay: 0.72s; }
+.construction-gauge[data-effect="positive"] .gauge-positive-particles circle:nth-child(6) { animation-delay: 0.42s; }
+.construction-gauge[data-effect="warning"] .gauge-warning-lights circle {
+  animation: construction-warning-light 5s ease-in-out 2;
+}
+.construction-gauge[data-effect="warning"] .gauge-warning-lights circle:nth-child(2) { animation-delay: 0.45s; }
+.construction-gauge[data-effect="warning"] .gauge-warning-lights circle:nth-child(3) { animation-delay: 0.9s; }
+.construction-gauge[data-effect="positive"] .gauge-outcome-indicator--positive,
+.construction-gauge[data-effect="warning"] .gauge-outcome-indicator--warning {
+  animation: construction-outcome-indicator-arrive 900ms ease-out both;
+}
+.construction-gauge[data-effect="warning"]::before {
+  animation: construction-warning-frame 10s ease-in-out forwards;
 }
 
-/* Glow overlay — active when celebration is running */
-.construction-gauge[data-celebration="running"] .gauge-arc-glow {
-  animation: gaugeArcGlowOnce 3s ease-out forwards;
+@keyframes construction-positive-arc-travel {
+  0% { opacity: 0; stroke-dashoffset: 377; filter: drop-shadow(0 0 0 rgba(65, 233, 255, 0)); }
+  10% { opacity: 0.82; }
+  50% { opacity: 0.95; filter: drop-shadow(0 0 8px rgba(85, 245, 186, 0.72)); }
+  90% { opacity: 0.72; }
+  100% { opacity: 0; stroke-dashoffset: 0; filter: drop-shadow(0 0 0 rgba(65, 233, 255, 0)); }
 }
-
-@keyframes gaugeArcGlowOnce {
-  0%   { opacity: 0;    filter: drop-shadow(0 0 0px  rgba(57, 255, 136, 0));    }
-  20%  { opacity: 0.85; filter: drop-shadow(0 0 8px  rgba(57, 255, 136, 0.7));  }
-  70%  { opacity: 0.9;  filter: drop-shadow(0 0 14px rgba(57, 255, 136, 0.85)); }
-  100% { opacity: 0;    filter: drop-shadow(0 0 0px  rgba(57, 255, 136, 0));    }
+@keyframes construction-warning-arc-travel {
+  0% { opacity: 0; stroke-dashoffset: 377; filter: drop-shadow(0 0 0 rgba(255, 91, 46, 0)); }
+  10% { opacity: 0.78; }
+  50% { opacity: 0.94; filter: drop-shadow(0 0 9px rgba(255, 91, 46, 0.76)); }
+  90% { opacity: 0.68; }
+  100% { opacity: 0; stroke-dashoffset: 0; filter: drop-shadow(0 0 0 rgba(255, 91, 46, 0)); }
 }
-
-@keyframes quiet-arc-pulse {
-  0%, 100% { filter: url(#glowCon) drop-shadow(0 0 0px rgba(80, 255, 120, 0)) !important; }
-  20% { filter: url(#glowCon) drop-shadow(0 0 6px rgba(80, 255, 120, 0.35)) !important; }
-  45% { filter: url(#glowCon) drop-shadow(0 0 10px rgba(120, 220, 255, 0.45)) !important; }
-  70% { filter: url(#glowCon) drop-shadow(0 0 8px rgba(255, 220, 120, 0.35)) !important; }
+@keyframes construction-outcome-ring {
+  0% { opacity: 0; transform: scale(0.7); }
+  22% { opacity: 0.62; }
+  100% { opacity: 0; transform: scale(2.15); }
+}
+@keyframes construction-positive-particle {
+  0%, 100% { opacity: 0; transform: translateY(4px) scale(0.72); }
+  35% { opacity: 0.86; }
+  72% { opacity: 0.34; transform: translateY(-13px) scale(1); }
+}
+@keyframes construction-warning-light {
+  0%, 100% { opacity: 0.38; filter: drop-shadow(0 0 2px rgba(255, 88, 38, 0.28)); }
+  42% { opacity: 0.92; filter: drop-shadow(0 0 7px rgba(255, 88, 38, 0.76)); }
+  68% { opacity: 0.55; }
+}
+@keyframes construction-outcome-indicator-arrive {
+  0% { opacity: 0; transform: scale(0.72); }
+  65% { opacity: 1; transform: scale(1.08); }
+  100% { opacity: 1; transform: scale(1); }
+}
+@keyframes construction-warning-frame {
+  0%, 100% { border-color: rgba(255, 101, 54, 0.5); box-shadow: 0 0 12px rgba(255, 70, 30, 0.14), inset 0 0 8px rgba(255, 154, 46, 0.06); }
+  45% { border-color: rgba(255, 190, 61, 0.82); box-shadow: 0 0 24px rgba(255, 70, 30, 0.32), inset 0 0 16px rgba(255, 154, 46, 0.13); }
+  75% { border-color: rgba(255, 83, 38, 0.72); box-shadow: 0 0 18px rgba(255, 70, 30, 0.24), inset 0 0 12px rgba(255, 154, 46, 0.1); }
 }
 
 .message-board {
@@ -1648,18 +1759,24 @@ button:disabled {
   .gauge-wrap {
     animation: none !important;
   }
-  .construction-gauge[data-celebration="running"] .gauge-needle {
+  .construction-gauge[data-effect="positive"] .gauge-outcome-sweep--positive,
+  .construction-gauge[data-effect="warning"] .gauge-outcome-sweep--warning,
+  .construction-gauge[data-effect="positive"] .gauge-outcome-ring,
+  .construction-gauge[data-effect="warning"] .gauge-outcome-ring,
+  .construction-gauge[data-effect="positive"] .gauge-positive-particles circle,
+  .construction-gauge[data-effect="warning"] .gauge-warning-lights circle,
+  .construction-gauge[data-effect="positive"] .gauge-outcome-indicator--positive,
+  .construction-gauge[data-effect="warning"] .gauge-outcome-indicator--warning,
+  .construction-gauge[data-effect="warning"]::before {
     animation: none !important;
-    transform: none !important;
   }
-  .construction-gauge[data-celebration="running"] .gauge-arc {
-    animation: none !important;
-    filter: url(#glowCon) drop-shadow(0 0 4px rgba(80, 255, 120, 0.3)) !important;
-    transition: filter 1.8s ease-out;
-  }
-  .gauge-arc-glow {
-    animation: none !important;
+  .construction-gauge .gauge-outcome-sweep,
+  .construction-gauge .gauge-outcome-ring,
+  .construction-gauge .gauge-positive-particles circle {
     opacity: 0 !important;
+  }
+  .construction-gauge .gauge-outcome-indicator {
+    transition: none !important;
   }
 
 }

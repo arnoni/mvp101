@@ -53,10 +53,10 @@
   const PIVOT_X = 160;
   const PIVOT_Y = 180;
   const DURATION = 800;
-  const QUIET_CELEBRATION_DURATION = 3400;
+  const CONSTRUCTION_EFFECT_DURATION = 10000;
+  const CONSTRUCTION_POSITIVE_MAX = 15;
+  const CONSTRUCTION_WARNING_MIN = 86;
   const gaugeAnimationState = new WeakMap();
-  const QUIET_CELEBRATION_REDUCED_MOTION_DURATION = 1800;
-  const QUIET_PLACE_MESSAGE = "You found yourself a quiet place. Congratulations.";
   const VERIFY_TIMEOUT_TEXT = "Verification unavailable. Please check your connection or disable ad blockers and try again.";
   const SEARCH_CHALLENGE_CODES = new Set(["CHALLENGE_REQUIRED", "INVALID_CHALLENGE", "TURNSTILE_REQUIRED", "TURNSTILE_INVALID"]);
   const TURNSTILE_VISIBLE_WAIT_MS = 2500;
@@ -77,11 +77,10 @@
   let _checkoutOpSeq = 0;
   let _resendOpSeq = 0;
   let resendTimer = null;
-  let quietCelebrationState = "idle";
-  let quietCelebrationAnimation = null;
-  let quietCelebrationTimer = null;
-  let lastQuietCelebrationReportId = null;
-  const shownQuietCelebrationReportIds = new Set();
+  let constructionEffectTimer = null;
+  let constructionEffectAnimation = null;
+  let constructionEffectAttemptId = null;
+  const shownConstructionEffectReportIds = new Set();
   const $ = (id) => document.getElementById(id);
   function easeOutBack(t) {
     const c1 = 1.70158;
@@ -90,7 +89,10 @@
   function scoreToGaugeAngle(score) {
     const value = Math.max(0, Math.min(100, Number(score) || 0));
     return MIN_ANGLE + (MAX_SWEEP * value) / 100; }
-  function animateGauge(bandEl, needleEl, score) {
+  function reportConstructionEffectError(eventName, err, extra = {}) {
+    try { logClientException(eventName, err, { feature: "construction_outcome_effect", ...extra }); }
+    catch (loggingErr) { console.error(eventName, err, loggingErr); } }
+  function animateGauge(bandEl, needleEl, score, onComplete) {
     if (!bandEl || !needleEl) return;
     const value = Math.max(0, Math.min(100, Number(score) || 0));
     const targetOffset = ARC_LENGTH - (ARC_LENGTH * value) / 100;
@@ -101,6 +103,8 @@
     if (reduceMotion) { bandEl.style.strokeDashoffset = String(targetOffset);
       needleEl.setAttribute("transform", `rotate(${targetAngle} ${PIVOT_X} ${PIVOT_Y})`);
       gaugeAnimationState.delete(bandEl);
+      try { onComplete?.(); }
+      catch (err) { reportConstructionEffectError("construction_effect_completion_failed", err); }
       return; }
     const startOffset = Number.parseFloat(bandEl.style.strokeDashoffset || ARC_LENGTH);
     const currentTransform = needleEl.getAttribute("transform") || `rotate(${MIN_ANGLE} ${PIVOT_X} ${PIVOT_Y})`;
@@ -118,126 +122,134 @@
       bandEl.style.strokeDashoffset = String(offset);
       needleEl.setAttribute("transform", `rotate(${angle} ${PIVOT_X} ${PIVOT_Y})`);
       if (progress < 1) state.frameId = requestAnimationFrame(tick);
-      else gaugeAnimationState.delete(bandEl); }
+      else { gaugeAnimationState.delete(bandEl);
+        try { onComplete?.(); }
+        catch (err) { reportConstructionEffectError("construction_effect_completion_failed", err); } } }
     state.frameId = requestAnimationFrame(tick); }
-  function setQuietCelebrationState(next) {
-    quietCelebrationState = next === "running" ? "running" : "idle";
-    const gauge = $("constructionGauge");
-    if (!gauge) return;
-    if (quietCelebrationState === "running") {
-      // Always clear the trigger first, then re-apply it after a reflow.
-      // This guarantees selector re-match and keyframe restart across browsers.
-      gauge.removeAttribute("data-celebration");
+  function classifyConstructionOutcome(score) {
+    const value = Number(score);
+    if (!Number.isFinite(value) || value < 0 || value > 100) return "neutral";
+    if (value <= CONSTRUCTION_POSITIVE_MAX) return "positive";
+    if (value >= CONSTRUCTION_WARNING_MIN) return "warning";
+    return "neutral"; }
+  function setConstructionOutcomeState(outcome) {
+    try { const gauge = $("constructionGauge");
+      if (gauge) gauge.dataset.outcome = ["positive", "warning"].includes(outcome) ? outcome : "neutral";
+    } catch (err) { reportConstructionEffectError("construction_outcome_state_failed", err, { outcome }); } }
+  function setConstructionEffectState(effect) {
+    try { const gauge = $("constructionGauge");
+      if (!gauge) return;
+      gauge.dataset.effect = "idle";
+      if (!["positive", "warning"].includes(effect)) return;
       void gauge.offsetWidth;
-      // Force CSS animation restart on both animated elements before
-      // re-applying the trigger attribute. Without this, completed
-      // `forwards`-fill animations do not replay on attribute re-match.
-      for (const sel of [".gauge-arc-glow", ".gauge-arc"]) {
-        const el = gauge.querySelector(sel);
-        if (el) {
-          el.style.animation = "none";
-          void el.offsetWidth; // force reflow
-          el.style.removeProperty("animation");
-        }
-      }
-      gauge.dataset.celebration = "running";
-    } else {
-      gauge.removeAttribute("data-celebration");
-    } }
-  function cleanupQuietCelebrationVisuals() {
-    const needle = $("constructionNeedle");
-    if (needle) {
-      needle.style.willChange = "";
-      needle.style.transform = "";
-      needle.style.transformOrigin = "";
-      needle.style.transformBox = ""; }
-    window.clearTimeout(quietCelebrationTimer);
-    quietCelebrationTimer = null;
-    setQuietCelebrationState("idle"); }
-  function cancelQuietCelebration() {
-    try { quietCelebrationAnimation?.cancel?.(); } catch (_) {}
-    quietCelebrationAnimation = null;
-    cleanupQuietCelebrationVisuals(); }
-  function getQuietCelebrationReportId(result, score, attemptId) {
-    return String(result?.id || result?.report_id || result?.completed_at || result?.completion_timestamp || `${attemptId || "report"}:${normalizeKey(result?.coord_key || state.coords.key)}:${score}:${result?.result_tier || result?.message_code || ""}`); }
-  function isQuietPlaceCelebrationResult(result, score) {
-    if (!result || !Number.isFinite(score) || score < 0 || score >= 10) return false;
-    if (result.success === false || result.error || result.degraded || result.partial || result.cached) return false;
-    if (result.result_tier) return result.result_tier === "quiet_place_found";
-    if (score < 10) return true;
-    return result.message === QUIET_PLACE_MESSAGE; }
-  function captureQuietCelebrationShown() {
-    captureEvent("quiet_place_celebration_shown", {
+      gauge.dataset.effect = effect;
+    } catch (err) { reportConstructionEffectError("construction_effect_state_failed", err, { effect }); } }
+  function cleanupConstructionResultEffect() {
+    window.clearTimeout(constructionEffectTimer);
+    constructionEffectTimer = null;
+    constructionEffectAnimation = null;
+    constructionEffectAttemptId = null;
+    setConstructionEffectState("idle"); }
+  function cancelConstructionResultEffect(options = {}) {
+    const attemptId = Number(options.attemptId);
+    if (Number.isFinite(attemptId) && constructionEffectAttemptId !== null && constructionEffectAttemptId !== attemptId) return;
+    const activeAnimation = constructionEffectAnimation;
+    constructionEffectAnimation = null;
+    if (activeAnimation) {
+      try { activeAnimation.cancel(); }
+      catch (err) { reportConstructionEffectError("construction_effect_cancel_failed", err); }
+    }
+    cleanupConstructionResultEffect();
+    if (options.clearOutcome) setConstructionOutcomeState("neutral"); }
+  function getConstructionEffectReportId(result, score, attemptId) {
+    const explicitId = result?.id || result?.report_id || result?.completed_at || result?.completion_timestamp;
+    if (explicitId) return String(explicitId);
+    const coordKey = normalizeKey(result?.coord_key);
+    if (!attemptId || !coordKey || result?.message_code !== "CONSTRUCTION_READY") return null;
+    return `${attemptId}:${coordKey}:${score}:${result.message_code}`; }
+  function isPlayableConstructionEffectResult(result, score, outcome, attemptId, options = {}) {
+    if (options.restored || !result || !Number.isFinite(score) || score < 0 || score > 100) return false;
+    if (attemptId !== state.hero.searchAttemptId || !resultIsCurrent(result)) return false;
+    if (result.message_code !== "CONSTRUCTION_READY" || !["positive", "warning"].includes(outcome)) return false;
+    return !(result.success === false || result.error || result.degraded || result.partial || result.cached); }
+  function captureConstructionEffectShown(outcome) {
+    captureEvent("construction_outcome_effect_shown", {
       surface: "construction_report",
-      result_tier: "quiet_place_found",
-      construction_score_bucket: "under_10"
+      effect: outcome,
+      construction_score_bucket: outcome === "positive" ? "0_15" : "86_100"
     }); }
-  function markQuietCelebrationShown(reportId) {
-    shownQuietCelebrationReportIds.add(reportId);
-    lastQuietCelebrationReportId = reportId;
-    captureQuietCelebrationShown(); }
-  function runQuietCelebration(finalAngleDeg, reportId) {
-    if (!reportId) return;
-    cancelQuietCelebration();
-    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
-    if (reduceMotion) {
-      setQuietCelebrationState("running");
-      markQuietCelebrationShown(reportId);
-      quietCelebrationTimer = window.setTimeout(cleanupQuietCelebrationVisuals, QUIET_CELEBRATION_REDUCED_MOTION_DURATION);
-      return; }
+  function markConstructionEffectShown(reportId, outcome) {
+    shownConstructionEffectReportIds.add(reportId);
+    if (shownConstructionEffectReportIds.size > 40) shownConstructionEffectReportIds.delete(shownConstructionEffectReportIds.values().next().value);
+    captureConstructionEffectShown(outcome); }
+  function constructionNeedlePattern(outcome, finalScore) {
+    const clampScore = (score, low, high) => Math.max(low, Math.min(high, score));
+    const scores = outcome === "positive"
+      ? [finalScore, clampScore(finalScore + 3, 0, 15), clampScore(finalScore - 2, 0, 15), clampScore(finalScore + 5, 0, 15), clampScore(finalScore - 1, 0, 15), clampScore(finalScore + 2, 0, 15), finalScore]
+      : [finalScore, clampScore(finalScore - 3, 86, 100), clampScore(finalScore + 2, 86, 100), clampScore(finalScore - 5, 86, 100), clampScore(finalScore + 1, 86, 100), clampScore(finalScore - 2, 86, 100), finalScore];
+    const offsets = [0, 0.16, 0.35, 0.53, 0.72, 0.88, 1];
+    return scores.map((score, index) => ({ angle: scoreToGaugeAngle(score), offset: offsets[index] })); }
+  function startConstructionNeedlePattern(outcome, finalScore) {
     const needle = $("constructionNeedle");
-    if (!needle) return;
-    try {
-      setQuietCelebrationState("running");
-      markQuietCelebrationShown(reportId);
-      needle.style.willChange = "transform";
-      // Avoid needle.animate([ ... ]) here: CSS transforms on SVG <g> lose the rotate(cx cy) pivot.
-      const startedAt = performance.now();
-      let frameId = null;
-      let cancelled = false;
-      const keyframes = [
-        { angle: finalAngleDeg, offset: 0 },
-        { angle: finalAngleDeg + 20, offset: 0.25 },
-        { angle: finalAngleDeg + 60, offset: 0.5 },
-        { angle: finalAngleDeg - 40, offset: 0.75 },
-        { angle: finalAngleDeg, offset: 1 }
-      ];
-      const setNeedleAngle = (angle) => needle.setAttribute("transform", `rotate(${angle} ${PIVOT_X} ${PIVOT_Y})`);
-      const finish = () => {
-        if (quietCelebrationAnimation?.cancel === cancel) quietCelebrationAnimation = null;
-        setNeedleAngle(finalAngleDeg);
-        cleanupQuietCelebrationVisuals(); };
-      const cancel = () => {
-        cancelled = true;
-        if (frameId !== null) window.cancelAnimationFrame(frameId);
-        if (quietCelebrationAnimation?.cancel === cancel) quietCelebrationAnimation = null;
-        cleanupQuietCelebrationVisuals(); };
-      const tick = (now) => {
-        if (cancelled) return;
-        const progress = Math.min(1, (now - startedAt) / QUIET_CELEBRATION_DURATION);
+    if (!needle) throw new Error("construction_needle_missing");
+    const finalAngleDeg = scoreToGaugeAngle(finalScore);
+    const keyframes = constructionNeedlePattern(outcome, finalScore);
+    const startedAt = performance.now();
+    let frameId = null;
+    let cancelled = false;
+    const setNeedleAngle = (angle) => needle.setAttribute("transform", `rotate(${angle} ${PIVOT_X} ${PIVOT_Y})`);
+    const finish = () => {
+      setNeedleAngle(finalAngleDeg);
+      constructionEffectAnimation = null;
+      cleanupConstructionResultEffect(); };
+    const cancel = () => {
+      cancelled = true;
+      if (frameId !== null) window.cancelAnimationFrame(frameId);
+      setNeedleAngle(finalAngleDeg); };
+    const tick = (now) => {
+      if (cancelled) return;
+      try {
+        const progress = Math.min(1, (now - startedAt) / CONSTRUCTION_EFFECT_DURATION);
         let previous = keyframes[0];
         let next = keyframes[keyframes.length - 1];
         for (let i = 1; i < keyframes.length; i += 1) {
-          if (progress <= keyframes[i].offset) {
-            next = keyframes[i];
-            previous = keyframes[i - 1];
-            break; } }
+          if (progress <= keyframes[i].offset) { previous = keyframes[i - 1]; next = keyframes[i]; break; } }
         const span = Math.max(0.001, next.offset - previous.offset);
         const localProgress = Math.max(0, Math.min(1, (progress - previous.offset) / span));
         const eased = 0.5 - Math.cos(localProgress * Math.PI) / 2;
         setNeedleAngle(previous.angle + (next.angle - previous.angle) * eased);
         if (progress < 1) frameId = window.requestAnimationFrame(tick);
-        else finish(); };
-      quietCelebrationAnimation = { cancel };
-      frameId = window.requestAnimationFrame(tick);
-      quietCelebrationTimer = window.setTimeout(cancelQuietCelebration, 5000);
-    } catch (_) { cleanupQuietCelebrationVisuals(); } }
-  function maybeRunQuietCelebration(result, score, attemptId) {
-    if (!isQuietPlaceCelebrationResult(result, score)) {
-      cancelQuietCelebration();
-      return; }
-    const reportId = getQuietCelebrationReportId(result, score, attemptId);
-    runQuietCelebration(scoreToGaugeAngle(score), reportId); }
+        else finish();
+      } catch (err) {
+        reportConstructionEffectError("construction_effect_frame_failed", err, { outcome });
+        try { cancel(); }
+        catch (cancelErr) { reportConstructionEffectError("construction_effect_frame_cleanup_failed", cancelErr, { outcome }); }
+        cleanupConstructionResultEffect(); } };
+    frameId = window.requestAnimationFrame(tick);
+    return { cancel }; }
+  function runConstructionResultEffect(outcome, score, reportId, attemptId) {
+    if (!reportId || shownConstructionEffectReportIds.has(reportId)) return;
+    cancelConstructionResultEffect();
+    constructionEffectAttemptId = attemptId;
+    markConstructionEffectShown(reportId, outcome);
+    const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)")?.matches;
+    if (reduceMotion) { cleanupConstructionResultEffect(); return; }
+    try {
+      setConstructionEffectState(outcome);
+      constructionEffectAnimation = startConstructionNeedlePattern(outcome, score);
+      constructionEffectTimer = window.setTimeout(() => {
+        if (constructionEffectAnimation) cancelConstructionResultEffect();
+      }, CONSTRUCTION_EFFECT_DURATION + 250);
+    } catch (err) {
+      reportConstructionEffectError("construction_effect_start_failed", err, { outcome });
+      $("constructionNeedle")?.setAttribute("transform", `rotate(${scoreToGaugeAngle(score)} ${PIVOT_X} ${PIVOT_Y})`);
+      cleanupConstructionResultEffect(); } }
+  function maybeRunConstructionResultEffect(result, score, attemptId, options = {}) {
+    const outcome = classifyConstructionOutcome(score);
+    if (!isPlayableConstructionEffectResult(result, score, outcome, attemptId, options)) return;
+    const reportId = getConstructionEffectReportId(result, score, attemptId);
+    if (!reportId) return;
+    runConstructionResultEffect(outcome, score, reportId, attemptId); }
   async function apiPost(url, body, options = {}) { let response;
     try { response = await fetch(url, {
         method: "POST",
@@ -399,7 +411,7 @@
   function setHidden(id, hidden) {
     $(id)?.classList.toggle("hidden", Boolean(hidden)); }
   function resetHeroResultUi() {
-    cancelQuietCelebration();
+    cancelConstructionResultEffect({ clearOutcome: true });
     state.hero.constructionScore = null;
     state.hero.demandScore = null;
     state.hero.constructionStatus = "idle";
@@ -812,7 +824,7 @@
       lat: Number.isFinite(state.coords.lat) ? Math.round(state.coords.lat * 1e5) / 1e5 : null,
       lng: Number.isFinite(state.coords.lng) ? Math.round(state.coords.lng * 1e5) / 1e5 : null
     });
-    cancelQuietCelebration();
+    cancelConstructionResultEffect({ clearOutcome: true });
     searchRequestInFlight = true;
     state.hero.searchRequestInFlight = true;
     state.hero.constructionStatus = "loading";
@@ -834,7 +846,7 @@
         return null;
       }
       const { data } = await apiPost("/api/search", payload);
-      if (attemptId !== state.hero.searchAttemptId) return null;
+      if (attemptId !== state.hero.searchAttemptId) { cancelConstructionResultEffect({ attemptId }); return null; }
       if (data?.verification_required) { showHeroTurnstileChallenge();
         verificationRequiredRetries += 1;
         if (verificationRequiredRetries > 2) {
@@ -859,6 +871,7 @@
         return null;
       }
       if (!resultIsCurrent(result)) {
+        cancelConstructionResultEffect({ attemptId });
         logSearchEvent("search_ui_render_blocked_no_backend_response", { attempt_id: attemptId, block_reason: "stale_response" });
         state.hero.constructionStatus = "idle";
         setSearchState("stale_response");
@@ -868,10 +881,15 @@
       logSearchEvent("search_request_succeeded", { attempt_id: attemptId, http_status: 200 });
       const score = Number(result.score);
       if (Number.isFinite(score)) { const restored = Number(options.restoredScore);
+        const outcome = classifyConstructionOutcome(score);
         const shouldAnimate = !Number.isFinite(restored) || Math.abs(score - restored) > 2;
-        if (shouldAnimate) animateGauge($("constructionBand"), $("constructionNeedle"), score);
+        const settleOutcomeAfterArrival = () => {
+          setConstructionOutcomeState(outcome);
+          maybeRunConstructionResultEffect(result, score, attemptId, { restored: Number.isFinite(restored) }); };
+        if (shouldAnimate) animateGauge($("constructionBand"), $("constructionNeedle"), score, settleOutcomeAfterArrival);
         state.hero.constructionScore = score;
-        if (!Number.isFinite(restored)) maybeRunQuietCelebration(result, score, attemptId); } else { cancelQuietCelebration(); }
+        if (!shouldAnimate) settleOutcomeAfterArrival();
+      } else { cancelConstructionResultEffect({ clearOutcome: true }); }
       state.hero.constructionStatus = "ready";
       setSearchState("render_result");
       setText("constructionMessage", result.message || document.body.dataset.labelReady || "Ready");
@@ -898,7 +916,7 @@
       updateButtons();
     } }
   async function fetchDemand() { const access = AccessState.get();
-    cancelQuietCelebration();
+    cancelConstructionResultEffect();
     if (searchRequestInFlight || state.hero.searchRequestInFlight) return null;
     if (!access.demandAllowed || access.tier === "free") { openJoinResearchModal("demand_level_page");
       return null; }
@@ -980,7 +998,7 @@
   function shouldUseDialogOpen(el) {
     return el?.tagName === "DIALOG" && !el.classList.contains("bottom-sheet") && !el.classList.contains("sheet-layer"); }
   function openModal(id, options = {}) {
-    cancelQuietCelebration();
+    cancelConstructionResultEffect();
     const el = $(id);
     if (!el) return;
     if (state.modals.active && state.modals.active !== id) closeModal(state.modals.active, { silent: true });
@@ -995,7 +1013,7 @@
       el.dispatchEvent(new CustomEvent("modal:open", { detail: options }));
     } catch (err) { logClientException("modal_open_failed", err, { id }); } }
   function closeModal(id, options = {}) {
-    cancelQuietCelebration();
+    cancelConstructionResultEffect();
     const el = $(id);
     if (!el) return;
     try { if (shouldUseDialogOpen(el)) {
@@ -1435,6 +1453,7 @@
       const restoredScore = Number(resume.constructionScore);
       if (Number.isFinite(restoredScore)) { state.hero.constructionScore = restoredScore;
         state.hero.constructionStatus = "ready";
+        setConstructionOutcomeState(classifyConstructionOutcome(restoredScore));
         animateGauge($("constructionBand"), $("constructionNeedle"), restoredScore);
         setText("constructionMessage", resume.constructionMessage || "");
         fetchConstruction({ restoredScore });
@@ -1465,8 +1484,8 @@
     ["supportModalLayer", "reportModalLayer", "shareModalLayer", "userModalLayer", "aboutModalLayer", "langModalLayer"].forEach((id) => { const el = $(id);
       el?.addEventListener("cancel", (event) => { event.preventDefault(); closeModal(id); });
       el?.addEventListener("click", (event) => { if (event.target === el) closeModal(id); }); });
-    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") cancelQuietCelebration(); });
-    window.addEventListener("pagehide", cancelQuietCelebration);
+    document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") cancelConstructionResultEffect(); });
+    window.addEventListener("pagehide", cancelConstructionResultEffect);
     document.addEventListener("keydown", (event) => {
       if (event.key !== "Escape") return;
       const active = state.modals.active;
@@ -1579,7 +1598,7 @@
     }
     syncAccessUI();
     updateButtons();
-    window.App = { AccessState, state, openModal, closeModal, openJoinResearchModal, fetchConstruction, fetchDemand, parseHeroLocation, heroTurnstile, unlockTurnstile, reportTurnstile, notify, captureEvent, logFlowEvent, logClientException, cancelQuietCelebration }; }
+    window.App = { AccessState, state, openModal, closeModal, openJoinResearchModal, fetchConstruction, fetchDemand, parseHeroLocation, heroTurnstile, unlockTurnstile, reportTurnstile, notify, captureEvent, logFlowEvent, logClientException, cancelConstructionResultEffect }; }
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init, { once: true });
   else init();
 })();

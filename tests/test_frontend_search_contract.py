@@ -2,6 +2,9 @@ from pathlib import Path
 
 import pytest
 
+# Construction outcome production preflight:
+# uv run pytest tests/test_frontend_search_contract.py -k construction_outcome -q
+
 ROOT = Path(__file__).resolve().parents[1]
 APP_JS = (ROOT / "public" / "static" / "app.js").read_text(encoding="utf-8")
 INDEX_HTML = (ROOT / "templates" / "index.html").read_text(encoding="utf-8")
@@ -133,15 +136,174 @@ def test_paid_search_dispatch_does_not_require_turnstile_token():
     assert 'if (turnstileRequiredForSearch && !demandPayload.turnstile_token)' in APP_JS
 
 
-def test_quiet_place_celebration_is_scoped_and_privacy_safe():
-    assert 'id="constructionGauge" data-celebration="idle"' in INDEX_HTML
+def test_construction_outcome_effects_are_scoped_sequenced_and_privacy_safe():
+    assert (
+        'id="constructionGauge" data-outcome="neutral" data-effect="idle"'
+        in INDEX_HTML
+    )
     assert 'class="gauge-band gauge-arc" id="constructionBand"' in INDEX_HTML
     assert 'class="needle gauge-needle" id="constructionNeedle"' in INDEX_HTML
-    assert 'function runQuietCelebration(finalAngleDeg, reportId)' in APP_JS
-    assert 'needle.animate([' in APP_JS
-    assert 'QUIET_CELEBRATION_DURATION = 3400' in APP_JS
-    assert 'construction_score_bucket: "under_10"' in APP_JS
-    assert 'construction_score:' not in APP_JS[APP_JS.index('quiet_place_celebration_shown'):APP_JS.index('function markQuietCelebrationShown')]
-    assert 'cancelQuietCelebration();' in APP_JS
-    assert 'quiet-arc-pulse 3.4s ease-in-out forwards' in APP_CSS
+    for overlay_class in [
+        "gauge-outcome-sweep--positive",
+        "gauge-outcome-sweep--warning",
+        "gauge-outcome-ring--positive",
+        "gauge-outcome-ring--warning",
+        "gauge-outcome-indicator--positive",
+        "gauge-outcome-indicator--warning",
+    ]:
+        assert overlay_class in INDEX_HTML
+
+    assert "CONSTRUCTION_POSITIVE_MAX = 15" in APP_JS
+    assert "CONSTRUCTION_WARNING_MIN = 86" in APP_JS
+    assert "CONSTRUCTION_EFFECT_DURATION = 10000" in APP_JS
+    assert 'if (value <= CONSTRUCTION_POSITIVE_MAX) return "positive";' in APP_JS
+    assert 'if (value >= CONSTRUCTION_WARNING_MIN) return "warning";' in APP_JS
+    assert 'return "neutral";' in APP_JS
+    assert "shownConstructionEffectReportIds.has(reportId)" in APP_JS
+    assert "result.partial || result.cached" in APP_JS
+    assert "setConstructionOutcomeState(classifyConstructionOutcome(restoredScore));" in APP_JS
+
+    arrival_call = (
+        'animateGauge($("constructionBand"), $("constructionNeedle"), score, '
+        "settleOutcomeAfterArrival);"
+    )
+    assert arrival_call in APP_JS
+    assert "const settleOutcomeAfterArrival = () =>" in APP_JS
+    assert "maybeRunConstructionResultEffect(result, score, attemptId" in APP_JS
+
+    telemetry_start = APP_JS.index('captureEvent("construction_outcome_effect_shown"')
+    telemetry_end = APP_JS.index("function markConstructionEffectShown")
+    telemetry = APP_JS[telemetry_start:telemetry_end]
+    assert 'construction_score_bucket: outcome === "positive" ? "0_15" : "86_100"' in telemetry
+    assert "construction_score:" not in telemetry
+
+    assert '.construction-gauge[data-effect="positive"]' in APP_CSS
+    assert '.construction-gauge[data-effect="warning"]' in APP_CSS
+    assert "construction-positive-arc-travel 10s" in APP_CSS
+    assert "construction-warning-arc-travel 10s" in APP_CSS
     assert '@media (prefers-reduced-motion: reduce)' in APP_CSS
+
+
+@pytest.mark.parametrize(
+    ("score", "expected_outcome"),
+    [(0, "positive"), (15, "positive"), (16, "neutral"), (85, "neutral"),
+     (86, "warning"), (100, "warning")],
+)
+def test_construction_outcome_exact_score_bands(score, expected_outcome):
+    positive_max = 15
+    warning_min = 86
+    outcome = "positive" if score <= positive_max else "warning" if score >= warning_min else "neutral"
+    assert outcome == expected_outcome
+    assert f"CONSTRUCTION_POSITIVE_MAX = {positive_max}" in APP_JS
+    assert f"CONSTRUCTION_WARNING_MIN = {warning_min}" in APP_JS
+
+
+def test_construction_outcome_effect_has_strict_fresh_complete_report_gate():
+    gate_start = APP_JS.index("function isPlayableConstructionEffectResult")
+    gate_end = APP_JS.index("function captureConstructionEffectShown")
+    gate = APP_JS[gate_start:gate_end]
+    assert "options.restored" in gate
+    assert "!Number.isFinite(score) || score < 0 || score > 100" in gate
+    assert "attemptId !== state.hero.searchAttemptId" in gate
+    assert "!resultIsCurrent(result)" in gate
+    assert 'result.message_code !== "CONSTRUCTION_READY"' in gate
+    for excluded_state in [
+        "result.success === false",
+        "result.error",
+        "result.degraded",
+        "result.partial",
+        "result.cached",
+    ]:
+        assert excluded_state in gate
+
+    identity_start = APP_JS.index("function getConstructionEffectReportId")
+    identity = APP_JS[identity_start:gate_start]
+    assert "if (explicitId) return String(explicitId);" in identity
+    assert '!attemptId || !coordKey || result?.message_code !== "CONSTRUCTION_READY"' in identity
+    assert "if (!reportId) return;" in APP_JS
+
+    result_flow_start = APP_JS.index("async function fetchConstruction")
+    result_flow_end = APP_JS.index("async function fetchDemand")
+    result_flow = APP_JS[result_flow_start:result_flow_end]
+    assert "animateGauge($(\"constructionBand\"), $(\"constructionNeedle\"), score, settleOutcomeAfterArrival)" in result_flow
+    assert "{ restored: Number.isFinite(restored) }" in result_flow
+    assert "cancelConstructionResultEffect({ attemptId });" in result_flow
+    assert result_flow.count("maybeRunConstructionResultEffect") == 1
+
+    demand_flow = APP_JS[result_flow_end:APP_JS.index("// ── 7. Modal system")]
+    assert "maybeRunConstructionResultEffect" not in demand_flow
+
+
+def test_construction_outcome_needle_pattern_is_bounded_and_error_reported():
+    pattern_start = APP_JS.index("function constructionNeedlePattern")
+    pattern_end = APP_JS.index("function startConstructionNeedlePattern")
+    pattern = APP_JS[pattern_start:pattern_end]
+    assert "clampScore(finalScore + 3, 0, 15)" in pattern
+    assert "clampScore(finalScore - 5, 86, 100)" in pattern
+    assert "[0, 0.16, 0.35, 0.53, 0.72, 0.88, 1]" in pattern
+
+    runtime_start = APP_JS.index("function reportConstructionEffectError")
+    runtime_end = APP_JS.index("async function apiPost")
+    runtime = APP_JS[runtime_start:runtime_end]
+    assert 'rotate(${angle} ${PIVOT_X} ${PIVOT_Y})' in runtime
+    assert "translate(" not in runtime
+    assert "construction_effect_start_failed" in runtime
+    assert "construction_effect_frame_failed" in runtime
+    assert "construction_effect_cancel_failed" in runtime
+    assert "catch (_) {}" not in runtime
+    assert "catch (err) {}" not in runtime
+
+    reporter_start = APP_JS.index("function reportConstructionEffectError")
+    reporter_end = APP_JS.index("function animateGauge")
+    reporter = APP_JS[reporter_start:reporter_end]
+    assert "logClientException(eventName, err" in reporter
+    assert 'feature: "construction_outcome_effect"' in reporter
+    assert "console.error(eventName, err, loggingErr);" in reporter
+    assert "score" not in reporter
+    assert "coord" not in reporter
+
+    helper_start = APP_JS.index("function logClientException")
+    helper_end = APP_JS.index("function installGlobalErrorReporting")
+    helper = APP_JS[helper_start:helper_end]
+    assert "window.Sentry?.captureException?." in helper
+    assert 'window.posthog?.capture?.("client_exception", payload);' in helper
+
+    cleanup_start = APP_JS.index("function cleanupConstructionResultEffect")
+    cleanup_end = APP_JS.index("function getConstructionEffectReportId")
+    cleanup = APP_JS[cleanup_start:cleanup_end]
+    assert 'setConstructionEffectState("idle");' in cleanup
+
+    needle_start = APP_JS.index("function startConstructionNeedlePattern")
+    needle_end = APP_JS.index("function runConstructionResultEffect")
+    needle_runtime = APP_JS[needle_start:needle_end]
+    assert needle_runtime.count("setNeedleAngle(finalAngleDeg);") == 2
+    assert "constructionEffectAnimation = null;" in needle_runtime
+    assert "cleanupConstructionResultEffect();" in needle_runtime
+
+
+def test_construction_outcome_effects_cancel_at_lifecycle_boundaries():
+    assert "cancelConstructionResultEffect({ clearOutcome: true });" in APP_JS
+    assert "cancelConstructionResultEffect({ attemptId });" in APP_JS
+    assert 'document.visibilityState === "hidden") cancelConstructionResultEffect();' in APP_JS
+    assert 'window.addEventListener("pagehide", cancelConstructionResultEffect);' in APP_JS
+
+
+def test_construction_outcome_reduced_motion_and_css_are_strictly_scoped():
+    reduced_start = APP_CSS.index("@media (prefers-reduced-motion: reduce)")
+    reduced = APP_CSS[reduced_start:]
+    assert '.construction-gauge[data-effect="positive"]' in reduced
+    assert '.construction-gauge[data-effect="warning"]' in reduced
+    assert "animation: none !important;" in reduced
+    assert ".construction-gauge .gauge-outcome-indicator" in reduced
+    assert "transition: none !important;" in reduced
+    assert 'if (reduceMotion) { cleanupConstructionResultEffect(); return; }' in APP_JS
+
+    outcome_tokens = (
+        ".gauge-outcome",
+        ".gauge-positive-particles",
+        ".gauge-warning-lights",
+    )
+    for line in APP_CSS.splitlines():
+        stripped = line.strip()
+        if stripped.startswith(outcome_tokens):
+            pytest.fail(f"Unscoped construction outcome selector: {stripped}")
