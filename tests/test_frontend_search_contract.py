@@ -238,9 +238,15 @@ def test_construction_outcome_needle_pattern_is_bounded_and_error_reported():
     pattern_start = APP_JS.index("function constructionNeedlePattern")
     pattern_end = APP_JS.index("function startConstructionNeedlePattern")
     pattern = APP_JS[pattern_start:pattern_end]
-    assert "clampScore(finalScore + 3, 0, 15)" in pattern
-    assert "clampScore(finalScore - 5, 86, 100)" in pattern
-    assert "[0, 0.16, 0.35, 0.53, 0.72, 0.88, 1]" in pattern
+    assert 'const bandLow = outcome === "positive" ? 0 : 86;' in pattern
+    assert 'const bandHigh = outcome === "positive" ? 15 : 100;' in pattern
+    assert "const nearLow = bandLow + 2;" in pattern
+    assert "const nearHigh = bandHigh - 2;" in pattern
+    assert "const innerLow = bandLow + 4;" in pattern
+    assert "const innerHigh = bandHigh - 4;" in pattern
+    assert "[finalScore, nearHigh, nearLow, innerHigh, innerLow, finalScore]" in pattern
+    assert "[finalScore, nearLow, nearHigh, innerLow, innerHigh, finalScore]" in pattern
+    assert "[0, 0.18, 0.38, 0.58, 0.78, 1]" in pattern
 
     runtime_start = APP_JS.index("function reportConstructionEffectError")
     runtime_end = APP_JS.index("async function apiPost")
@@ -248,6 +254,7 @@ def test_construction_outcome_needle_pattern_is_bounded_and_error_reported():
     assert 'rotate(${angle} ${PIVOT_X} ${PIVOT_Y})' in runtime
     assert "translate(" not in runtime
     assert "construction_effect_start_failed" in runtime
+    assert "construction_effect_start_fallback_failed" in runtime
     assert "construction_effect_frame_failed" in runtime
     assert "construction_effect_cancel_failed" in runtime
     assert "catch (_) {}" not in runtime
@@ -280,6 +287,12 @@ def test_construction_outcome_needle_pattern_is_bounded_and_error_reported():
     assert "constructionEffectAnimation = null;" in needle_runtime
     assert "cleanupConstructionResultEffect();" in needle_runtime
 
+    start_handler_start = APP_JS.index('reportConstructionEffectError("construction_effect_start_failed"')
+    start_handler_end = APP_JS.index("function maybeRunConstructionResultEffect")
+    start_handler = APP_JS[start_handler_start:start_handler_end]
+    assert 'catch (fallbackErr) { reportConstructionEffectError("construction_effect_start_fallback_failed"' in start_handler
+    assert "finally { cleanupConstructionResultEffect(); }" in start_handler
+
 
 def test_construction_outcome_effects_cancel_at_lifecycle_boundaries():
     assert "cancelConstructionResultEffect({ clearOutcome: true });" in APP_JS
@@ -307,3 +320,30 @@ def test_construction_outcome_reduced_motion_and_css_are_strictly_scoped():
         stripped = line.strip()
         if stripped.startswith(outcome_tokens):
             pytest.fail(f"Unscoped construction outcome selector: {stripped}")
+
+
+def test_construction_outcome_arc_glint_has_slow_visible_pulse():
+    sweep_start = APP_CSS.index(".construction-gauge .gauge-outcome-sweep")
+    sweep_end = APP_CSS.index(".construction-gauge .gauge-outcome-ring")
+    sweep = APP_CSS[sweep_start:sweep_end]
+    assert "stroke-width: 20;" in sweep
+    assert "stroke-linecap: round;" in sweep
+    assert "stroke-dasharray: 42 335;" in sweep
+
+    positive_start = APP_CSS.index("@keyframes construction-positive-arc-travel")
+    positive_end = APP_CSS.index("@keyframes construction-warning-arc-travel")
+    warning_end = APP_CSS.index("@keyframes construction-outcome-ring")
+    positive = APP_CSS[positive_start:positive_end]
+    warning = APP_CSS[positive_end:warning_end]
+    for keyframes in (positive, warning):
+        assert "9%" in keyframes
+        assert "25%" in keyframes
+        assert "42%" in keyframes
+        assert "60%" in keyframes
+        assert "78%" in keyframes
+        assert "92%" in keyframes
+        assert "drop-shadow" in keyframes
+        assert "steps(" not in keyframes
+
+    assert "construction-positive-arc-travel 10s ease-in-out forwards" in APP_CSS
+    assert "construction-warning-arc-travel 10s ease-in-out forwards" in APP_CSS

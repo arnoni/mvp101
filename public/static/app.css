@@ -481,9 +481,9 @@ button { font-family: inherit; }
 }
 .construction-gauge .gauge-outcome-sweep {
   fill: none;
-  stroke-width: 18;
+  stroke-width: 20;
   stroke-linecap: round;
-  stroke-dasharray: 28 349;
+  stroke-dasharray: 42 335;
   stroke-dashoffset: 377;
   opacity: 0;
 }
@@ -590,18 +590,24 @@ button { font-family: inherit; }
 }
 
 @keyframes construction-positive-arc-travel {
-  0% { opacity: 0; stroke-dashoffset: 377; filter: drop-shadow(0 0 0 rgba(65, 233, 255, 0)); }
-  10% { opacity: 0.82; }
-  50% { opacity: 0.95; filter: drop-shadow(0 0 8px rgba(85, 245, 186, 0.72)); }
-  90% { opacity: 0.72; }
-  100% { opacity: 0; stroke-dashoffset: 0; filter: drop-shadow(0 0 0 rgba(65, 233, 255, 0)); }
+  0% { opacity: 0; stroke-width: 18; stroke-dashoffset: 377; filter: drop-shadow(0 0 0 rgba(65, 233, 255, 0)); }
+  9% { opacity: 0.96; stroke-width: 21; filter: drop-shadow(0 0 7px rgba(114, 255, 106, 0.72)) drop-shadow(0 0 13px rgba(65, 233, 255, 0.48)); }
+  25% { opacity: 0.68; stroke-width: 19; filter: drop-shadow(0 0 4px rgba(85, 245, 186, 0.42)); }
+  42% { opacity: 1; stroke-width: 22; filter: drop-shadow(0 0 9px rgba(114, 255, 106, 0.82)) drop-shadow(0 0 16px rgba(65, 233, 255, 0.56)); }
+  60% { opacity: 0.72; stroke-width: 19; filter: drop-shadow(0 0 5px rgba(85, 245, 186, 0.46)); }
+  78% { opacity: 1; stroke-width: 22; filter: drop-shadow(0 0 9px rgba(114, 255, 106, 0.8)) drop-shadow(0 0 16px rgba(65, 233, 255, 0.54)); }
+  92% { opacity: 0.72; stroke-width: 20; filter: drop-shadow(0 0 5px rgba(85, 245, 186, 0.42)); }
+  100% { opacity: 0; stroke-width: 18; stroke-dashoffset: 0; filter: drop-shadow(0 0 0 rgba(65, 233, 255, 0)); }
 }
 @keyframes construction-warning-arc-travel {
-  0% { opacity: 0; stroke-dashoffset: 377; filter: drop-shadow(0 0 0 rgba(255, 91, 46, 0)); }
-  10% { opacity: 0.78; }
-  50% { opacity: 0.94; filter: drop-shadow(0 0 9px rgba(255, 91, 46, 0.76)); }
-  90% { opacity: 0.68; }
-  100% { opacity: 0; stroke-dashoffset: 0; filter: drop-shadow(0 0 0 rgba(255, 91, 46, 0)); }
+  0% { opacity: 0; stroke-width: 18; stroke-dashoffset: 377; filter: drop-shadow(0 0 0 rgba(255, 91, 46, 0)); }
+  9% { opacity: 0.94; stroke-width: 21; filter: drop-shadow(0 0 7px rgba(255, 190, 61, 0.72)) drop-shadow(0 0 13px rgba(255, 53, 31, 0.5)); }
+  25% { opacity: 0.66; stroke-width: 19; filter: drop-shadow(0 0 4px rgba(255, 91, 46, 0.44)); }
+  42% { opacity: 1; stroke-width: 22; filter: drop-shadow(0 0 9px rgba(255, 190, 61, 0.84)) drop-shadow(0 0 16px rgba(255, 53, 31, 0.58)); }
+  60% { opacity: 0.7; stroke-width: 19; filter: drop-shadow(0 0 5px rgba(255, 91, 46, 0.48)); }
+  78% { opacity: 1; stroke-width: 22; filter: drop-shadow(0 0 9px rgba(255, 190, 61, 0.82)) drop-shadow(0 0 16px rgba(255, 53, 31, 0.56)); }
+  92% { opacity: 0.7; stroke-width: 20; filter: drop-shadow(0 0 5px rgba(255, 91, 46, 0.44)); }
+  100% { opacity: 0; stroke-width: 18; stroke-dashoffset: 0; filter: drop-shadow(0 0 0 rgba(255, 91, 46, 0)); }
 }
 @keyframes construction-outcome-ring {
   0% { opacity: 0; transform: scale(0.7); }

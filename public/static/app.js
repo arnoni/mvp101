@@ -183,11 +183,17 @@
     if (shownConstructionEffectReportIds.size > 40) shownConstructionEffectReportIds.delete(shownConstructionEffectReportIds.values().next().value);
     captureConstructionEffectShown(outcome); }
   function constructionNeedlePattern(outcome, finalScore) {
-    const clampScore = (score, low, high) => Math.max(low, Math.min(high, score));
-    const scores = outcome === "positive"
-      ? [finalScore, clampScore(finalScore + 3, 0, 15), clampScore(finalScore - 2, 0, 15), clampScore(finalScore + 5, 0, 15), clampScore(finalScore - 1, 0, 15), clampScore(finalScore + 2, 0, 15), finalScore]
-      : [finalScore, clampScore(finalScore - 3, 86, 100), clampScore(finalScore + 2, 86, 100), clampScore(finalScore - 5, 86, 100), clampScore(finalScore + 1, 86, 100), clampScore(finalScore - 2, 86, 100), finalScore];
-    const offsets = [0, 0.16, 0.35, 0.53, 0.72, 0.88, 1];
+    const bandLow = outcome === "positive" ? 0 : 86;
+    const bandHigh = outcome === "positive" ? 15 : 100;
+    const midpoint = (bandLow + bandHigh) / 2;
+    const nearLow = bandLow + 2;
+    const nearHigh = bandHigh - 2;
+    const innerLow = bandLow + 4;
+    const innerHigh = bandHigh - 4;
+    const scores = finalScore <= midpoint
+      ? [finalScore, nearHigh, nearLow, innerHigh, innerLow, finalScore]
+      : [finalScore, nearLow, nearHigh, innerLow, innerHigh, finalScore];
+    const offsets = [0, 0.18, 0.38, 0.58, 0.78, 1];
     return scores.map((score, index) => ({ angle: scoreToGaugeAngle(score), offset: offsets[index] })); }
   function startConstructionNeedlePattern(outcome, finalScore) {
     const needle = $("constructionNeedle");
@@ -242,8 +248,9 @@
       }, CONSTRUCTION_EFFECT_DURATION + 250);
     } catch (err) {
       reportConstructionEffectError("construction_effect_start_failed", err, { outcome });
-      $("constructionNeedle")?.setAttribute("transform", `rotate(${scoreToGaugeAngle(score)} ${PIVOT_X} ${PIVOT_Y})`);
-      cleanupConstructionResultEffect(); } }
+      try { $("constructionNeedle")?.setAttribute("transform", `rotate(${scoreToGaugeAngle(score)} ${PIVOT_X} ${PIVOT_Y})`); }
+      catch (fallbackErr) { reportConstructionEffectError("construction_effect_start_fallback_failed", fallbackErr, { outcome }); }
+      finally { cleanupConstructionResultEffect(); } } }
   function maybeRunConstructionResultEffect(result, score, attemptId, options = {}) {
     const outcome = classifyConstructionOutcome(score);
     if (!isPlayableConstructionEffectResult(result, score, outcome, attemptId, options)) return;
