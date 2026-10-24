@@ -47,6 +47,77 @@ body {
   text-align: center; margin: 0 0 18px; font-size: 18px; color: var(--text);
 }
 
+/* Signal Stamps stay in document flow; gauge positioning and effects are independent. */
+.signal-stamps {
+  margin-bottom: 18px;
+  padding: 8px 8px 0;
+  background: #0a2341;
+  border: 1px solid #365571;
+  border-radius: 17px;
+  box-shadow: 0 5px 0 #04152b;
+}
+.signal-stamps .signal-stamps__items {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.signal-stamps .signal-stamps__item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  min-width: 0;
+  padding: 8px 4px;
+  text-align: center;
+}
+.signal-stamps .signal-stamps__item + .signal-stamps__item {
+  border-left: 1px dashed #365571;
+}
+.signal-stamps .signal-stamps__icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 34px;
+  width: 34px;
+  height: 34px;
+  margin-bottom: 6px;
+  border-radius: 50%;
+  background: #173e5c;
+  color: #a7d6ee;
+}
+.signal-stamps .signal-stamps__title {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 2.5em;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  font-size: 13px;
+  line-height: 1.25;
+  font-weight: 700;
+  color: var(--text);
+}
+.signal-stamps .signal-stamps__detail {
+  margin-top: 4px;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  font-size: 11px;
+  color: #b5c8da;
+}
+.signal-stamps .signal-stamps__footer {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  margin: 0;
+  padding: 8px 4px;
+  border-top: 1px solid #284765;
+  text-align: center;
+  font-size: 12px;
+  color: #c8dceb;
+}
+
 /* CARDS */
 .card {
   background: linear-gradient(180deg, rgba(17, 53, 95, 0.88), rgba(9, 31, 59, 0.92));

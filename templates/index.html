@@ -11,7 +11,7 @@
   <meta property="og:image" content="https://dilldrill.com/dilldrill_new_logo_2026.png">
   <link rel="icon" type="image/png" href="/dilldrill_new_logo_2026.png">
   <link rel="apple-touch-icon" href="/dilldrill_new_logo_2026.png">
-  <link rel="stylesheet" href="/static/app.css?v=1.2.3">
+  <link rel="stylesheet" href="/static/app.css?v=1.2.4">
   
   <script nonce="{{ csp_nonce }}">
     window.__ddTrustedTypesPolicy = null;
@@ -146,6 +146,45 @@
 
     <section class="hero">
       {{ t.get('subtitle', 'Check construction now, sleep better later.') }}
+    </section>
+
+    <!-- Signal Stamps: current benefits only; update the first stamp after the dataset release. -->
+    <section class="signal-stamps" aria-label="{{ t.get('signal_stamps_label', 'DillDrill benefits') }}">
+      <ul class="signal-stamps__items">
+        <li class="signal-stamps__item">
+          <span class="signal-stamps__icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" focusable="false">
+              <circle cx="12" cy="12" r="9" />
+              <circle cx="12" cy="12" r="5" />
+              <path d="M12 3v9l6 6" />
+              <circle cx="8" cy="9" r="1" fill="currentColor" stroke="none" />
+            </svg>
+          </span>
+          <strong class="signal-stamps__title">{{ t.get('signal_stamps_risk', 'Spot Risk') }}</strong>
+          <span class="signal-stamps__detail">{{ t.get('signal_stamps_risk_detail', 'Construction') }}</span>
+        </li>
+        <li class="signal-stamps__item">
+          <span class="signal-stamps__icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" focusable="false">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 7v5l3 2" />
+            </svg>
+          </span>
+          <strong class="signal-stamps__title">{{ t.get('signal_stamps_time', 'Save Time') }}</strong>
+          <span class="signal-stamps__detail">{{ t.get('signal_stamps_time_detail', 'Check online') }}</span>
+        </li>
+        <li class="signal-stamps__item">
+          <span class="signal-stamps__icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" focusable="false">
+              <path d="M20.5 13.5A9 9 0 0 1 10.5 3.5a9 9 0 1 0 10 10Z" />
+            </svg>
+          </span>
+          <strong class="signal-stamps__title">{{ t.get('signal_stamps_rest', 'Rest Easier') }}</strong>
+          <span class="signal-stamps__detail">{{ t.get('signal_stamps_rest_detail', 'Before booking') }}</span>
+        </li>
+      </ul>
+      <!-- This footer can host the companion-app link at launch, retaining all three stamps. -->
+      <p class="signal-stamps__footer">{{ t.get('signal_stamps_tagline', 'Check online. Relax offline.') }}</p>
     </section>
 
     <!-- INPUT STATE -->
